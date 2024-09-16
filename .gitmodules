@@ -1,0 +1,3 @@
+[submodule "value_investment/main"]
+	path = value_investment/main
+	url = git@github.com:richardkuo1999/value_investment.git
