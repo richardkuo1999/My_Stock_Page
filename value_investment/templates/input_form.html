@@ -1,0 +1,19 @@
+<!-- input_form.html -->
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <meta charset="UTF-8">
+    <title>输入表单</title>
+</head>
+
+<body>
+    <h1>请输入内容</h1>
+    <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit">提交</button>
+    </form>
+</body>
+
+</html>
