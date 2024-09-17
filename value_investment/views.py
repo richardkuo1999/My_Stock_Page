@@ -22,8 +22,19 @@ def Individual(request):
     if request.method == "POST":
         form = InputForm(request.POST)
         if form.is_valid():
+            print(
+                resultsPath.with_name(resultsPath.stem + "_google").with_suffix(".csv")
+            )
             if resultsPath.exists():
                 resultsPath.unlink()
+                resultsPath.with_name(resultsPath.stem + "_apple").with_suffix(
+                    ".csv"
+                ).unlink()
+                resultsPath.with_name(resultsPath.stem + "_google").with_suffix(
+                    ".csv"
+                ).unlink()
+                resultsPath.with_suffix(".csv").unlink()
+
             StockLists = form.cleaned_data["user_input"].split(" ")
             Individual_search(StockLists)
             result = ""
