@@ -17,9 +17,15 @@ Including another URLconf
 
 from django.contrib import admin
 from django.urls import path
-from value_investment.views import input_view
+from value_investment.views import *
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("", input_view),
+    path("", index),
+    path("Individual", Individual),
+    path("Daily_run_Report", Daily_run_Report),
+    path("download/forApple", download_file_apple, name="forApple"),
+    path("download/txt", download_file_txt, name="txt"),
+    path("download/csv", download_file_csv, name="csv"),
+    path("download/forgoogle", download_file_google, name="forgoogle"),
 ]
