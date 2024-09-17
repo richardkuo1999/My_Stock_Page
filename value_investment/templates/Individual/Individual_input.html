@@ -4,11 +4,12 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>输入表单</title>
+    <title>個股查詢</title>
 </head>
 
 <body>
-    <h1>请输入内容</h1>
+    <a href="..">Home</a>
+    <h1>請輸入股票代號，並以空格分開</h1>
     <form method="post">
         {% csrf_token %}
         {{ form.as_p }}
