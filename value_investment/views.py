@@ -59,15 +59,44 @@ def Daily_run_Report(request):
 def download_file_apple(request):
     # 設定檔案的路徑
     file_paths = [
-        os.path.join(settings.BASE_DIR, "results", "0050_apple.csv"),
-        os.path.join(settings.BASE_DIR, "results", "0051_apple.csv"),
-        os.path.join(settings.BASE_DIR, "results", "006201_apple.csv"),
-        os.path.join(settings.BASE_DIR, "results", "User_Choice_apple.csv"),
+        os.path.join(settings.BASE_DIR, "results", "Individual/0050_apple.csv"),
+        os.path.join(settings.BASE_DIR, "results", "Individual/0051_apple.csv"),
+        os.path.join(settings.BASE_DIR, "results", "Individual/006201_apple.csv"),
+        os.path.join(settings.BASE_DIR, "results", "Individual/User_Choice_apple.csv"),
     ]
 
     # 創建一個內存中的 ZIP 文件
     response = HttpResponse(content_type="application/zip")
     response["Content-Disposition"] = "attachment; filename=result_apple.zip"
+
+    with zipfile.ZipFile(response, "w") as zip_file:
+        for file_path in file_paths:
+            print(file_path)
+            if os.path.isfile(file_path):
+                zip_file.write(file_path, os.path.basename(file_path))
+
+    return response
+
+
+def download_file_Individual(request):
+    # 設定檔案的路徑
+    file_paths = [
+        os.path.join(
+            settings.BASE_DIR, "results", "Individual", "Individual_apple.csv"
+        ),
+        os.path.join(settings.BASE_DIR, "results", "Individual", "Individual.txt"),
+        os.path.join(settings.BASE_DIR, "results", "Individual", "Individual.csv"),
+        os.path.join(
+            settings.BASE_DIR, "results", "Individual", "Individual_google.csv"
+        ),
+        os.path.join(
+            settings.BASE_DIR, "results", "Individual", "User_Choice_google.csv"
+        ),
+    ]
+
+    # 創建一個內存中的 ZIP 文件
+    response = HttpResponse(content_type="application/zip")
+    response["Content-Disposition"] = "attachment; filename=result_Individual.zip"
 
     with zipfile.ZipFile(response, "w") as zip_file:
         for file_path in file_paths:
