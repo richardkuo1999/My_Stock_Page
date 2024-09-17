@@ -24,6 +24,11 @@ urlpatterns = [
     path("", index),
     path("Individual", Individual),
     path("Daily_run_Report", Daily_run_Report),
+    path(
+        "download/Individual",
+        download_file_Individual,
+        name="Individual",
+    ),
     path("download/forApple", download_file_apple, name="forApple"),
     path("download/txt", download_file_txt, name="txt"),
     path("download/csv", download_file_csv, name="csv"),
