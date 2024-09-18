@@ -51,7 +51,7 @@ thread1 = None
 thread2 = None
 
 
-def force＿run(request):
+def force_run(request):
     global thread2
     print("111")
     if "thread2" not in globals() or thread2 is None:
@@ -78,10 +78,10 @@ def Daily_run_Report(request):
 def download_file_apple(request):
     # 設定檔案的路徑
     file_paths = [
-        os.path.join(settings.BASE_DIR, "results", "Individual/0050_apple.csv"),
-        os.path.join(settings.BASE_DIR, "results", "Individual/0051_apple.csv"),
-        os.path.join(settings.BASE_DIR, "results", "Individual/006201_apple.csv"),
-        os.path.join(settings.BASE_DIR, "results", "Individual/User_Choice_apple.csv"),
+        os.path.join(settings.BASE_DIR, "results", "0050_apple.csv"),
+        os.path.join(settings.BASE_DIR, "results", "0051_apple.csv"),
+        os.path.join(settings.BASE_DIR, "results", "006201_apple.csv"),
+        os.path.join(settings.BASE_DIR, "results", "User_Choice_apple.csv"),
     ]
 
     # 創建一個內存中的 ZIP 文件
