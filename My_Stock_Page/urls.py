@@ -29,7 +29,7 @@ urlpatterns = [
         download_file_Individual,
         name="Individual",
     ),
-    path("force_run", force＿run, name="force_run"),
+    path("force_run", force_run, name="force_run"),
     path("download/forApple", download_file_apple, name="forApple"),
     path("download/txt", download_file_txt, name="txt"),
     path("download/csv", download_file_csv, name="csv"),
