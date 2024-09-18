@@ -9,7 +9,7 @@ from django.http import FileResponse
 
 
 from value_investment.forms import InputForm
-from value_investment.main.server_main import Individual_search, daily_run
+from value_investment.main.server_main import Individual_search, daily_run, run
 
 
 # Create your views here.
@@ -22,9 +22,6 @@ def Individual(request):
     if request.method == "POST":
         form = InputForm(request.POST)
         if form.is_valid():
-            print(
-                resultsPath.with_name(resultsPath.stem + "_google").with_suffix(".csv")
-            )
             if resultsPath.exists():
                 resultsPath.unlink()
                 resultsPath.with_name(resultsPath.stem + "_apple").with_suffix(
@@ -51,20 +48,31 @@ def Individual(request):
 
 
 thread1 = None
+thread2 = None
+
+
+def force＿run(request):
+    global thread2
+    print("111")
+    if "thread2" not in globals() or thread2 is None:
+        # 线程已完成，可以重新启动
+        thread2 = threading.Thread(target=run)
+        thread2.start()
+    else:
+        print("Thread2 is already running.")
+    return render(request, "Daily_run_Report.html")
 
 
 def Daily_run_Report(request):
     global thread1
-    switch = "開"
     if "thread1" not in globals() or thread1 is None:
         # 线程已完成，可以重新启动
         thread1 = threading.Thread(target=daily_run)
         thread1.start()
-        switch = "關"
     else:
-        print("Thread is already running.")
+        print("Thread1 is already running.")
 
-    return render(request, "Daily_run_Report.html", {"switch": switch})
+    return render(request, "Daily_run_Report.html")
 
 
 def download_file_apple(request):
