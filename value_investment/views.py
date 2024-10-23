@@ -32,14 +32,15 @@ def Individual(request):
                 ).unlink()
                 resultsPath.with_suffix(".csv").unlink()
 
-            StockLists = form.cleaned_data["user_input"].split(" ")
-            Individual_search(StockLists)
+            StockLists = form.cleaned_data["Stock_input"].split(" ")
+            EPSLists = [eps if eps != 'n' else '' for eps in form.cleaned_data["EPS_input"].split()]
+            Individual_search(StockLists, EPSLists)
             result = ""
             with resultsPath.open("r", encoding="utf-8") as file:
                 for line in file:
                     result += line
             return render(
-                request, "Individual/Individual_result.html", {"user_input": result}
+                request, "Individual/Individual_result.html", {"Stock_input": result}
             )
     else:
         form = InputForm()
