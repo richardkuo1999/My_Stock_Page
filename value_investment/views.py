@@ -33,7 +33,10 @@ def Individual(request):
                 resultsPath.with_suffix(".csv").unlink()
 
             StockLists = form.cleaned_data["Stock_input"].split(" ")
-            EPSLists = [eps if eps != 'n' else '' for eps in form.cleaned_data["EPS_input"].split()]
+            EPSLists = [
+                eps if eps != "n" else ""
+                for eps in form.cleaned_data["EPS_input"].split()
+            ]
             Individual_search(StockLists, EPSLists)
             result = ""
             with resultsPath.open("r", encoding="utf-8") as file:
@@ -76,28 +79,6 @@ def Daily_run_Report(request):
     return render(request, "Daily_run_Report.html")
 
 
-def download_file_apple(request):
-    # 設定檔案的路徑
-    file_paths = [
-        os.path.join(settings.BASE_DIR, "results", "0050_apple.csv"),
-        os.path.join(settings.BASE_DIR, "results", "0051_apple.csv"),
-        os.path.join(settings.BASE_DIR, "results", "006201_apple.csv"),
-        os.path.join(settings.BASE_DIR, "results", "User_Choice_apple.csv"),
-    ]
-
-    # 創建一個內存中的 ZIP 文件
-    response = HttpResponse(content_type="application/zip")
-    response["Content-Disposition"] = "attachment; filename=result_apple.zip"
-
-    with zipfile.ZipFile(response, "w") as zip_file:
-        for file_path in file_paths:
-            print(file_path)
-            if os.path.isfile(file_path):
-                zip_file.write(file_path, os.path.basename(file_path))
-
-    return response
-
-
 def download_file_Individual(request):
     # 設定檔案的路徑
     file_paths = [
@@ -127,6 +108,29 @@ def download_file_Individual(request):
     return response
 
 
+def download_file_apple(request):
+    # 設定檔案的路徑
+    file_paths = [
+        os.path.join(settings.BASE_DIR, "results", "0050_apple.csv"),
+        os.path.join(settings.BASE_DIR, "results", "0051_apple.csv"),
+        os.path.join(settings.BASE_DIR, "results", "006201_apple.csv"),
+        os.path.join(settings.BASE_DIR, "results", "User_Choice_apple.csv"),
+        os.path.join(settings.BASE_DIR, "results", "Understimated_apple.csv"),
+    ]
+
+    # 創建一個內存中的 ZIP 文件
+    response = HttpResponse(content_type="application/zip")
+    response["Content-Disposition"] = "attachment; filename=result_apple.zip"
+
+    with zipfile.ZipFile(response, "w") as zip_file:
+        for file_path in file_paths:
+            print(file_path)
+            if os.path.isfile(file_path):
+                zip_file.write(file_path, os.path.basename(file_path))
+
+    return response
+
+
 def download_file_txt(request):
     # 設定檔案的路徑
     file_paths = [
@@ -134,6 +138,7 @@ def download_file_txt(request):
         os.path.join(settings.BASE_DIR, "results", "0051.txt"),
         os.path.join(settings.BASE_DIR, "results", "006201.txt"),
         os.path.join(settings.BASE_DIR, "results", "User_Choice.txt"),
+        os.path.join(settings.BASE_DIR, "results", "Understimated.txt"),
     ]
 
     # 創建一個內存中的 ZIP 文件
@@ -155,6 +160,7 @@ def download_file_csv(request):
         os.path.join(settings.BASE_DIR, "results", "0051.csv"),
         os.path.join(settings.BASE_DIR, "results", "006201.csv"),
         os.path.join(settings.BASE_DIR, "results", "User_Choice.csv"),
+        os.path.join(settings.BASE_DIR, "results", "Understimated.csv"),
     ]
 
     # 創建一個內存中的 ZIP 文件
@@ -176,6 +182,7 @@ def download_file_google(request):
         os.path.join(settings.BASE_DIR, "results", "0051_google.csv"),
         os.path.join(settings.BASE_DIR, "results", "006201_google.csv"),
         os.path.join(settings.BASE_DIR, "results", "User_Choice_google.csv"),
+        os.path.join(settings.BASE_DIR, "results", "Understimated_google.csv"),
     ]
 
     # 創建一個內存中的 ZIP 文件
