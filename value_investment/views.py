@@ -116,6 +116,7 @@ def download_file_apple(request):
         os.path.join(settings.BASE_DIR, "results", "006201_apple.csv"),
         os.path.join(settings.BASE_DIR, "results", "User_Choice_apple.csv"),
         os.path.join(settings.BASE_DIR, "results", "Understimated_apple.csv"),
+        os.path.join(settings.BASE_DIR, "results", "Institutional_TOP50_apple.csv"),
     ]
 
     # 創建一個內存中的 ZIP 文件
@@ -139,6 +140,7 @@ def download_file_txt(request):
         os.path.join(settings.BASE_DIR, "results", "006201.txt"),
         os.path.join(settings.BASE_DIR, "results", "User_Choice.txt"),
         os.path.join(settings.BASE_DIR, "results", "Understimated.txt"),
+        os.path.join(settings.BASE_DIR, "results", "Institutional_TOP50.txt"),
     ]
 
     # 創建一個內存中的 ZIP 文件
@@ -161,6 +163,7 @@ def download_file_csv(request):
         os.path.join(settings.BASE_DIR, "results", "006201.csv"),
         os.path.join(settings.BASE_DIR, "results", "User_Choice.csv"),
         os.path.join(settings.BASE_DIR, "results", "Understimated.csv"),
+        os.path.join(settings.BASE_DIR, "results", "Institutional_TOP50.csv"),
     ]
 
     # 創建一個內存中的 ZIP 文件
@@ -183,6 +186,7 @@ def download_file_google(request):
         os.path.join(settings.BASE_DIR, "results", "006201_google.csv"),
         os.path.join(settings.BASE_DIR, "results", "User_Choice_google.csv"),
         os.path.join(settings.BASE_DIR, "results", "Understimated_google.csv"),
+        os.path.join(settings.BASE_DIR, "results", "Institutional_TOP50_google.csv"),
     ]
 
     # 創建一個內存中的 ZIP 文件
