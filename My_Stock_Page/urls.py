@@ -30,8 +30,8 @@ urlpatterns = [
         name="Individual",
     ),
     path("force_run", force_run, name="force_run"),
-    path("download/forApple", download_file_apple, name="forApple"),
+    # path("download/forApple", download_file_apple, name="forApple"),
     path("download/txt", download_file_txt, name="txt"),
     path("download/csv", download_file_csv, name="csv"),
-    path("download/forgoogle", download_file_google, name="forgoogle"),
+    # path("download/forgoogle", download_file_google, name="forgoogle"),
 ]
