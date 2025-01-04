@@ -24,12 +24,6 @@ def Individual(request):
         if form.is_valid():
             if resultsPath.exists():
                 resultsPath.unlink()
-                resultsPath.with_name(resultsPath.stem + "_apple").with_suffix(
-                    ".csv"
-                ).unlink()
-                resultsPath.with_name(resultsPath.stem + "_google").with_suffix(
-                    ".csv"
-                ).unlink()
                 resultsPath.with_suffix(".csv").unlink()
 
             StockLists = form.cleaned_data["Stock_input"].split(" ")
