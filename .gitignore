@@ -1,4 +1,5 @@
 results/
+backup/
 token.yaml
 gdToken.json
 __pycache__
