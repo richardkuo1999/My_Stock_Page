@@ -28,7 +28,7 @@ def Individual(request):
 
             StockLists = form.cleaned_data["Stock_input"].split(" ")
             EPSLists = [
-                eps if eps != "n" else ""
+                eps if eps != "n" else None
                 for eps in form.cleaned_data["EPS_input"].split()
             ]
             Individual_search(StockLists, EPSLists)
