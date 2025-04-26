@@ -1,195 +1,100 @@
 import os
-import zipfile
-import threading
-from pathlib import Path
+import sys
+import logging
 from django.conf import settings
 from django.shortcuts import render
 from django.http import HttpResponse
-from django.http import FileResponse
+from django.core.exceptions import ValidationError
 
 
-from value_investment.forms import InputForm
-from value_investment.main.server_main import Individual_search, daily_run, run
+sys.path.append(os.path.dirname(__file__)+"/..")
+
+from value_investment.utils import zip_response
+from value_investment.forms import Individual_Input, ForceRun_Input
+from value_investment.value_investment.server_main import individual_search, force_run
+
+logger = logging.getLogger(__name__)
+
+DAILY_RUN_LISTS = settings.DAILY_RUN_LISTS
+IP_ADDR = settings.ALLOWED_HOSTS[0]
 
 
-# Create your views here.
 def index(request):
     return render(request, "index.html")
 
+from concurrent.futures import ThreadPoolExecutor
 
-def Individual(request):
-    resultsPath = Path("results", "Individual", "Individual.txt")
+def individual_input(request):
+    def process_stock_input(stock_input, eps_input):
+        try:
+            stock_list = stock_input.split()
+            if eps_input == "n":
+                eps_list = None
+            else:
+                eps_list = [float(eps) for eps in eps_input.split()]
+            return stock_list, eps_list
+        except ValueError:
+            raise ValidationError("EPS 輸入格式錯誤")
+    
     if request.method == "POST":
-        form = InputForm(request.POST)
+        form = Individual_Input(request.POST)
         if form.is_valid():
-            if resultsPath.exists():
-                resultsPath.unlink()
-                resultsPath.with_suffix(".csv").unlink()
+            try:
+                stock_list, eps_list = process_stock_input(
+                    form.cleaned_data["Stock_input"], form.cleaned_data["EPS_input"]
+                )
+                parms = [int(form.cleaned_data["level_input"]),float(form.cleaned_data["year_input"])]
 
-            StockLists = form.cleaned_data["Stock_input"].split(" ")
-            EPSLists = [
-                eps if eps != "n" else None
-                for eps in form.cleaned_data["EPS_input"].split()
-            ]
-            Individual_search(StockLists, EPSLists)
-            result = ""
-            with resultsPath.open("r", encoding="utf-8") as file:
-                for line in file:
-                    result += line
-            return render(
-                request, "Individual/Individual_result.html", {"Stock_input": result}
-            )
+                with ThreadPoolExecutor() as executor:
+                    future = executor.submit(individual_search, stock_list, eps_list, parms)
+                    result = future.result()
+                
+                return render(
+                    request,
+                    "Individual/Individual_result.html",
+                    {"Stock_input": result[1]},
+                )
+            except ValidationError as e:
+                form.add_error(None, str(e))
+            except Exception as e:
+                logger.error(f"個股查詢錯誤: {str(e)}")
+                return HttpResponse("伺服器錯誤", status=500)
     else:
-        form = InputForm()
+        form = Individual_Input()
 
     return render(request, "Individual/Individual_input.html", {"form": form})
 
+def daily_run_report(request):
+    return render(request, "Daily_run/Daily_run_Report.html")
 
-thread1 = None
-thread2 = None
-
-
-def force_run(request):
-    global thread2
-    print("111")
-    if "thread2" not in globals() or thread2 is None:
-        # 线程已完成，可以重新启动
-        thread2 = threading.Thread(target=run)
-        thread2.start()
+def force_run_input(request):
+    if request.method == "POST":
+        form = ForceRun_Input(request.POST)
+        if form.is_valid():
+            run_lists = form.cleaned_data["ETF_input"].split()
+            force_run(run_lists, DAILY_RUN_LISTS, IP_ADDR)
     else:
-        print("Thread2 is already running.")
-    return render(request, "Daily_run_Report.html")
+        form = ForceRun_Input()
 
-
-def Daily_run_Report(request):
-    global thread1
-    if "thread1" not in globals() or thread1 is None:
-        # 线程已完成，可以重新启动
-        thread1 = threading.Thread(target=daily_run)
-        thread1.start()
-    else:
-        print("Thread1 is already running.")
-
-    return render(request, "Daily_run_Report.html")
-
+    return render(request, "Daily_run/Force_run.html", {"form": form})
 
 def download_file_Individual(request):
-    # 設定檔案的路徑
     file_paths = [
-        os.path.join(
-            settings.BASE_DIR, "results", "Individual", "Individual_apple.csv"
-        ),
-        os.path.join(settings.BASE_DIR, "results", "Individual", "Individual.txt"),
-        os.path.join(settings.BASE_DIR, "results", "Individual", "Individual.csv"),
-        os.path.join(
-            settings.BASE_DIR, "results", "Individual", "Individual_google.csv"
-        ),
-        os.path.join(
-            settings.BASE_DIR, "results", "Individual", "User_Choice_google.csv"
-        ),
+        os.path.join(settings.RESULT_PATHS["individual_report_path"], f"{name}")
+        for name in ["Individual.txt", "Individual.csv"]
     ]
-
-    # 創建一個內存中的 ZIP 文件
-    response = HttpResponse(content_type="application/zip")
-    response["Content-Disposition"] = "attachment; filename=result_Individual.zip"
-
-    with zipfile.ZipFile(response, "w") as zip_file:
-        for file_path in file_paths:
-            print(file_path)
-            if os.path.isfile(file_path):
-                zip_file.write(file_path, os.path.basename(file_path))
-
-    return response
-
-
-def download_file_apple(request):
-    # 設定檔案的路徑
-    file_paths = [
-        os.path.join(settings.BASE_DIR, "results", "0050_apple.csv"),
-        os.path.join(settings.BASE_DIR, "results", "0051_apple.csv"),
-        os.path.join(settings.BASE_DIR, "results", "006201_apple.csv"),
-        os.path.join(settings.BASE_DIR, "results", "User_Choice_apple.csv"),
-        os.path.join(settings.BASE_DIR, "results", "Understimated_apple.csv"),
-        os.path.join(settings.BASE_DIR, "results", "Institutional_TOP50_apple.csv"),
-    ]
-
-    # 創建一個內存中的 ZIP 文件
-    response = HttpResponse(content_type="application/zip")
-    response["Content-Disposition"] = "attachment; filename=result_apple.zip"
-
-    with zipfile.ZipFile(response, "w") as zip_file:
-        for file_path in file_paths:
-            print(file_path)
-            if os.path.isfile(file_path):
-                zip_file.write(file_path, os.path.basename(file_path))
-
-    return response
-
+    return zip_response(file_paths, "result_Individual.zip")
 
 def download_file_txt(request):
-    # 設定檔案的路徑
     file_paths = [
-        os.path.join(settings.BASE_DIR, "results", "0050.txt"),
-        os.path.join(settings.BASE_DIR, "results", "0051.txt"),
-        os.path.join(settings.BASE_DIR, "results", "006201.txt"),
-        os.path.join(settings.BASE_DIR, "results", "User_Choice.txt"),
-        os.path.join(settings.BASE_DIR, "results", "Understimated.txt"),
-        os.path.join(settings.BASE_DIR, "results", "Institutional_TOP50.txt"),
+        os.path.join(settings.RESULT_PATHS["daliy_report_path"], f"{name}.txt")
+        for name in settings.DAILY_RUN_LISTS + ["Understimated", "Institutional_TOP50"]
     ]
-
-    # 創建一個內存中的 ZIP 文件
-    response = HttpResponse(content_type="application/zip")
-    response["Content-Disposition"] = "attachment; filename=result_txt.zip"
-
-    with zipfile.ZipFile(response, "w") as zip_file:
-        for file_path in file_paths:
-            if os.path.isfile(file_path):
-                zip_file.write(file_path, os.path.basename(file_path))
-
-    return response
-
+    return zip_response(file_paths, "result_txt.zip")
 
 def download_file_csv(request):
-    # 設定檔案的路徑
     file_paths = [
-        os.path.join(settings.BASE_DIR, "results", "0050.csv"),
-        os.path.join(settings.BASE_DIR, "results", "0051.csv"),
-        os.path.join(settings.BASE_DIR, "results", "006201.csv"),
-        os.path.join(settings.BASE_DIR, "results", "User_Choice.csv"),
-        os.path.join(settings.BASE_DIR, "results", "Understimated.csv"),
-        os.path.join(settings.BASE_DIR, "results", "Institutional_TOP50.csv"),
+        os.path.join(settings.RESULT_PATHS["daliy_report_path"], f"{name}.csv")
+        for name in settings.DAILY_RUN_LISTS + ["Understimated", "Institutional_TOP50"]
     ]
-
-    # 創建一個內存中的 ZIP 文件
-    response = HttpResponse(content_type="application/zip")
-    response["Content-Disposition"] = "attachment; filename=result_csv.zip"
-
-    with zipfile.ZipFile(response, "w") as zip_file:
-        for file_path in file_paths:
-            if os.path.isfile(file_path):
-                zip_file.write(file_path, os.path.basename(file_path))
-
-    return response
-
-
-def download_file_google(request):
-    # 設定檔案的路徑
-    file_paths = [
-        os.path.join(settings.BASE_DIR, "results", "0050_google.csv"),
-        os.path.join(settings.BASE_DIR, "results", "0051_google.csv"),
-        os.path.join(settings.BASE_DIR, "results", "006201_google.csv"),
-        os.path.join(settings.BASE_DIR, "results", "User_Choice_google.csv"),
-        os.path.join(settings.BASE_DIR, "results", "Understimated_google.csv"),
-        os.path.join(settings.BASE_DIR, "results", "Institutional_TOP50_google.csv"),
-    ]
-
-    # 創建一個內存中的 ZIP 文件
-    response = HttpResponse(content_type="application/zip")
-    response["Content-Disposition"] = "attachment; filename=result_google.zip"
-
-    with zipfile.ZipFile(response, "w") as zip_file:
-        for file_path in file_paths:
-            if os.path.isfile(file_path):
-                zip_file.write(file_path, os.path.basename(file_path))
-
-    return response
+    return zip_response(file_paths, "result_csv.zip")

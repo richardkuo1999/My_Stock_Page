@@ -18,20 +18,15 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 from value_investment.views import *
+from My_Stock_Page.schedulerlist import *
 
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("", index),
-    path("Individual", Individual),
-    path("Daily_run_Report", Daily_run_Report),
-    path(
-        "download/Individual",
-        download_file_Individual,
-        name="Individual",
-    ),
-    path("force_run", force_run, name="force_run"),
-    # path("download/forApple", download_file_apple, name="forApple"),
+    path("Individual", individual_input),
+    path("Daily_run_Report", daily_run_report),
+    path("Force_run", force_run_input),
+    path("download/Individual", download_file_Individual, name="Individual"),
     path("download/txt", download_file_txt, name="txt"),
     path("download/csv", download_file_csv, name="csv"),
-    # path("download/forgoogle", download_file_google, name="forgoogle"),
 ]

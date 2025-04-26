@@ -4,5 +4,5 @@ token.yaml
 gdToken.json
 __pycache__
 .google-cookie
-Parameter.txt
 .DS_Store
+db.sqlite3

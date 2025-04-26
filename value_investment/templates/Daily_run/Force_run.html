@@ -1,0 +1,21 @@
+<!-- input_form.html -->
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Daily_run_Report</title>
+</head>
+
+<body>
+    <a href="..">Home</a>
+    <h1>輸入要跑的(User_Choice, 0051, 0050, 006201)</h1>
+    <h1>all則為全跑</h1>
+    <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit">force_run</button>
+    </form>
+</body>
+
+</html>
