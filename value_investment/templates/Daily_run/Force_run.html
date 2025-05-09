@@ -1,21 +1,130 @@
-<!-- input_form.html -->
 <!DOCTYPE html>
-<html lang="zh">
-
+<html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <title>Daily_run_Report</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Daily Run Report</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #6e8efb, #a777e3);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            padding: 2.5em;
+            max-width: 600px;
+            width: 90%;
+            text-align: center;
+            animation: fadeIn 1s ease-in-out;
+        }
+        h1 {
+            color: #2c3e50;
+            font-size: 1.8em;
+            margin-bottom: 0.5em;
+            letter-spacing: 1px;
+        }
+        h2 {
+            color: #555;
+            font-size: 1.2em;
+            font-weight: 400;
+            margin-bottom: 1.5em;
+        }
+        .home-link {
+            display: inline-block;
+            text-decoration: none;
+            color: #007bff;
+            font-size: 1.1em;
+            margin-bottom: 1em;
+            transition: color 0.3s;
+        }
+        .home-link:hover {
+            color: #0056b3;
+        }
+        form {
+            display: flex;
+            flex-direction: column;
+            gap: 1em;
+        }
+        input[type="text"] {
+            padding: 1em;
+            font-size: 1.2em;
+            border: 2px solid #dcdcdc;
+            border-radius: 8px;
+            outline: none;
+            transition: border-color 0.3s;
+            width: 100%;
+            height: 50px;
+        }
+        input[type="text"]:focus {
+            border-color: #007bff;
+        }
+        button {
+            background: linear-gradient(to right, #007bff, #00ddeb);
+            color: white;
+            padding: 0.8em;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-weight: 500;
+            cursor: pointer;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 20px rgba(0, 123, 255, 0.4);
+        }
+        button:active {
+            transform: translateY(0);
+            box-shadow: 0 4px 10px rgba(0, 123, 255, 0.2);
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @media (max-width: 600px) {
+            .container {
+                padding: 1.5em;
+            }
+            h1 {
+                font-size: 1.5em;
+            }
+            h2 {
+                font-size: 1em;
+            }
+            input[type="text"] {
+                font-size: 1em;
+                padding: 0.8em;
+                height: 45px;
+            }
+            button {
+                font-size: 1em;
+                padding: 0.7em;
+            }
+        }
+    </style>
 </head>
-
 <body>
-    <a href="..">Home</a>
-    <h1>輸入要跑的(User_Choice, 0051, 0050, 006201)</h1>
-    <h1>all則為全跑</h1>
-    <form method="post">
-        {% csrf_token %}
-        {{ form.as_p }}
-        <button type="submit">force_run</button>
-    </form>
+    <div class="container">
+        <a href=".." class="home-link">返回首頁</a>
+        <h1>輸入要跑的股票代號</h1>
+        <h2>可選：User_Choice, 0051, 0050, 006201，或輸入 "all" 執行全部</h2>
+        <form method="post">
+            {% csrf_token %}
+            {{ form.as_p }}
+            <button type="submit">強制執行</button>
+        </form>
+    </div>
 </body>
-
 </html>

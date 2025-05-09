@@ -1,35 +1,129 @@
-<!-- success.html -->
 <!DOCTYPE html>
-<html lang="zh">
-
+<html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>預測結果</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #6e8efb, #a777e3);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start; /* 從頂部開始對齊 */
+            padding: 10px; /* 減少外邊距 */
+        }
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            padding: 2em;
+            max-width: 95vw; /* 幾乎佔滿頁面寬度 */
+            width: 100%;
+            text-align: center;
+            animation: fadeIn 1s ease-in-out;
+        }
+        h1 {
+            color: #2c3e50;
+            font-size: 2em;
+            margin-bottom: 1em;
+            letter-spacing: 1px;
+        }
+        .link-container {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 1.5em;
+        }
+        .home-link, .individual-link {
+            text-decoration: none;
+            color: #007bff;
+            font-size: 1.1em;
+            transition: color 0.3s;
+        }
+        .home-link:hover, .individual-link:hover {
+            color: #0056b3;
+        }
+        .download-button {
+            display: inline-block;
+            text-decoration: none;
+            background: linear-gradient(to right, #007bff, #00ddeb);
+            color: white;
+            padding: 0.8em 1.5em;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-weight: 500;
+            margin: 1em 0;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        .download-button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 20px rgba(0, 123, 255, 0.4);
+        }
+        .download-button:active {
+            transform: translateY(0);
+            box-shadow: 0 4px 10px rgba(0, 123, 255, 0.2);
+        }
+        .result-section {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 1.5em; /* 適當內邊距 */
+            margin-top: 1em;
+            text-align: left;
+            font-size: 1em; /* 適中字體 */
+            line-height: 1.8; /* 保持行距 */
+            box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.1);
+            white-space: pre-wrap;
+            width: 100%; /* 確保內容佔滿卡片寬度 */
+        }
+        .result-section pre {
+            font-family: 'Segoe UI', monospace; /* 使用清晰的等寬字體 */
+            margin: 0;
+            font-size: inherit; /* 繼承父元素的字體大小 */
+            line-height: inherit; /* 繼承父元素的行距 */
+            width: 100%; /* 確保 pre 標籤佔滿寬度 */
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @media (max-width: 600px) {
+            .container {
+                padding: 1.2em;
+            }
+            h1 {
+                font-size: 1.5em;
+            }
+            .link-container {
+                flex-direction: column;
+                gap: 0.5em;
+            }
+            .home-link, .individual-link, .download-button {
+                font-size: 0.9em;
+            }
+            .result-section {
+                font-size: 0.9em; /* 手機上略減小字體 */
+                padding: 1em;
+            }
+        }
+    </style>
 </head>
-<style>
-    body {
-        font-family: Arial, sans-serif;
-        white-space: pre-wrap;
-        /* 保持换行和空格 */
-        margin: 20px;
-        line-height: 1.5;
-        /* 设置行间距 */
-    }
-</style>
-
 <body>
-    <a href="..">Home</a>
-    <br>
-    <a href="Individual">Individual</a>
-
-
-    <a href="download/Individual">
-        <h2>Download Individual</h2>
-    </a>
-
-    <pre>
-{{ Stock_input }}
-    </pre>
+    <div class="container">
+        <h1>預測結果</h1>
+        <div class="link-container">
+            <a href=".." class="home-link">返回首頁</a>
+            <a href="Individual" class="individual-link">個股查詢</a>
+        </div>
+        <a href="download/Individual" class="download-button">下載個股資料</a>
+        <div class="result-section">
+            <pre>{{ Stock_input }}</pre>
+        </div>
+    </div>
 </body>
-
 </html>
