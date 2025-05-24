@@ -125,6 +125,8 @@ STATIC_URL = "static/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+LOG_PATH = Path("syslog.log")
+
 RESULT_PATHS = {
     "individual_report_path": os.path.join(BASE_DIR, "results", "Individual"),
     "daliy_report_path": os.path.join(BASE_DIR, "results", "new"),

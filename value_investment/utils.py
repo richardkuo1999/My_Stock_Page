@@ -1,9 +1,10 @@
 import zipfile
-import logging
 from pathlib import Path
 from django.http import HttpResponse
 
-logger = logging.getLogger(__name__)
+from value_investment.value_investment.utils.utils import logger_create
+
+logger = logger_create(__name__)
 
 def zip_response(file_paths, zip_name):
     response = HttpResponse(content_type="application/zip")
