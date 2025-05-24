@@ -1,6 +1,6 @@
 import os
 import sys
-import logging
+from pathlib import Path
 from django.conf import settings
 from django.shortcuts import render
 from django.http import HttpResponse
@@ -11,20 +11,23 @@ sys.path.append(os.path.dirname(__file__)+"/..")
 
 from value_investment.utils import zip_response
 from value_investment.forms import Individual_Input, ForceRun_Input
+
+from value_investment.value_investment.utils.utils import logger_create
 from value_investment.value_investment.server_main import individual_search, force_run
 
-logger = logging.getLogger(__name__)
+
+logger = logger_create(__name__)
 
 DAILY_RUN_LISTS = settings.DAILY_RUN_LISTS
 IP_ADDR = settings.ALLOWED_HOSTS[0]
-
+LOG_PATH = settings.LOG_PATH
 
 def index(request):
     return render(request, "index.html")
 
 from concurrent.futures import ThreadPoolExecutor
 
-def individual_input(request):
+async def individual_input(request):
     def process_stock_input(stock_input, eps_input):
         try:
             stock_list = stock_input.split()
@@ -45,9 +48,7 @@ def individual_input(request):
                 )
                 parms = [int(form.cleaned_data["level_input"]),float(form.cleaned_data["year_input"])]
 
-                with ThreadPoolExecutor() as executor:
-                    future = executor.submit(individual_search, stock_list, eps_list, parms)
-                    result = future.result()
+                result = await individual_search(stock_list, eps_list, parms)
                 
                 return render(
                     request,
@@ -67,12 +68,14 @@ def individual_input(request):
 def daily_run_report(request):
     return render(request, "Daily_run/Daily_run_Report.html")
 
-def force_run_input(request):
+async def force_run_input(request):
     if request.method == "POST":
         form = ForceRun_Input(request.POST)
         if form.is_valid():
             run_lists = form.cleaned_data["ETF_input"].split()
-            force_run(run_lists, DAILY_RUN_LISTS, IP_ADDR)
+            if Path.exists(LOG_PATH):
+                LOG_PATH.unlink()
+            _ = await force_run(run_lists, DAILY_RUN_LISTS, IP_ADDR)
     else:
         form = ForceRun_Input()
 
