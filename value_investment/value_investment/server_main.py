@@ -23,9 +23,9 @@ year = 4.5      # Calculation period (years)
 
 USER_CHOICE = [
     "1560", "2337", "2351", "2455", "2458", "2467", "2645", "3004", "3006",
-    "3081", "3455","3563", "3587", "3596", "3708", "4906", "5306", "5388",
-    "6271", "6438", "6679", "6768", "6937", "6957", "8027", "8210", "8936",
-    "9914", "9938", "2247", "3479", "6906"
+    "3081", "3455","3563", "3587", "3596", "3708", "4906", "4967", "5306", 
+    "5388", "6271", "6438", "6679", "6768", "6937", "6957", "8027", "8210", 
+    "8936", "9802 ", "9914", "9938", "2247", "3479", "6906"
 ]
 
 async def get_catch():
@@ -138,12 +138,10 @@ async def main_run(run_lists, DAILY_RUN_LISTS):
 
         # TODO 評估要不要異步化
         for title, stocklist in stock_groups.items():
-            telegram_print(f"Start Run\n{title}")
-            resultdata = await calculator(session, stocklist, params, tokens, catchs)
-            result_output(result_path / Path(title), resultdata)
-
-        # Wait all async finished
-        await asyncio.sleep(5)
+            if title != "Institutional_TOP50":
+                telegram_print(f"Start Run\n{title}")
+                resultdata = await calculator(session, stocklist, params, tokens, catchs)
+                result_output(result_path / Path(title), resultdata)
 
         unders_est_data = {}
         try:

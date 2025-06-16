@@ -343,8 +343,8 @@ def telegram_print(msg, token_path="token.yaml"):
             logger.error("Missing TelegramToken or TelegramchatID in token file")
             return False  
         url = f"https://api.telegram.org/bot{token}/sendMessage?chat_id={chat_id}&text={msg}"
-        # response = requests.get(url, timeout=10)
-        # response.raise_for_status()
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
 
         logger.debug(msg)
         return True
