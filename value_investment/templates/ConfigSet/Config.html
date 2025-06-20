@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Daily Run Report</title>
+    <title>Config setting 首頁</title>
     <style>
         * {
             margin: 0;
@@ -24,68 +24,34 @@
             border-radius: 15px;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
             padding: 2.5em;
-            max-width: 600px;
-            width: 90%;
             text-align: center;
+            max-width: 400px;
+            width: 90%;
             animation: fadeIn 1s ease-in-out;
         }
         h1 {
             color: #2c3e50;
-            font-size: 1.8em;
-            margin-bottom: 0.5em;
+            font-size: 2em;
+            margin-bottom: 1.5em;
             letter-spacing: 1px;
         }
-        h2 {
-            color: #555;
-            font-size: 1.2em;
-            font-weight: 400;
-            margin-bottom: 1.5em;
-        }
-        .home-link {
-            display: inline-block;
+        .button {
+            display: block;
             text-decoration: none;
-            color: #007bff;
-            font-size: 1.1em;
-            margin-bottom: 1em;
-            transition: color 0.3s;
-        }
-        .home-link:hover {
-            color: #0056b3;
-        }
-        form {
-            display: flex;
-            flex-direction: column;
-            gap: 1em;
-        }
-        input[type="text"] {
-            padding: 1em;
-            font-size: 1.2em;
-            border: 2px solid #dcdcdc;
-            border-radius: 8px;
-            outline: none;
-            transition: border-color 0.3s;
-            width: 100%;
-            height: 50px;
-        }
-        input[type="text"]:focus {
-            border-color: #007bff;
-        }
-        button {
             background: linear-gradient(to right, #007bff, #00ddeb);
             color: white;
-            padding: 0.8em;
-            border: none;
-            border-radius: 8px;
+            padding: 1em;
+            margin: 1em 0;
+            border-radius: 10px;
             font-size: 1.1em;
             font-weight: 500;
-            cursor: pointer;
             transition: transform 0.3s, box-shadow 0.3s;
         }
-        button:hover {
-            transform: translateY(-3px);
+        .button:hover {
+            transform: translateY(-5px);
             box-shadow: 0 8px 20px rgba(0, 123, 255, 0.4);
         }
-        button:active {
+        .button:active {
             transform: translateY(0);
             box-shadow: 0 4px 10px rgba(0, 123, 255, 0.2);
         }
@@ -100,17 +66,9 @@
             h1 {
                 font-size: 1.5em;
             }
-            h2 {
-                font-size: 1em;
-            }
-            input[type="text"] {
+            .button {
                 font-size: 1em;
                 padding: 0.8em;
-                height: 45px;
-            }
-            button {
-                font-size: 1em;
-                padding: 0.7em;
             }
         }
     </style>
@@ -118,13 +76,9 @@
 <body>
     <div class="container">
         <a href=".." class="home-link">返回首頁</a>
-        <h1>輸入要跑的股票代號</h1>
-        <h2>可選：User_Choice, 0051, 0050, 006201, Institutional_TOP50</h2>
-        <form method="post">
-            {% csrf_token %}
-            <input type="text" name="tag_input" placeholder="输入内容(空格分隔)" value="{{ default_dailylist_input }}">
-            <button type="submit">強制執行</button>
-        </form>
+        <h1>點擊以下頁面跳轉</h1>
+        <a href="UserChoice" class="button">User Choice List setting</a>
+        <a href="DailyList" class="button">Daily List setting</a>
     </div>
 </body>
 </html>

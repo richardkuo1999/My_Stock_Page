@@ -17,17 +17,21 @@ Including another URLconf
 
 from django.contrib import admin
 from django.urls import path
-from value_investment.views import *
+from value_investment.views import index, DownloadFileView, config_index, UserChoiceView, DailyListView, InvestmentView
 from My_Stock_Page.schedulerlist import *
 
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("", index),
-    path("Individual", individual_input),
-    path("Daily_run_Report", daily_run_report),
-    path("Force_run", force_run_input),
-    path("download/Individual", download_file_Individual, name="Individual"),
-    path("download/txt", download_file_txt, name="txt"),
-    path("download/csv", download_file_csv, name="csv"),
+    
+    path("Individual", InvestmentView.individual),
+    path("Daily_run_Report", InvestmentView.daily_run),
+    path("Force_run", InvestmentView.force_run),
+    path("download/Individual", DownloadFileView.individual, name="Individual"),
+    path("download/txt", DownloadFileView.daily_txt, name="txt"),
+    path("download/csv", DownloadFileView.daily_csv, name="csv"),
+
+    path("ConfigSetting", config_index),
     path("UserChoice", UserChoiceView.user_choice_index),
+    path("DailyList", DailyListView.daily_list_index),
 ]

@@ -110,7 +110,7 @@ class UnderEST:
         
         return get_profit(target, price) if(eps > 0) else -1
     
-async def main_run(run_lists, DAILY_RUN_LISTS, USER_CHOICE):
+async def main_run(run_lists, daily_list, user_choice):
     result_path = Path("results", "new")
     backup_path = Path("results", "backup")
     tokens = load_token()
@@ -126,9 +126,9 @@ async def main_run(run_lists, DAILY_RUN_LISTS, USER_CHOICE):
 
     stock_groups = {}
     async with aiohttp.ClientSession() as session:
-        for etf in DAILY_RUN_LISTS:
+        for etf in daily_list:
             if etf in run_lists:
-                stock_groups[etf] = USER_CHOICE if etf == "User_Choice" else await fetch_etf_constituents(session, etf)
+                stock_groups[etf] = user_choice if etf == "User_Choice" else await fetch_etf_constituents(session, etf)
 
         # TODO 評估要不要異步化
         for title, stocklist in stock_groups.items():
@@ -162,11 +162,11 @@ async def main_run(run_lists, DAILY_RUN_LISTS, USER_CHOICE):
         except Exception as e:
             logger.error(f"Error in notifying macro indicators: {e}")
 
-async def daily_run(DAILY_RUN_LISTS, USER_CHOICE, IP_ADDR):
+async def daily_run(daily_list, user_choice, IP_ADDR):
     if daily_run_lock.acquire(blocking=False):
         telegram_print("Start Daily Run")
         try:
-            await main_run(DAILY_RUN_LISTS, DAILY_RUN_LISTS, USER_CHOICE)
+            await main_run(daily_list, daily_list, user_choice)
             telegram_print("Daily Run Finished")
         except Exception as e:
             logger.error(f"Daily run error: {e}")
@@ -179,10 +179,10 @@ async def daily_run(DAILY_RUN_LISTS, USER_CHOICE, IP_ADDR):
             daily_run_lock.release()
             logging.shutdown()
 
-async def force_run(run_lists, DAILY_RUN_LISTS, USER_CHOICE, IP_ADDR):
+async def force_run(run_lists, daily_list, user_choice, IP_ADDR):
     if daily_run_lock.acquire(blocking=False):
         try:
-            await main_run(run_lists, DAILY_RUN_LISTS, USER_CHOICE)
+            await main_run(run_lists, daily_list, user_choice)
         except Exception as e:
             logger.error(f"Force run error: {e}")
             telegram_print(f"Force run error: {e}")

@@ -105,7 +105,14 @@
         <h1>請輸入股票代號，並以空格分開</h1>
         <form method="post">
             {% csrf_token %}
-            {{ form.as_p }}
+            <h2>Stock</h2>
+            <input type="text" name="stock_input" placeholder="输入内容(空格分隔)">
+            <h2>Factset EPS level: 1-high, 2-low, 3-average, 4-medium</h2>
+            <input type="text" name="level_input" placeholder="1~4" value="{{ default_level }}">
+            <h2>自行輸入EPS(無請用 n)</h2>
+            <input type="text" name="EPS_input" placeholder="输入内容(空格分隔)">
+            <h2>使用過去幾年的資料</h2>
+            <input type="text" name="year_input" placeholder="输入内容" value="{{ default_year }}">
             <button type="submit">提交</button>
         </form>
     </div>

@@ -131,5 +131,3 @@ RESULT_PATHS = {
     "individual_report_path": os.path.join(BASE_DIR, "results", "Individual"),
     "daliy_report_path": os.path.join(BASE_DIR, "results", "new"),
 }
-
-DAILY_RUN_LISTS = ["User_Choice", "0050", "0051", "006201", "Institutional_TOP50"]

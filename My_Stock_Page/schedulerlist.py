@@ -4,9 +4,8 @@ from django.conf import settings
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from value_investment.value_investment.server_main import daily_run
-from value_investment.views import UserChoiceView
+from value_investment.views import UserChoiceView, DailyListView
 
-RUN_LISTS = settings.DAILY_RUN_LISTS
 URL = settings.ALLOWED_HOSTS[0]
 LOG_PATH = settings.LOG_PATH
 
@@ -17,8 +16,9 @@ def sync_daily_run(run_lists, user_choice, url):
 
 scheduler = BackgroundScheduler()
 try:
-    USER_CHOICE = UserChoiceView.get_stock_list()
-    scheduler.add_job(sync_daily_run, 'cron', args=(RUN_LISTS, USER_CHOICE, URL),
+    daily_list = DailyListView.get_tag_list()
+    user_choice = UserChoiceView.get_stock_list()
+    scheduler.add_job(sync_daily_run, 'cron', args=(daily_list, user_choice, URL),
                             hour=20, minute=0, misfire_grace_time=30, id='test', 
                             replace_existing=True, timezone='Asia/Taipei')
     scheduler.start()
