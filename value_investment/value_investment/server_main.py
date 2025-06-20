@@ -21,12 +21,6 @@ daily_run_lock = threading.Lock()
 level = 4       # EPS level: 1-high, 2-low, 3-average, 4-medium
 year = 4.5      # Calculation period (years)
 
-USER_CHOICE = [
-    "1560", "2337", "2351", "2455", "2458", "2467", "2645", "3004", "3006",
-    "3081", "3455","3563", "3587", "3596", "3708", "4906", "4967", "5306", 
-    "5388", "6271", "6438", "6679", "6768", "6937", "6957", "8027", "8210", 
-    "8936", "9802 ", "9914", "9938", "2247", "3479", "6906"
-]
 
 async def get_catch():
     last_path = Path("results", "new")
@@ -116,7 +110,7 @@ class UnderEST:
         
         return get_profit(target, price) if(eps > 0) else -1
     
-async def main_run(run_lists, DAILY_RUN_LISTS):
+async def main_run(run_lists, DAILY_RUN_LISTS, USER_CHOICE):
     result_path = Path("results", "new")
     backup_path = Path("results", "backup")
     tokens = load_token()
@@ -168,11 +162,11 @@ async def main_run(run_lists, DAILY_RUN_LISTS):
         except Exception as e:
             logger.error(f"Error in notifying macro indicators: {e}")
 
-async def daily_run(DAILY_RUN_LISTS, IP_ADDR):
+async def daily_run(DAILY_RUN_LISTS, USER_CHOICE, IP_ADDR):
     if daily_run_lock.acquire(blocking=False):
         telegram_print("Start Daily Run")
         try:
-            await main_run(DAILY_RUN_LISTS, DAILY_RUN_LISTS)
+            await main_run(DAILY_RUN_LISTS, DAILY_RUN_LISTS, USER_CHOICE)
             telegram_print("Daily Run Finished")
         except Exception as e:
             logger.error(f"Daily run error: {e}")
@@ -185,10 +179,10 @@ async def daily_run(DAILY_RUN_LISTS, IP_ADDR):
             daily_run_lock.release()
             logging.shutdown()
 
-async def force_run(run_lists, DAILY_RUN_LISTS, IP_ADDR):
+async def force_run(run_lists, DAILY_RUN_LISTS, USER_CHOICE, IP_ADDR):
     if daily_run_lock.acquire(blocking=False):
         try:
-            await main_run(run_lists, DAILY_RUN_LISTS)
+            await main_run(run_lists, DAILY_RUN_LISTS, USER_CHOICE)
         except Exception as e:
             logger.error(f"Force run error: {e}")
             telegram_print(f"Force run error: {e}")

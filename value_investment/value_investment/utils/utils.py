@@ -109,8 +109,14 @@ def dict2list(data):
     return result
 
 
-def is_ordinary_stock(stock_id):
-    return stock_id[0] in "12345678"
+def is_ordinary_stock(self,stock):
+    if not stock or len(stock) < 4:
+        return False
+        
+    if not stock.isdigit():
+        return False
+
+    return stock[0] in "123456780"
 
 
 def get_profit(target_price, price):

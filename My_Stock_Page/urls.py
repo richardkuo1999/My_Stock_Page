@@ -29,4 +29,5 @@ urlpatterns = [
     path("download/Individual", download_file_Individual, name="Individual"),
     path("download/txt", download_file_txt, name="txt"),
     path("download/csv", download_file_csv, name="csv"),
+    path("UserChoice", UserChoiceView.user_choice_index),
 ]
