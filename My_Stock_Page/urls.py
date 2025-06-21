@@ -17,7 +17,7 @@ Including another URLconf
 
 from django.contrib import admin
 from django.urls import path
-from value_investment.views import index, DownloadFileView, config_index, UserChoiceView, DailyListView, InvestmentView
+from value_investment.views import *
 from My_Stock_Page.schedulerlist import *
 
 urlpatterns = [
@@ -25,7 +25,7 @@ urlpatterns = [
     path("", index),
     
     path("Individual", InvestmentView.individual),
-    path("Daily_run_Report", InvestmentView.daily_run),
+    path("Daily_run_Report", daily_run_index),
     path("Force_run", InvestmentView.force_run),
     path("download/Individual", DownloadFileView.individual, name="Individual"),
     path("download/txt", DownloadFileView.daily_txt, name="txt"),

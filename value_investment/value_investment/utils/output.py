@@ -1,9 +1,13 @@
+import os
+import sys
 import csv
 import requests
 from pathlib import Path
 from django.http import HttpResponse
 
-from utils.utils import logger, dict2list, get_profit, get_target, load_token
+sys.path.append(os.path.dirname(__file__)+"/..")
+
+from utils.utils import logger, dict2list, get_profit, get_target, load_token, load_data
 
 
 ROW_TITLE = [
@@ -346,8 +350,46 @@ def telegram_print(msg, token_path="token.yaml"):
         response = requests.get(url, timeout=10)
         response.raise_for_status()
 
-        logger.debug(msg)
+        print(msg)
         return True
     except (requests.RequestException, KeyError) as e:
         logger.error(f"Telegram 發送失敗: {e}")
         return False
+
+class UnderEST:
+    @staticmethod
+    async def get_underestimated(result_path: Path) -> dict:
+        last_data = await load_data(result_path)
+        unders_est_data = {stock_id: data \
+                            for stock_id, data in last_data.items()
+                            if UnderEST.is_underestimated(data)
+                        }
+        return unders_est_data
+
+    @staticmethod
+    def notify_unders_est(underestimated_dict: dict) -> str:
+        msg = "Under Stimated\n"
+        unsorted_list = []
+        for stock_id, data in underestimated_dict.items():
+            name = data.get("名稱")
+            business = data.get('產業')
+            profit = UnderEST.get_expected_profit(data)
+            unsorted_list.append([stock_id, name, business, profit])
+        sorted_list = sorted(unsorted_list, key=lambda x: x[3], reverse=True)
+        for stock_id, name, business, profit in sorted_list:
+            stock_id = str(stock_id).split('.')[0]
+            msg += f"{stock_id:<5} {name:<6} {business:<6} {profit:>5.1f}%\n"
+        telegram_print(msg)
+        return msg
+
+    @staticmethod
+    def is_underestimated(StockData):
+        return UnderEST.get_expected_profit(StockData) > 0.0
+
+    @staticmethod
+    def get_expected_profit(data: dict) -> float:
+        eps = data.get("EPS(EST)") or data.get("EPS(TTM)")
+        price = data.get("價格")
+        target = get_target(data.get("PE(TL-1SD)"), eps)
+        
+        return get_profit(target, price) if(eps > 0) else -1
