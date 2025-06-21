@@ -23,13 +23,15 @@ from My_Stock_Page.schedulerlist import *
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("", index),
+    path("Daily_run_Report", daily_run_index),
     
     path("Individual", InvestmentView.individual),
-    path("Daily_run_Report", daily_run_index),
     path("Force_run", InvestmentView.force_run),
+
     path("download/Individual", DownloadFileView.individual, name="Individual"),
     path("download/txt", DownloadFileView.daily_txt, name="txt"),
     path("download/csv", DownloadFileView.daily_csv, name="csv"),
+    path("download/log", DownloadFileView.download_log, name="log"),
 
     path("ConfigSetting", config_index),
     path("UserChoice", UserChoiceView.user_choice_index),

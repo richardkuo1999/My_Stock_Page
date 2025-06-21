@@ -21,13 +21,16 @@ DEFAULT_HEADERS = {
 }
 
 
-def logger_create(file_name):
+def logger_create():
+    log_path = Path("log")
+    log_path.mkdir(parents=True, exist_ok=True)
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(levelname)s - %(name)s:%(funcName)s:%(lineno)d - %(message)s",
     )
     logger = logging.getLogger(__name__)
-    file_handler = logging.FileHandler("syslog.log")
+    file_handler = logging.FileHandler("log/value_investment.log")
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(
         logging.Formatter("%(asctime)s - %(levelname)s - %(filename)s:%(funcName)s:%(lineno)d - %(message)s",)
@@ -35,7 +38,7 @@ def logger_create(file_name):
     logger.addHandler(file_handler)
     return logger
 
-logger = logger_create(__name__)
+logger = logger_create()
 
 @retry(
     stop=stop_after_attempt(3),

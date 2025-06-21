@@ -17,18 +17,18 @@ from value_investment.models import USER_CHOICE, DAILY_LIST
 
 from value_investment.value_investment.utils.output import UnderEST, result_output, telegram_print
 from value_investment.value_investment.calculator.calculator import calculator
-from value_investment.value_investment.utils.utils import logger_create, load_token, load_data
+from value_investment.value_investment.utils.utils import logger, load_token, load_data
 from value_investment.value_investment.calculator.Index import notify_macro_indicators
 from value_investment.value_investment.calculator.stock_select import fetch_etf_constituents, fetch_institutional_top50
 
-logger = logger_create(__name__)
-daily_run_lock = threading.Lock()
 
 IP_ADDR = settings.ALLOWED_HOSTS[0]
 RESULT_PATHS = settings.RESULT_PATHS
-LOG_PATH = settings.LOG_PATH
+LOG_PATH = settings.LOG_PATH / "value_investment.log"
+
 level = 4       # EPS level: 1-high, 2-low, 3-average, 4-medium
 year = 4.5      # Calculation period (years)
+daily_run_lock = threading.Lock()
 
 def index(request):
     return render(request, "index.html")
@@ -105,7 +105,8 @@ class InvestmentView:
 
         if daily_run_lock.acquire(blocking=False):
             if Path.exists(LOG_PATH):
-                LOG_PATH.unlink()
+                with open(LOG_PATH, 'w') as f:
+                    f.truncate(0)  # 清空文件内容
 
             try:
                 telegram_print("Start Run")
@@ -165,7 +166,8 @@ class InvestmentView:
                         file.unlink()
 
                 if Path.exists(LOG_PATH):
-                    LOG_PATH.unlink()
+                    with open(LOG_PATH, 'w') as f:
+                        f.truncate(0)  # 清空文件内容
 
                 async with aiohttp.ClientSession() as session:
                     stock_datas = await calculator(session, stock_list, params, tokens, catchs)
@@ -212,6 +214,13 @@ class DownloadFileView:
             for name in daily_list + ["Understimated", "Institutional_TOP50"]
         ]
         return DownloadFileView.zip_response(file_paths, "result_csv.zip")
+
+    @staticmethod
+    def download_log(request):
+        file_paths = [
+           file for file in settings.LOG_PATH.rglob("*")
+        ]
+        return DownloadFileView.zip_response(file_paths, "log.zip")
     
     @staticmethod
     def zip_response(file_paths, zip_name):

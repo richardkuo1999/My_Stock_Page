@@ -125,7 +125,7 @@ STATIC_URL = "static/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-LOG_PATH = Path("syslog.log")
+LOG_PATH = Path("log")
 
 RESULT_PATHS = {
     "result_path": Path(BASE_DIR, "results"),
