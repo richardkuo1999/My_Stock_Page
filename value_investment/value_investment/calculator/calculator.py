@@ -62,12 +62,20 @@ class Stock_Predictor:
 
         self.factset_data = anue_data
 
+        for i in range(5):
+            if yahoofinance_data.get("info") is None or yahoofinance_data.get("price") is None:
+                yahoofinance_data = await self.yahoofinance.fetch_data(stock_id, self.market)
+                await asyncio.sleep(5)
+            else:
+                break
+
         self.avg1y_target_est = yahoofinance_data["info"].get("targetMeanPrice")
         self.peg = yahoofinance_data["info"].get("trailingPegRatio")
         self.business = yahoofinance_data["info"].get("longBusinessSummary")
         self.gross_margins = yahoofinance_data["info"].get("grossMargins")
         self.market_price = yahoofinance_data["info"].get("regularMarketPrice")
-        self.price_datas =  yahoofinance_data["price"]["Close"].values
+        self.price_datas =  yahoofinance_data["price"].get("Close")
+        self.price_datas = self.price_datas.values if self.price_datas is not None else None
         self.trailingEps = yahoofinance_data["info"].get("trailingEps")
         self.yahooforwardEps = yahoofinance_data["info"].get("forwardEps")
 
@@ -149,7 +157,7 @@ async def main():
     from utils.utils import load_token
 
     tokens = load_token()
-    stock_list = ["2330"]  # Example stock list
+    stock_list = ["6768"]  # Example stock list
     parameter = (1, 5)  # Example parameters
     catch_url = {}  # Example catch URL
     async with aiohttp.ClientSession() as session:

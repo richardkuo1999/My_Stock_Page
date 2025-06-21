@@ -6,4 +6,5 @@ __pycache__
 .google-cookie
 .DS_Store
 db.sqlite3
-syslog.log
+
+*.log

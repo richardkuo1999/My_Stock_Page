@@ -10,7 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
-import os
+
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -125,11 +125,11 @@ STATIC_URL = "static/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-LOG_PATH = Path("syslog.log")
+LOG_PATH = Path("log")
 
 RESULT_PATHS = {
-    "individual_report_path": os.path.join(BASE_DIR, "results", "Individual"),
-    "daliy_report_path": os.path.join(BASE_DIR, "results", "new"),
+    "result_path": Path(BASE_DIR, "results"),
+    "daliy_report_path": Path(BASE_DIR, "results", "new"),
+    "daliy_report_backup_path": Path(BASE_DIR, "results", "backup"),
+    "individual_report_path": Path(BASE_DIR, "results", "Individual"),
 }
-
-DAILY_RUN_LISTS = ["User_Choice", "0050", "0051", "006201", "Institutional_TOP50"]

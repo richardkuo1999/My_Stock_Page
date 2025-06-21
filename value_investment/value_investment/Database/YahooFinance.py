@@ -23,7 +23,7 @@ class YahooFinance:
         except Exception as e:
             logger.error("Failed to fetch Yahoo Finance data for {}.{}: {}"
                          .format(stock_id, market, e))
-            return {}
+            return {"info": {}, "price": {}}
 
 async def main():
     stock_id = "2330"
