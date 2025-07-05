@@ -64,7 +64,7 @@ class InvestmentView:
                 # TODO 評估要不要異步化
                 for title, stocklist in stock_groups.items():
                     if title != "Institutional_TOP50":
-                        telegram_print(f"Start Run\n{title}")
+                        telegram_print(f"Start Run\n{title}: {len(stocklist)}")
                         resultdata = await calculator(session, stocklist, params, tokens, catchs)
                         result_output(result_path / Path(title), resultdata)
 
@@ -77,10 +77,9 @@ class InvestmentView:
 
                 if "Institutional_TOP50" in run_lists:
                     try:
-                        telegram_print("Start Run\nInstitutional_TOP50")
                         last_data = await load_data(result_path)
-
                         stock_list = await fetch_institutional_top50(session)
+                        telegram_print(f"Start Run\nInstitutional_TOP50: {len(stock_list)}")
 
                         existing_data = {sid: last_data[sid] for sid in stock_list if sid in last_data}
                         missing_ids = [sid for sid in stock_list if sid not in last_data]
