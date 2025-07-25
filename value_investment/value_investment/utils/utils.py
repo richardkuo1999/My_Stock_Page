@@ -1,5 +1,7 @@
+import os
 import csv
 import yaml
+import zipfile
 import logging
 import asyncio
 import aiohttp
@@ -166,3 +168,17 @@ async def load_data(result_dir: Path) -> dict:
 
     logger.info(f"Aggregated data for {len(catchs)} stocks from {len(list_catchs)} files")
     return catchs
+
+def zip_the_file(file_list, zip_name = "result.zip"):
+    try:
+        with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for file_path in file_list:
+                if os.path.exists(file_path):
+                    zipf.write(file_path, os.path.basename(file_path))
+                else:
+                    logger.warning(f"File not found: {file_path}")
+                    return False
+        return True
+    except Exception as e:
+        logger.error(f"Error creating zip file: {e}")
+        return False
