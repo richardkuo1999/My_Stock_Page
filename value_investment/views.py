@@ -15,7 +15,8 @@ sys.path.append(os.path.dirname(__file__)+"/..")
 
 from value_investment.models import USER_CHOICE, DAILY_LIST
 
-from value_investment.value_investment.utils.output import UnderEST, result_output, telegram_print
+from value_investment.value_investment.utils.output import UnderEST, result_output, telegram_print, send_zip_TG
+from value_investment.value_investment.utils.utils import zip_the_file
 from value_investment.value_investment.calculator.calculator import calculator
 from value_investment.value_investment.utils.utils import logger, load_token, load_data
 from value_investment.value_investment.calculator.Index import notify_macro_indicators
@@ -106,7 +107,6 @@ class InvestmentView:
             if Path.exists(LOG_PATH):
                 with open(LOG_PATH, 'w') as f:
                     f.truncate(0)  # 清空文件内容
-
             try:
                 telegram_print("Start Run")
                 await __daily_run(run_lists, daily_list, user_choice)
@@ -119,6 +119,14 @@ class InvestmentView:
                     f"Download link:\nCSV: http://{IP_ADDR}:8000/download/csv\n" \
                     f"TXT: http://{IP_ADDR}:8000/download/txt"
                 )
+
+                result_path = RESULT_PATHS["daliy_report_path"]
+                file_list = [file for file in result_path.rglob("*")]
+                zip_the_file(file_list, "result.zip")
+                if os.path.exists("result.zip"):
+                    await send_zip_TG("result.zip")
+                    os.remove("result.zip")
+
                 daily_run_lock.release()
                 logging.shutdown()
 

@@ -5,6 +5,9 @@ import requests
 from pathlib import Path
 from django.http import HttpResponse
 
+from telegram import Bot
+from telegram.error import TelegramError
+
 sys.path.append(os.path.dirname(__file__)+"/..")
 
 from utils.utils import logger, dict2list, get_profit, get_target, load_token, load_data
@@ -354,6 +357,27 @@ def telegram_print(msg, token_path="token.yaml"):
         return True
     except (requests.RequestException, KeyError) as e:
         logger.error(f"Telegram 發送失敗: {e}")
+        return False
+
+async def send_zip_TG(zip_name, token_path="token.yaml"):
+    try:
+        tokens = load_token(token_path)
+        token = tokens.get("TelegramToken")
+        chat_id = tokens.get("TelegramchatID")
+        if not token or not chat_id:
+            logger.error("Missing TelegramToken or TelegramchatID in token file")
+            return False  
+        
+        bot = Bot(token=token)
+
+        with open(zip_name, 'rb') as zip_file:
+            await bot.send_document(chat_id=chat_id, document=zip_file, filename=zip_name)
+
+    except TelegramError as te:
+        print(f"Telegram error: {te}")
+        return False
+    except Exception as e:
+        print(f"Error: {e}")
         return False
 
 class UnderEST:
