@@ -119,7 +119,7 @@
     <div class="container">
         <a href=".." class="home-link">返回首頁</a>
         <h1>輸入要跑的股票代號</h1>
-        <h2>可選：User_Choice, 0051, 0050, 006201, Institutional_TOP50</h2>
+        <h2>可選：User_Choice, 0051.TW, 0050.TW, 006201.TW, Institutional_TOP50, ETF_Rank</h2>
         <form method="post">
             {% csrf_token %}
             <input type="text" name="tag_input" placeholder="输入内容(空格分隔)" value="{{ default_dailylist_input }}">

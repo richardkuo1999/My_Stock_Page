@@ -20,7 +20,7 @@ from value_investment.value_investment.utils.utils import zip_the_file
 from value_investment.value_investment.calculator.calculator import calculator
 from value_investment.value_investment.utils.utils import logger, load_token, load_data
 from value_investment.value_investment.calculator.Index import notify_macro_indicators
-from value_investment.value_investment.calculator.stock_select import fetch_etf_constituents, fetch_institutional_top50
+from value_investment.value_investment.calculator.stock_select import fetch_etf_constituents, fetch_institutional_top50, fetch_etf_rank_stocks
 
 
 IP_ADDR = settings.ALLOWED_HOSTS[0]
@@ -53,21 +53,27 @@ class InvestmentView:
             stock_groups = {}
 
             for file in result_path.rglob("*"):
-                if file.is_file() and (file.stem in run_lists or file.stem == "Understimated"):
+                stem_match = file.stem
+                if stem_match + ".TW" in run_lists or stem_match in run_lists or stem_match == "Understimated":
                     file.replace(backup_path / file.name)
 
             stock_groups = {}
             async with aiohttp.ClientSession() as session:
                 for etf in daily_list:
                     if etf in run_lists:
-                        stock_groups[etf] = user_choice if etf == "User_Choice" else await fetch_etf_constituents(session, etf)
+                        if etf == "User_Choice":
+                            stock_groups["User_Choice"] = user_choice
+                        elif etf == "ETF_Rank":
+                            stock_groups["ETF_Rank"] = await fetch_etf_rank_stocks(session)
+                        elif etf != "Institutional_TOP50":
+                            stock_groups[etf] = await fetch_etf_constituents(session, etf)
 
                 # TODO 評估要不要異步化
                 for title, stocklist in stock_groups.items():
                     if title != "Institutional_TOP50":
                         telegram_print(f"Start Run\n{title}: {len(stocklist)}")
                         resultdata = await calculator(session, stocklist, params, tokens, catchs)
-                        result_output(result_path / Path(title), resultdata)
+                        result_output(result_path / Path(title.split('.')[0]), resultdata)
 
                 unders_est_data = {}
                 try:
@@ -208,8 +214,8 @@ class DownloadFileView:
     def daily_txt(request):
         daily_list = DailyListView.get_tag_list()
         file_paths = [
-            RESULT_PATHS["daliy_report_path"]/f"{name}.txt"
-            for name in daily_list + ["Understimated", "Institutional_TOP50"]
+            RESULT_PATHS["daliy_report_path"]/f"{name.split('.')[0]}.txt"
+            for name in daily_list + ["Understimated", "Institutional_TOP50", "ETF_Rank"]
         ]
         return DownloadFileView.zip_response(file_paths, "result_txt.zip")
 
@@ -217,8 +223,8 @@ class DownloadFileView:
     def daily_csv(request):
         daily_list = DailyListView.get_tag_list()
         file_paths = [
-            RESULT_PATHS["daliy_report_path"]/f"{name}.csv"
-            for name in daily_list + ["Understimated", "Institutional_TOP50"]
+            RESULT_PATHS["daliy_report_path"]/f"{name.split('.')[0]}.csv"
+            for name in daily_list + ["Understimated", "Institutional_TOP50", "ETF_Rank"]
         ]
         return DownloadFileView.zip_response(file_paths, "result_csv.zip")
 
