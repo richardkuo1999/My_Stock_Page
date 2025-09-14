@@ -12,7 +12,7 @@ sys.path.append(os.path.dirname(__file__))
 from utils.utils import logger, load_token
 from utils.output import result_output
 from calculator.calculator import calculator
-from calculator.stock_select import fetch_etf_constituents, fetch_institutional_top50
+from calculator.stock_select import fetch_etf_constituents, fetch_institutional_top50, fetch_etf_rank_stocks
 
 
 def parse_arguments():
@@ -57,8 +57,11 @@ def get_stock_lists(session, user_input: str):
 
         elif user_input == "3":  # 三大法人買賣超
             return {"Institutional_Investors": fetch_institutional_top50(session)}
+        
+        elif user_input == "4":  # etf排行重複持股
+            return {"ETF_Rank": fetch_etf_rank_stocks(session)}
 
-        elif user_input == "4":  # 退出
+        elif user_input == "5":  # 退出
             raise KeyboardInterrupt
 
         else:
@@ -81,7 +84,7 @@ async def main():
             # 跨平台清屏
             print("\033[H\033[J", end="")
             user_input = input(
-                "1. 查詢 ETF 成分股\n2. 查詢個股\n3. 三大法人買賣超\n4. 退出\n輸入: "
+                "1. 查詢 ETF 成分股\n2. 查詢個股\n3. 三大法人買賣超\n4. ETF績效排行重複持股\n5. 退出\n輸入: "
             )
             async with aiohttp.ClientSession() as session:
                 stock_lists = get_stock_lists(session, user_input)

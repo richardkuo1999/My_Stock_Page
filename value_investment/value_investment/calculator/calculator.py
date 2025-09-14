@@ -1,3 +1,4 @@
+import numpy as np
 import os
 import sys
 import asyncio
@@ -76,9 +77,29 @@ class Stock_Predictor:
         self.market_price = yahoofinance_data["info"].get("regularMarketPrice")
         self.price_datas =  yahoofinance_data["price"].get("Close")
         self.price_datas = self.price_datas.values if self.price_datas is not None else None
+        self.price_datas = self.fill_nan_with_avg(self.price_datas)
         self.trailingEps = yahoofinance_data["info"].get("trailingEps")
         self.yahooforwardEps = yahoofinance_data["info"].get("forwardEps")
 
+    def fill_nan_with_avg(self, arr):
+        arr = arr.copy()
+        nans = np.isnan(arr)
+        for i in np.where(nans)[0]:
+            prev_idx = i - 1
+            next_idx = i + 1
+            # 找到前一個非 NaN
+            while prev_idx >= 0 and np.isnan(arr[prev_idx]):
+                prev_idx -= 1
+            # 找到後一個非 NaN
+            while next_idx < len(arr) and np.isnan(arr[next_idx]):
+                next_idx += 1
+            if prev_idx >= 0 and next_idx < len(arr):
+                arr[i] = (arr[prev_idx] + arr[next_idx]) / 2
+            elif prev_idx >= 0:  # 沒有後值
+                arr[i] = arr[prev_idx]
+            elif next_idx < len(arr):  # 沒有前值
+                arr[i] = arr[next_idx]
+        return arr
 
     async def process(self):
         market_price = self.market_price
