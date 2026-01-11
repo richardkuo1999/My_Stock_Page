@@ -1,5 +1,4 @@
 import numpy as np
-from sklearn.linear_model import LinearRegression
 import statistics
 
 class MathUtils:
@@ -84,13 +83,13 @@ class MathUtils:
             
         prices_np = np.array(prices, dtype=float)
         
-        # Fit linear regression
-        reg = LinearRegression()
+        # Fit simple linear regression (avoid heavy sklearn dependency)
         idx = np.arange(1, len(prices_np) + 1)
-        reg.fit(idx.reshape(-1, 1), prices_np)
+        # np.polyfit returns slope, intercept for degree=1
+        slope, intercept = np.polyfit(idx, prices_np, 1)
 
         # Calculate trend line and bands
-        tl = reg.intercept_ + idx * reg.coef_[0]
+        tl = intercept + idx * slope
         y_minus_tl = prices_np - tl
         sd = np.std(y_minus_tl, ddof=1)
         

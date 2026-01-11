@@ -1,6 +1,7 @@
 import logging
 import io
 import asyncio
+import re
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, ReplyKeyboardMarkup
 from telegram.constants import ParseMode, ChatAction
@@ -548,3 +549,89 @@ async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("❌ 已取消訂閱。")
         else:
             await update.message.reply_text("您尚未訂閱。")
+
+
+# --- Watchlist ---
+_TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.\-]{0,31}$")
+
+
+def _normalize_ticker(raw: str) -> str | None:
+    ticker = raw.strip().upper()
+    if not ticker:
+        return None
+    if not _TICKER_RE.fullmatch(ticker):
+        return None
+    return ticker
+
+
+async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Manage per-chat watchlist.
+    Usage:
+      /watch add <ticker>
+      /watch remove <ticker>
+      /watch list
+    """
+    usage = "用法：/watch add <ticker> | /watch remove <ticker> | /watch list"
+
+    if not getattr(context, "args", None):
+        await update.message.reply_text(usage)
+        return
+
+    sub = str(context.args[0]).lower()
+    chat_id = update.effective_chat.id
+
+    from ..database import engine
+    from sqlmodel import Session, select
+    from ..models.watchlist import WatchlistItem
+
+    if sub == "list":
+        with Session(engine) as session:
+            items = session.exec(
+                select(WatchlistItem).where(WatchlistItem.chat_id == chat_id).order_by(WatchlistItem.ticker)
+            ).all()
+
+        if not items:
+            await update.message.reply_text("目前沒有自選股")
+            return
+
+        lines = ["📌 你的自選股："]
+        for i, it in enumerate(items, start=1):
+            lines.append(f"{i}. {it.ticker}")
+        await update.message.reply_text("\n".join(lines))
+        return
+
+    if sub not in ("add", "remove"):
+        await update.message.reply_text(usage)
+        return
+
+    if len(context.args) < 2:
+        await update.message.reply_text(usage)
+        return
+
+    ticker = _normalize_ticker(str(context.args[1]))
+    if not ticker:
+        await update.message.reply_text("Ticker 格式不正確")
+        return
+
+    with Session(engine) as session:
+        existing = session.exec(
+            select(WatchlistItem).where(WatchlistItem.chat_id == chat_id).where(WatchlistItem.ticker == ticker)
+        ).first()
+
+        if sub == "add":
+            if existing:
+                await update.message.reply_text(f"ℹ️ 已存在：{ticker}")
+                return
+            session.add(WatchlistItem(chat_id=chat_id, ticker=ticker))
+            session.commit()
+            await update.message.reply_text(f"✅ 已加入：{ticker}")
+            return
+
+        # remove
+        if not existing:
+            await update.message.reply_text(f"ℹ️ 不在清單：{ticker}")
+            return
+        session.delete(existing)
+        session.commit()
+        await update.message.reply_text(f"✅ 已移除：{ticker}")

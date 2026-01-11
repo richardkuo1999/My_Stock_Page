@@ -4,6 +4,7 @@ from .handlers import (
     start_command, help_command, info_command, esti_command, 
     news_command, news_button_handler,
     chat_command, subscribe_command, unsubscribe_command,
+    watch_command,
     google_news_start, google_news_handle,
     research_start, research_handle, research_finish, cancel,
     menu_stock_info_start, menu_stock_esti_start, handle_ticker_info, handle_ticker_esti, menu_settings_handler,
@@ -34,6 +35,7 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("chat", chat_command))
     application.add_handler(CommandHandler("subscribe", subscribe_command))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
+    application.add_handler(CommandHandler("watch", watch_command))
 
     # Conversation: Google News
     google_news_conv = ConversationHandler(

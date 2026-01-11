@@ -1,5 +1,5 @@
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "analysis_bot/tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 addopts = "-v --tb=short"
