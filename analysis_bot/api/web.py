@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, BackgroundTasks
+from fastapi import APIRouter, Request, BackgroundTasks, Depends
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
 import logging
@@ -10,6 +10,9 @@ from fastapi.responses import Response
 from ..services.stock_service import StockService
 from ..services.report_generator import ReportGenerator
 from ..scheduler import daily_analysis_job
+from ..database import get_session
+from ..models.stock import StockData
+from sqlmodel import select
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -113,9 +116,14 @@ async def news_page(request: Request):
     })
 
 @router.get("/settings/export")
-async def export_data():
+async def export_data(session=Depends(get_session)):
     """Export all StockData as JSON."""
-    stocks = StockService.get_tracked_stocks()
+    # Use request-scoped DB session (tests override this dependency).
+    stmt = select(StockData).order_by(StockData.last_analyzed.desc())
+    if hasattr(session, "exec"):
+        stocks = session.exec(stmt).all()
+    else:
+        stocks = session.execute(stmt).scalars().all()
     # Serialize
     data = [stock.model_dump() for stock in stocks]
     # Handle datetime serialization if needed, model_dump might produce datetimes
@@ -123,7 +131,6 @@ async def export_data():
     # Let's simple json dump with default str
     json_str = json.dumps(data, default=str, indent=2)
     
-    filename = f"stock_data_export_{datetime.now().strftime('%Y%m%d')}.json"
     filename = f"stock_data_export_{datetime.now().strftime('%Y%m%d')}.json"
     return Response(content=json_str, media_type="application/json", headers={"Content-Disposition": f"attachment; filename={filename}"})
 

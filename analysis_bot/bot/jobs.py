@@ -1,6 +1,9 @@
 import logging
 import asyncio
 import difflib
+import html
+import re
+import unicodedata
 from typing import List, Dict
 from datetime import datetime, timedelta
 from telegram.ext import ContextTypes
@@ -12,6 +15,56 @@ from ..models.content import News
 from ..database import engine
 
 logger = logging.getLogger(__name__)
+
+# Constants
+MAX_ALIAS_LENGTH = 64
+TICKER_MATCH_THRESHOLD = 0.85
+MAX_SEND_ARTICLES = 5
+
+_WORD_CHARS_RE = re.compile(r"[A-Z0-9]")
+
+
+def _norm_text(text: str) -> str:
+    # NFKC helps normalize full-width characters; upper for ticker matching
+    return unicodedata.normalize("NFKC", text or "").upper()
+
+
+def _normalize_content_for_matching(title: str, url: str) -> tuple[str, str, str, str, str]:
+    """
+    Normalize title and URL for matching to avoid repeated operations.
+    
+    Returns:
+        tuple: (title_raw, title_norm, url_raw, url_norm, content_norm)
+    """
+    title_norm = unicodedata.normalize("NFKC", title).strip()
+    url_norm = unicodedata.normalize("NFKC", url).strip()
+    content_norm = f"{title_norm}\n{url_norm}"
+    return title, title_norm, url, url_norm, content_norm
+
+
+def _contains_ticker(text_upper: str, ticker_upper: str) -> bool:
+    """
+    Avoid substring false positives by enforcing non-alnum boundaries around ticker.
+    Works for both numeric (2330) and alpha (TSLA) tickers.
+    """
+    if not ticker_upper:
+        return False
+    if ticker_upper not in text_upper:
+        return False
+
+    # Boundary check without heavy regex compilation per call
+    start = 0
+    while True:
+        idx = text_upper.find(ticker_upper, start)
+        if idx < 0:
+            return False
+        left_ok = idx == 0 or not _WORD_CHARS_RE.match(text_upper[idx - 1])
+        right_i = idx + len(ticker_upper)
+        right_ok = right_i >= len(text_upper) or not _WORD_CHARS_RE.match(text_upper[right_i])
+        if left_ok and right_ok:
+            return True
+        start = idx + 1
+
 
 async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
     """
@@ -219,33 +272,122 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
     # Send notifications
     if new_articles:
         from ..models.subscriber import Subscriber
+        from ..models.watchlist import WatchlistEntry
+        from ..models.stock import StockData
         # Session, select already imported at top
         
         subscribers = []
         with Session(engine) as session:
              subs = session.exec(select(Subscriber).where(Subscriber.is_active == True)).all()
              subscribers = [s.chat_id for s in subs]
+
+        # Preload watchlist entries for subscriber chats
+        watch_by_chat: Dict[int, Dict[int, List[WatchlistEntry]]] = {}
+        tickers_by_chat: Dict[int, set[str]] = {}
+        if subscribers:
+            with Session(engine) as session:
+                entries = session.exec(
+                    select(WatchlistEntry).where(col(WatchlistEntry.chat_id).in_(subscribers))
+                ).all()
+                for e in entries:
+                    watch_by_chat.setdefault(e.chat_id, {}).setdefault(e.user_id, []).append(e)
+                    tickers_by_chat.setdefault(e.chat_id, set()).add(e.ticker)
+
+        # Optional enrichment: pull known company names from StockData for tickers
+        names_by_ticker: Dict[str, str] = {}
+        all_tickers: set[str] = set()
+        for tset in tickers_by_chat.values():
+            all_tickers.update(tset)
+        if all_tickers:
+            with Session(engine) as session:
+                rows = session.exec(select(StockData).where(col(StockData.ticker).in_(list(all_tickers)))).all()
+                for r in rows:
+                    if r.ticker and r.name:
+                        names_by_ticker[str(r.ticker).upper()] = str(r.name)
              
         logger.info(f"Found {len(new_articles)} new articles. Sending to {len(subscribers)} subscribers.")
         
         # Group messages to avoid spamming? Or send individually?
         # Let's send individually for now as they appear, or in small batches.
-        # Sending top 5 latest to avoid flood if DB was empty
-        MAX_SEND = 5
-        to_send = new_articles[:MAX_SEND]
+        # Sending top MAX_SEND_ARTICLES latest to avoid flood if DB was empty
+        to_send = new_articles[:MAX_SEND_ARTICLES]
         
+        # Pre-normalize all news articles to avoid repeated operations
+        normalized_news = []
         for news in to_send:
-            title = news['title'].replace('[', '(').replace(']', ')') # Simple markdown escape
-            url = news['url']
-            msg = f"📰 *{title}*\n{url}"
+            title_raw = news["title"]
+            url_raw = news["url"]
+            title, title_norm, url, url_norm, content_norm = _normalize_content_for_matching(title_raw, url_raw)
+            
+            title_md = title.replace("[", "(").replace("]", ")")  # Simple markdown escape
+            msg_md = f"📰 *{title_md}*\n{url}"
+            
+            normalized_news.append({
+                'title_raw': title_raw,
+                'title_norm': title_norm,
+                'url_raw': url,
+                'url_norm': url_norm,
+                'content_upper': _norm_text(f"{title_raw}\n{url_raw}"),
+                'msg_md': msg_md
+            })
+        
+        for news_data in normalized_news:
+            title_raw = news_data['title_raw']
+            url_raw = news_data['url_raw']
+            content_upper = news_data['content_upper']
+            msg_md = news_data['msg_md']
             
             for chat_id in subscribers:
                 try:
+                    # If we have watchlist entries for this chat, try to mention matching users
+                    related = watch_by_chat.get(chat_id, {})
+                    if related:
+                        user_hits: Dict[int, set[str]] = {}
+                        for uid, entries in related.items():
+                            hits: set[str] = set()
+                            for e in entries:
+                                t = (e.ticker or "").upper()
+                                if t and _contains_ticker(content_upper, t):
+                                    hits.add(t)
+                                if e.alias:
+                                    alias_norm = unicodedata.normalize("NFKC", e.alias).strip()
+                                    if alias_norm and alias_norm in f"{news_data['title_norm']}\n{news_data['url_norm']}":
+                                        hits.add(alias_norm)
+                                # StockData name enrichment
+                                name = names_by_ticker.get(t)
+                                if name:
+                                    name_norm = unicodedata.normalize("NFKC", name).strip()
+                                    if name_norm and name_norm in f"{news_data['title_norm']}\n{news_data['url_norm']}":
+                                        hits.add(name_norm)
+                            if hits:
+                                user_hits[uid] = hits
+
+                        if user_hits:
+                            title_html = html.escape(title_raw)
+                            url_html = html.escape(url_raw)
+                            parts = []
+                            for uid in sorted(user_hits.keys()):
+                                kw = ", ".join(sorted(user_hits[uid]))
+                                parts.append(
+                                    f'<a href="tg://user?id={uid}">User {uid}</a>（{html.escape(kw)}）'
+                                )
+                            related_line = "相關：" + "、".join(parts)
+                            msg_html = f"📰 <b>{title_html}</b>\n{url_html}\n{related_line}"
+
+                            await bot_instance.send_message(
+                                chat_id=chat_id,
+                                text=msg_html,
+                                parse_mode=ParseMode.HTML,
+                                disable_web_page_preview=True,
+                            )
+                            continue
+
+                    # Default: keep existing broadcast behavior
                     await bot_instance.send_message(
-                        chat_id=chat_id, 
-                        text=msg, 
+                        chat_id=chat_id,
+                        text=msg_md,
                         parse_mode=ParseMode.MARKDOWN,
-                        disable_web_page_preview=True
+                        disable_web_page_preview=True,
                     )
                 except Exception as e:
-                    logger.error(f"Failed to send news to {chat_id}: {e}") 
+                    logger.error(f"Failed to send news to {chat_id}: {e}")

@@ -1,6 +1,8 @@
 __pycache__
 .google-cookie
 .DS_Store
+.claude
+.cursor
 
 .env
 

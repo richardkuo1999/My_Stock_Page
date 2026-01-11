@@ -43,6 +43,12 @@ class FakeChat:
         self.id = chat_id
 
 
+class FakeUser:
+    def __init__(self, user_id: int, full_name: str = "") -> None:
+        self.id = user_id
+        self.full_name = full_name
+
+
 class FakeUpdate:
     def __init__(
         self,
@@ -50,10 +56,13 @@ class FakeUpdate:
         message: Optional[FakeMessage] = None,
         callback_query: Optional[FakeCallbackQuery] = None,
         chat_id: int = 123,
+        user_id: int = 456,
+        user_full_name: str = "",
     ) -> None:
         self.message = message
         self.callback_query = callback_query
         self.effective_chat = FakeChat(chat_id)
+        self.effective_user = FakeUser(user_id, full_name=user_full_name)
 
 
 class FakeContext:

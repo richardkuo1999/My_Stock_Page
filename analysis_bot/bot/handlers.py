@@ -16,6 +16,9 @@ from ..services.stock_service import StockService
 
 logger = logging.getLogger(__name__)
 
+# Constants
+MAX_ALIAS_LENGTH = 64
+
 # Conversation states
 ASK_RESEARCH = 1
 ASK_GOOGLE_NEWS = 2
@@ -564,6 +567,27 @@ def _normalize_ticker(raw: str) -> str | None:
     return ticker
 
 
+async def name_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Fetch and reply the company name for a ticker (best-effort)."""
+    usage = "用法：/name <ticker>"
+    if not getattr(context, "args", None):
+        await update.message.reply_text(usage)
+        return
+
+    ticker = _normalize_ticker(str(context.args[0]))
+    if not ticker:
+        await update.message.reply_text("Ticker 格式不正確")
+        return
+
+    data, _from_cache = await StockService.get_or_analyze_stock(ticker)
+    if not data or "error" in data:
+        await update.message.reply_text(f"找不到公司名稱：{data.get('error') if isinstance(data, dict) else 'Unknown error'}")
+        return
+
+    name = data.get("name") or ticker
+    await update.message.reply_text(f"公司名稱：{name}\nTicker：{ticker}")
+
+
 async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Manage per-chat watchlist.
@@ -580,15 +604,22 @@ async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     sub = str(context.args[0]).lower()
     chat_id = update.effective_chat.id
+    user_id = update.effective_user.id if update.effective_user else None
+    if not user_id:
+        await update.message.reply_text("無法取得使用者資訊，請稍後再試。")
+        return
 
     from ..database import engine
     from sqlmodel import Session, select
-    from ..models.watchlist import WatchlistItem
+    from ..models.watchlist import WatchlistEntry
 
     if sub == "list":
         with Session(engine) as session:
             items = session.exec(
-                select(WatchlistItem).where(WatchlistItem.chat_id == chat_id).order_by(WatchlistItem.ticker)
+                select(WatchlistEntry)
+                .where(WatchlistEntry.chat_id == chat_id)
+                .where(WatchlistEntry.user_id == user_id)
+                .order_by(WatchlistEntry.ticker)
             ).all()
 
         if not items:
@@ -597,7 +628,8 @@ async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         lines = ["📌 你的自選股："]
         for i, it in enumerate(items, start=1):
-            lines.append(f"{i}. {it.ticker}")
+            alias = f"（{it.alias}）" if it.alias else ""
+            lines.append(f"{i}. {it.ticker}{alias}")
         await update.message.reply_text("\n".join(lines))
         return
 
@@ -614,18 +646,48 @@ async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Ticker 格式不正確")
         return
 
+    alias = " ".join([str(x) for x in context.args[2:]]).strip() if len(context.args) > 2 else None
+    if alias:
+        alias = alias[:MAX_ALIAS_LENGTH]
+    else:
+        # Best-effort auto name fetch if user didn't provide alias.
+        try:
+            from ..database import engine
+            from sqlmodel import Session, select
+            from ..models.stock import StockData
+
+            with Session(engine) as session:
+                stock = session.exec(select(StockData).where(StockData.ticker == ticker)).first()
+                if stock and stock.name:
+                    alias = str(stock.name)[:MAX_ALIAS_LENGTH]
+        except Exception:
+            alias = None
+
+        # Only do network-ish name lookup for TW numeric tickers (keeps /watch fast & stable for US tickers)
+        if not alias and ticker.isdigit():
+            try:
+                data, _ = await StockService.get_or_analyze_stock(ticker)
+                if isinstance(data, dict) and data.get("name") and data.get("name") != ticker:
+                    alias = str(data["name"])[:MAX_ALIAS_LENGTH]
+            except Exception:
+                alias = None
+
     with Session(engine) as session:
         existing = session.exec(
-            select(WatchlistItem).where(WatchlistItem.chat_id == chat_id).where(WatchlistItem.ticker == ticker)
+            select(WatchlistEntry)
+            .where(WatchlistEntry.chat_id == chat_id)
+            .where(WatchlistEntry.user_id == user_id)
+            .where(WatchlistEntry.ticker == ticker)
         ).first()
 
         if sub == "add":
             if existing:
                 await update.message.reply_text(f"ℹ️ 已存在：{ticker}")
                 return
-            session.add(WatchlistItem(chat_id=chat_id, ticker=ticker))
+            session.add(WatchlistEntry(chat_id=chat_id, user_id=user_id, ticker=ticker, alias=alias))
             session.commit()
-            await update.message.reply_text(f"✅ 已加入：{ticker}")
+            alias_suffix = f"（{alias}）" if alias else ""
+            await update.message.reply_text(f"✅ 已加入：{ticker}{alias_suffix}")
             return
 
         # remove
