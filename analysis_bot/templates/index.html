@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard">
+    <div class="hero-section">
+        <h2>Stock Analysis Dashboard</h2>
+        <div class="search-container">
+            <input type="text" id="tickerInput" placeholder="Enter Ticker (e.g. 2330)...">
+            <button id="analyzeBtn" class="primary-btn">Analyze</button>
+        </div>
+    </div>
+
+    <div class="stock-grid" id="stockGrid">
+        {% for stock in stocks %}
+        <div class="stock-card" id="card-{{ stock.ticker }}" data-ticker="{{ stock.ticker }}"
+            data-name="{{ stock.name }}" data-sector="{{ stock.sector }}" data-tags="{{ stock.tag }}"
+            data-timestamp="{{ stock.last_analyzed.timestamp() if stock.last_analyzed else 0 }}">
+            <div class="card-header">
+                <span class="ticker">{{ stock.name }}</span>
+                <span class="price">{{ stock.price }}</span>
+            </div>
+            <div class="card-body">
+                <div class="name">{{ stock.ticker }}</div>
+                <div class="sector">{{ stock.sector }}</div>
+            </div>
+            <div class="card-footer">
+                <span class="last-updated">Analyzed: {{ stock.last_analyzed.strftime('%H:%M') }}</span>
+                <span class="status-badge updated">✅ Active</span>
+            </div>
+            <!-- Link to details -->
+            <a href="/stock/{{ stock.ticker }}" class="details-link-overlay"
+                style="position:absolute; top:0; left:0; width:100%; height:100%;"></a>
+        </div>
+        {% else %}
+        <p class="empty-state">No stocks tracked yet. Analyze one above!</p>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

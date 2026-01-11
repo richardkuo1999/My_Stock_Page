@@ -1,10 +1,18 @@
-results/
-backup/
-token.yaml
-gdToken.json
 __pycache__
 .google-cookie
 .DS_Store
-db.sqlite3
 
-*.log
+.env
+
+venv/
+logs/
+files/
+results/
+reports/
+
+*.db
+*.md
+*.mp3
+
+!analysis_bot/MIGRATION_PROGRESS.md
+!README.md

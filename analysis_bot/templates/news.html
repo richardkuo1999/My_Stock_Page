@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard">
+    <div class="hero-section">
+        <h2>Latest Market News</h2>
+        <div class="search-container">
+            <input type="text" id="newsSearchInput" placeholder="Search news titles...">
+        </div>
+
+        <!-- Source Toggles -->
+        <div class="filter-bar">
+            <button class="filter-btn active" data-filter="all">All Sources</button>
+            {% set sources = [] %}
+            {% for news in news_items %}
+            {% if news.source and news.source not in sources %}
+            {% if sources.append(news.source) %}{% endif %}
+            {% endif %}
+            {% endfor %}
+
+            {% for source in sources %}
+            <button class="filter-btn" data-filter="{{ source }}">{{ source }}</button>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="news-grid" id="newsGrid">
+        {% for news in news_items %}
+        <a href="{{ news.link }}" target="_blank" class="news-card" data-source="{{ news.source }}"
+            data-title="{{ news.title }}">
+            <div class="news-header">
+                <span class="source-tag">{{ news.source }}</span>
+                <span class="date">{{ news.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+            </div>
+            <div class="news-body">
+                <h3>{{ news.title }}</h3>
+            </div>
+        </a>
+        {% else %}
+        <p class="empty-state">No news found.</p>
+        {% endfor %}
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const searchInput = document.getElementById('newsSearchInput');
+        const filterBtns = document.querySelectorAll('.filter-btn');
+        const newsCards = document.querySelectorAll('.news-card');
+
+        let currentFilter = 'all';
+
+        // 1. Filter by Source
+        filterBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                // UI Toggle
+                filterBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+
+                currentFilter = btn.dataset.filter;
+                applyFilters();
+            });
+        });
+
+        // 2. Search
+        searchInput.addEventListener('input', applyFilters);
+
+        function applyFilters() {
+            const query = searchInput.value.trim().toLowerCase();
+
+            newsCards.forEach(card => {
+                const source = card.dataset.source;
+                const title = card.dataset.title.toLowerCase();
+
+                // Source Match
+                const sourceMatch = (currentFilter === 'all') || (source === currentFilter);
+
+                // Text Match
+                const textMatch = !query || title.includes(query);
+
+                if (sourceMatch && textMatch) {
+                    card.style.display = 'flex';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+        }
+    });
+</script>
+
+<style>
+    /* News Specific Styles */
+    .filter-bar {
+        display: flex;
+        gap: 10px;
+        margin-top: 15px;
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    .filter-btn {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: var(--text-secondary);
+        padding: 8px 16px;
+        border-radius: 20px;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+
+    .filter-btn:hover,
+    .filter-btn.active {
+        background: var(--primary-color);
+        color: white;
+        border-color: var(--primary-color);
+    }
+
+    .news-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 20px;
+        padding: 20px;
+    }
+
+    .news-card {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        border-radius: 16px;
+        padding: 20px;
+        text-decoration: none;
+        color: inherit;
+        transition: transform 0.2s, background 0.2s;
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+    }
+
+    .news-card:hover {
+        transform: translateY(-5px);
+        background: rgba(255, 255, 255, 0.08);
+    }
+
+    .news-header {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.85em;
+        color: var(--text-secondary);
+    }
+
+    .source-tag {
+        background: rgba(255, 255, 255, 0.1);
+        padding: 2px 8px;
+        border-radius: 4px;
+    }
+
+    .news-body h3 {
+        margin: 0;
+        font-size: 1.1em;
+        line-height: 1.4;
+        color: var(--text-primary);
+    }
+</style>
+{% endblock %}

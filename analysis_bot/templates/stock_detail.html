@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="detail-container">
+    <!-- Header -->
+    <div class="detail-header">
+        <div class="header-left">
+            <h2 class="stock-title"><span class="ticker-badge">{{ ticker }}</span> {{ data.name }}</h2>
+            <div class="sector-pill">{{ data.sector }}</div>
+        </div>
+        <div class="header-right">
+            <div class="price-display">
+                <span class="label">Current Price</span>
+                <span class="price-value">{{ data.price }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Info Bar -->
+    <div class="info-bar" style="margin-bottom: 20px; text-align: right; color: var(--text-secondary);">
+        <span>Last Updated: {{ last_updated }}</span>
+    </div>
+
+    <!-- Markdown Report -->
+    <div class="detail-card full-width">
+        <h3>Analysis Report</h3>
+        <div class="report-content">
+            <!-- Using white-space: pre-wrap to preserve markdown formatting -->
+            <pre
+                style="white-space: pre-wrap; font-family: 'Inter', sans-serif; color: var(--text-primary); background: transparent; border: none;">{{ report_text }}</pre>
+        </div>
+    </div>
+
+    <div class="action-bar">
+        <a href="/" class="secondary-btn">Back to Dashboard</a>
+        <button id="refreshBtn" class="primary-btn" data-ticker="{{ ticker }}">Force Refresh</button>
+    </div>
+</div>
+<script src="/static/js/stock_detail.js"></script>
+{% endblock %}

@@ -1,0 +1,263 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="detail-container">
+    <div class="detail-header">
+        <h2 class="stock-title">Settings</h2>
+    </div>
+
+    <div class="analysis-grid">
+        <!-- System Actions -->
+        <div class="detail-card full-width">
+            <h3>System Management</h3>
+
+            <!-- Daily Analysis Config -->
+            <div class="settings-row">
+                <div class="setting-item">
+                    <p class="setting-title">Daily Analysis Tags</p>
+                    <p class="setting-desc">Select which lists to include in the daily analysis.</p>
+                    <div class="tags-container" id="tagsContainer">
+                        <!-- Injected by JS -->
+                        <label><input type="checkbox" value="ETF"> ETF</label>
+                        <label><input type="checkbox" value="ETF_Rank"> ETF Rank</label>
+                        <label><input type="checkbox" value="Institutional_TOP50"> Institutional TOP 50</label>
+                        <label><input type="checkbox" value="investanchors"> Invest Anchors</label>
+                        <label><input type="checkbox" value="User_Choice"> User Choice</label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- List Management -->
+            <div class="settings-row">
+                <div class="setting-item full-width">
+                    <p class="setting-title">Manage Custom Lists (Space separated)</p>
+
+                    <div class="list-editor">
+                        <label>Target ETFs (e.g. 0050 0056)</label>
+                        <textarea id="etfInput" rows="2" placeholder="e.g. 0050 0056"></textarea>
+                    </div>
+
+                    <div class="list-editor" style="margin-top: 15px;">
+                        <label>Invest Anchors (e.g. 2330 2454)</label>
+                        <textarea id="investanchorsInput" rows="3" placeholder="e.g. 2330 2454"></textarea>
+                    </div>
+
+                    <div class="list-editor" style="margin-top: 15px;">
+                        <label>User Choice (e.g. 1101 1102)</label>
+                        <textarea id="userChoiceInput" rows="3" placeholder="e.g. 2330 2454"></textarea>
+                    </div>
+
+                    <div style="margin-top: 20px; text-align: right;">
+                        <button class="primary-btn" onclick="saveAllLists()">Save All Configurations</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-row">
+                <div class="setting-item">
+                    <p class="setting-title">Run Daily Analysis</p>
+                    <p class="setting-desc">Triggers the scheduled job immediately. Runs enabled tags above + tracked
+                        stocks.</p>
+                </div>
+                <button id="runDailyBtn" class="primary-btn">Run Now</button>
+            </div>
+
+            <div class="settings-row">
+                <div class="setting-item">
+                    <p class="setting-title">Export Data</p>
+                    <p class="setting-desc">Download a backup of all tracked stock data as JSON.</p>
+                </div>
+                <a href="/settings/export" class="secondary-btn" download>Download JSON</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .settings-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px 0;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .settings-row:last-child {
+        border-bottom: none;
+    }
+
+    .setting-title {
+        font-weight: 600;
+        margin: 0 0 5px 0;
+        color: var(--text-primary);
+    }
+
+    .setting-desc {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--text-secondary);
+        max-width: 600px;
+    }
+
+    .info-list {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+    }
+
+    .info-item {
+        display: flex;
+        justify-content: space-between;
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 10px;
+    }
+
+    .tags-container {
+        display: flex;
+        gap: 15px;
+        flex-wrap: wrap;
+        margin-top: 10px;
+    }
+
+    .tags-container label {
+        color: var(--text-primary);
+        cursor: pointer;
+    }
+
+    .list-editor {
+        background: rgba(48, 54, 61, 0.3);
+        padding: 15px;
+        border-radius: 6px;
+    }
+
+    .list-editor label {
+        display: block;
+        margin-bottom: 5px;
+        color: var(--text-secondary);
+        font-size: 0.9rem;
+    }
+
+    .list-editor textarea {
+        width: 100%;
+        background: var(--bg-color);
+        border: 1px solid var(--border-color);
+        color: var(--text-primary);
+        padding: 10px;
+        border-radius: 4px;
+        margin-bottom: 10px;
+        font-family: monospace;
+    }
+
+    .small-btn {
+        background: var(--border-color);
+        color: var(--text-primary);
+        border: none;
+        padding: 5px 10px;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    .small-btn:hover {
+        background: var(--accent-color);
+        color: white;
+    }
+
+    .setting-item.full-width {
+        width: 100%;
+    }
+</style>
+
+<script>
+    // Load Config on Start
+    document.addEventListener('DOMContentLoaded', async () => {
+        try {
+            const res = await fetch('/settings/config');
+            const config = await res.json();
+
+            // Set Checkboxes
+            const checkboxes = document.querySelectorAll('.tags-container input[type="checkbox"]');
+            checkboxes.forEach(cb => {
+                if (config.active_tags.includes(cb.value)) {
+                    cb.checked = true;
+                }
+
+                // Add Listener
+                cb.addEventListener('change', async function () {
+                    await fetch('/settings/tags/toggle', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ tag: this.value, enable: this.checked })
+                    });
+                });
+            });
+
+            // Set Textareas
+            document.getElementById('etfInput').value = config.lists.target_etfs || '';
+            document.getElementById('investanchorsInput').value = config.lists.investanchors || '';
+            document.getElementById('userChoiceInput').value = config.lists.user_choice || '';
+
+        } catch (e) {
+            console.error("Failed to load config", e);
+        }
+    });
+
+    async function saveAllLists() {
+        const keys = ['target_etfs', 'investanchors', 'user_choice'];
+        const inputMap = {
+            'target_etfs': 'etfInput',
+            'investanchors': 'investanchorsInput',
+            'user_choice': 'userChoiceInput'
+        };
+
+        const btn = document.querySelector('button[onclick="saveAllLists()"]');
+        const originalText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "Saving...";
+
+        try {
+            const promises = keys.map(key => {
+                const val = document.getElementById(inputMap[key]).value;
+                return fetch('/settings/lists/update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key: key, value: val })
+                });
+            });
+
+            await Promise.all(promises);
+            alert('All configurations saved successfully!');
+        } catch (e) {
+            console.error(e);
+            alert('Error saving one or more lists.');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }
+    }
+
+    document.getElementById('runDailyBtn').addEventListener('click', async function () {
+        const btn = this;
+        btn.disabled = true;
+        btn.textContent = 'Starting...';
+
+        try {
+            const response = await fetch('/settings/run-daily', { method: 'POST' });
+            const result = await response.json();
+
+            if (response.ok) {
+                alert(result.message);
+                btn.textContent = 'Running in Background...';
+            } else {
+                alert('Failed to start analysis.');
+                btn.textContent = 'Run Now';
+                btn.disabled = false;
+            }
+        } catch (e) {
+            console.error(e);
+            alert('Error connecting to server.');
+            btn.textContent = 'Run Now';
+            btn.disabled = false;
+        }
+    });
+</script>
+{% endblock %}
