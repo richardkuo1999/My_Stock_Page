@@ -8,6 +8,7 @@ python-telegram-bot>=21.4
 yfinance
 beautifulsoup4
 google-genai
+groq
 python-dotenv
 jinja2
 python-multipart

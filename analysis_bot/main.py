@@ -34,34 +34,39 @@ async def lifespan(app: FastAPI):
     
     # Start Telegram Bot
     if settings.TELEGRAM_TOKEN:
-        bot_app = create_bot_application()
-        
-        # Initialize Services
-        bot_app.bot_data["ai_service"] = AIService()
-        bot_app.bot_data["news_parser"] = NewsParser()
-        await bot_app.bot_data["news_parser"].init_session()
-             
-        await bot_app.initialize()
-        await bot_app.start()
-        
-        # Set Bot Commands (Persistent Menu)
-        from telegram import BotCommand
-        commands = [
-            BotCommand("start", "主選單 Menu"),
-            BotCommand("news", "財經新聞 News"),
-            BotCommand("info", "個股分析 Analysis"),
-            BotCommand("esti", "估值報告 Valuation"),
-            BotCommand("research", "AI 研究 Research"),
-            BotCommand("google_news", "Google 新聞"),
-            BotCommand("chat", "AI 聊天 Chat"),
-            BotCommand("subscribe", "訂閱新聞 Subscribe"),
-            BotCommand("unsubscribe", "取消訂閱 Unsubscribe"),
-            BotCommand("help", "幫助 Help")
-        ]
-        await bot_app.bot.set_my_commands(commands)
-        
-        await bot_app.updater.start_polling()
-        print(f"Bot started.")
+        try:
+            bot_app = create_bot_application()
+            
+            # Initialize Services
+            bot_app.bot_data["ai_service"] = AIService()
+            bot_app.bot_data["news_parser"] = NewsParser()
+            await bot_app.bot_data["news_parser"].init_session()
+                 
+            await bot_app.initialize()
+            await bot_app.start()
+            
+            # Set Bot Commands (Persistent Menu)
+            from telegram import BotCommand
+            commands = [
+                BotCommand("start", "主選單 Menu"),
+                BotCommand("news", "財經新聞 News"),
+                BotCommand("info", "個股分析 Analysis"),
+                BotCommand("esti", "估值報告 Valuation"),
+                BotCommand("research", "AI 研究 Research"),
+                BotCommand("google_news", "Google 新聞"),
+                BotCommand("chat", "AI 聊天 Chat"),
+                BotCommand("subscribe", "訂閱新聞 Subscribe"),
+                BotCommand("unsubscribe", "取消訂閱 Unsubscribe"),
+                BotCommand("help", "幫助 Help")
+            ]
+            await bot_app.bot.set_my_commands(commands)
+            
+            await bot_app.updater.start_polling()
+            print(f"Bot started.")
+        except Exception as e:
+            logger.error(f"Failed to start Telegram bot: {e}")
+            bot_app = None
+            print("Telegram bot failed to start, continuing with web interface only.")
     
     print(f"Started {settings.APP_NAME}")
     yield
