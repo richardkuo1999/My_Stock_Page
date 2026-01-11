@@ -3,7 +3,6 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from analysis_bot.main import app
 
-
 @pytest.fixture
 def client():
     return TestClient(app)

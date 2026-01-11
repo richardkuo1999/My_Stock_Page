@@ -1,19 +1,10 @@
 import pytest
-import asyncio
-import os
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, AsyncMock, patch
 import pandas as pd
 from datetime import datetime, timedelta
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
-@pytest.fixture
-def event_loop():
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
 
 @pytest.fixture
 def mock_stock_data():
