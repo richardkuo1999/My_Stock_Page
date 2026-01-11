@@ -60,6 +60,7 @@ class StockAnalyzer:
             
             # 2. Fetch Advanced Data (FinMind) - if numeric
             per_list, pbr_list = [], []
+            anue_data = None
             if ticker.isdigit():
                 async with aiohttp.ClientSession() as session:
                      start_date = (datetime.now() - timedelta(days=5*365)).strftime("%Y-%m-%d")
