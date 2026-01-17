@@ -143,6 +143,25 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
     except Exception as e:
         logger.error(f"Error Vocus main block: {e}")
 
+    # 2.5. Additional Sources (SinoTrade / Pocket)
+    try:
+        st_res = await news_parser.get_sinotrade_industry_report(limit=20)
+        if st_res:
+            for a in st_res:
+                a["source_name"] = "SinoTradeIndustry"
+            new_articles.extend(st_res)
+    except Exception as e:
+        logger.error(f"Error fetching SinoTradeIndustry: {e}")
+
+    try:
+        pk_res = await news_parser.get_pocket_school_report(limit=20)
+        if pk_res:
+            for a in pk_res:
+                a["source_name"] = "PocketReport"
+            new_articles.extend(pk_res)
+    except Exception as e:
+        logger.error(f"Error fetching PocketReport: {e}")
+
     # 3. Fetch from Additional Ported Sources (UDN, Yahoo, Others)
     
     # UDN

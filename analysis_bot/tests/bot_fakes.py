@@ -133,6 +133,14 @@ class FakeNewsParser:
         self.calls.append({"method": "get_fugle_report", "url": url})
         return self._get("fugle")
 
+    async def get_sinotrade_industry_report(self, limit: int = 20) -> List[Dict[str, str]]:
+        self.calls.append({"method": "get_sinotrade_industry_report", "limit": limit})
+        return self._get("sinotrade_industry")
+
+    async def get_pocket_school_report(self, limit: int = 20) -> List[Dict[str, str]]:
+        self.calls.append({"method": "get_pocket_school_report", "limit": limit})
+        return self._get("pocket_report")
+
     async def get_vocus_articles(self, v_user: str) -> List[Dict[str, str]]:
         self.calls.append({"method": "get_vocus_articles", "v_user": v_user})
         return self._get(f"vocus:{v_user}")

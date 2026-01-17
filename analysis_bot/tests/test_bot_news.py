@@ -67,6 +67,8 @@ async def test_news_command_builds_inline_keyboard_menu() -> None:
         "news_vocus_menu",
         "news_ndai",
         "news_fugle",
+        "news_sinotrade_industry",
+        "news_pocket_report",
     }
     assert required.issubset(cbs)
 
@@ -119,6 +121,8 @@ async def test_news_button_handler_vocus_menu_renders_submenu_and_back_button() 
         ("news_forecastock", "forecastock", "news_main_menu"),
         ("news_ndai", "ndai", "news_main_menu"),
         ("news_fugle", "fugle", "news_main_menu"),
+        ("news_sinotrade_industry", "sinotrade_industry", "news_main_menu"),
+        ("news_pocket_report", "pocket_report", "news_main_menu"),
         ("news_vocus_all", "vocus_all", "news_vocus_menu"),
     ],
 )
@@ -142,7 +146,7 @@ async def test_news_button_handler_fetches_and_renders_news(
             "vocus:@miula": [item],
             "vocus:65ab564cfd897800018a88cc": [item],
         }
-    elif seed_key in ("moneydj", "yahoo_tw", "udn", "uanalyze", "macromicro", "finguider", "fintastic", "forecastock", "ndai", "fugle"):
+    elif seed_key in ("moneydj", "yahoo_tw", "udn", "uanalyze", "macromicro", "finguider", "fintastic", "forecastock", "ndai", "fugle", "sinotrade_industry", "pocket_report"):
         results_by_key = {seed_key: [item]}
     else:
         # fetch_news_list uses URL as key in FakeNewsParser

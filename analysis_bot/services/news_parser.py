@@ -7,6 +7,7 @@ import re
 import logging
 import feedparser
 from dateutil import parser as dateparser
+from urllib.parse import quote
 from ..config import get_settings
 
 settings = get_settings()
@@ -297,3 +298,106 @@ class NewsParser:
         url = "https://morss.it/:proxy:items=%7C%7C*[class=articleListItem__link]/https://www.forecastock.tw/category/%E5%80%8B%E8%82%A1%E5%A0%B1%E5%91%8A"
         return await self.rss_parser(url)
 
+    async def get_sinotrade_industry_report(self, limit: int = 20) -> list[dict]:
+        """
+        SinoTrade RichClub: 3分鐘產業百科（GraphQL）。
+
+        Note: GraphQL 的 ContentPayload `link` 欄位會觸發 500，`url` 也常為 null。
+        但前端內頁實際是走 `content?article=<prefix>-<id>&channel=industry&type=article`，
+        其中 `<prefix>` 可任意，只要 `-<id>` 結尾即可解析出文章。
+        """
+        endpoint = "https://www.sinotrade.com.tw/richclub/api/graphql"
+        query = (
+            'query {'
+            f' clientGetArticleList(input:{{channel:"industry",limit:{int(limit)},page:0}}) {{'
+            '   filtered { _id title pubDate image }'
+            ' }'
+            '}'
+        )
+        try:
+            if not self.session:
+                await self.init_session()
+
+            headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Origin": "https://www.sinotrade.com.tw",
+                "Referer": "https://www.sinotrade.com.tw/richclub/industry",
+            }
+            async with self.session.post(endpoint, json={"query": query}, headers=headers, ssl=False) as resp:
+                resp.raise_for_status()
+                data = await resp.json(content_type=None)
+
+            items = (
+                (data or {})
+                .get("data", {})
+                .get("clientGetArticleList", {})
+                .get("filtered", [])
+            )
+            results: list[dict] = []
+            for it in items[: int(limit)]:
+                if not isinstance(it, dict):
+                    continue
+                title = it.get("title")
+                cid = it.get("_id")
+                if not title:
+                    continue
+                url = "https://www.sinotrade.com.tw/richclub/industry"
+                if cid:
+                    article_key = quote(f"x-{cid}")
+                    url = f"https://www.sinotrade.com.tw/richclub/content?article={article_key}&channel=industry&type=article"
+                results.append({"title": str(title), "url": url})
+            return results
+        except Exception as e:
+            self.logger.error(f"SinoTrade industry fetch error: {e}")
+            return []
+
+    async def get_pocket_school_report(self, limit: int = 20) -> list[dict]:
+        """
+        Pocket 學堂：研究報告（最新列表）。
+
+        使用 `invest_news/api/invest_news`，回傳內含 `Title` 與 `slug`（即內頁路徑）。
+        """
+        url = "https://www.pocket.tw/invest_news/api/invest_news/"
+        try:
+            if not self.session:
+                await self.init_session()
+
+            results: list[dict] = []
+            page = 1
+            # Best-effort pagination; stop once we have enough or page looks empty.
+            while len(results) < int(limit) and page <= 5:
+                params = {"page": page, "category": "", "keyword": ""}
+                async with self.session.get(url, params=params, ssl=False) as resp:
+                    resp.raise_for_status()
+                    payload = await resp.json(content_type=None)
+
+                # Pocket API sometimes returns code as int(0) or str("0")
+                if not isinstance(payload, dict) or str(payload.get("code")) != "0":
+                    break
+
+                items = payload.get("data") or []
+                if not isinstance(items, list) or not items:
+                    break
+
+                for it in items:
+                    if not isinstance(it, dict):
+                        continue
+                    title = it.get("Title") or it.get("title")
+                    slug = it.get("slug")
+                    if not title or not slug:
+                        continue
+                    # slug looks like: /school/report/perspective/7002/
+                    link = str(slug)
+                    if link.startswith("/"):
+                        link = f"https://www.pocket.tw{link}"
+                    results.append({"title": str(title), "url": link})
+                    if len(results) >= int(limit):
+                        break
+
+                page += 1
+
+            return results
+        except Exception as e:
+            self.logger.error(f"Pocket school report fetch error: {e}")
+            return []

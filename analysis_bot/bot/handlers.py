@@ -239,6 +239,8 @@ async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("方格子 (Vocus)", callback_data="news_vocus_menu"), 
         InlineKeyboardButton("NewsDigest AI", callback_data="news_ndai")],
         [InlineKeyboardButton("Fugle Report", callback_data="news_fugle")],
+        [InlineKeyboardButton("永豐｜3分鐘產業百科", callback_data="news_sinotrade_industry"),
+         InlineKeyboardButton("口袋學堂｜研究報告", callback_data="news_pocket_report")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("請選擇新聞來源：", reply_markup=reply_markup)
@@ -263,6 +265,8 @@ async def news_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             [InlineKeyboardButton("Fintastic", callback_data="news_fintastic"), InlineKeyboardButton("Forecastock", callback_data="news_forecastock")],
             [InlineKeyboardButton("方格子 (Vocus)", callback_data="news_vocus_menu"), InlineKeyboardButton("NewsDigest AI", callback_data="news_ndai")],
             [InlineKeyboardButton("Fugle Report", callback_data="news_fugle")],
+            [InlineKeyboardButton("永豐｜3分鐘產業百科", callback_data="news_sinotrade_industry"),
+             InlineKeyboardButton("口袋學堂｜研究報告", callback_data="news_pocket_report")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text("請選擇新聞來源：", reply_markup=reply_markup)
@@ -325,6 +329,12 @@ async def news_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         source_title = "Fugle"
         url = "https://blog.fugle.tw/"
         news_list = await news_parser.get_fugle_report(url)
+    elif data == "news_sinotrade_industry":
+        source_title = "SinoTrade｜3分鐘產業百科"
+        news_list = await news_parser.get_sinotrade_industry_report(limit=15)
+    elif data == "news_pocket_report":
+        source_title = "Pocket｜研究報告"
+        news_list = await news_parser.get_pocket_school_report(limit=15)
         
     # Vocus Handlers
     elif data.startswith("news_vocus"):
