@@ -76,13 +76,18 @@ async def test_check_news_job_mentions_only_matching_user_by_ticker(isolated_eng
     calls = [c for c in bot.send_message_calls if c["chat_id"] == 1000]
     assert calls, "Expected bot to send at least one message"
 
-    # We should see an HTML message mentioning only user 111
+    # We should see an HTML message with related keywords, without exposing user_id / tg://user links
     html_calls = [c for c in calls if c["parse_mode"] == ParseMode.HTML]
     assert html_calls, "Expected at least one HTML mention message"
     msg = html_calls[0]["text"]
-    assert "tg://user?id=111" in msg
-    assert "tg://user?id=222" not in msg
+    assert "tg://user?id=" not in msg
+    assert "User 111" not in msg
+    assert "User 222" not in msg
+    assert "相關：" in msg
     assert "TSLA" in msg
+    # Ensure we don't leak other user's watchlist keyword(s)
+    assert "台積電" not in msg
+    assert "2330" not in msg
 
 
 @pytest.mark.asyncio
@@ -111,6 +116,8 @@ async def test_check_news_job_mentions_by_alias(isolated_engine):
     html_calls = [c for c in calls if c["parse_mode"] == ParseMode.HTML]
     assert html_calls, "Expected at least one HTML mention message"
     msg = html_calls[0]["text"]
-    assert "tg://user?id=222" in msg
+    assert "tg://user?id=" not in msg
+    assert "User 222" not in msg
+    assert "相關：" in msg
     assert "台積電" in msg
 

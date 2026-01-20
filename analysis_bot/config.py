@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     PODCAST_SOURCE_IDS: List[str] = ['1500839292','1546879892', '1488295306', '1518952450', '1602637578', '1513810531']
     PODCAST_LOOKUP_URL: str = "https://itunes.apple.com/lookup?id="
 
+    # Logging / Privacy
+    # Optional salt for redacting Telegram IDs (chat_id/user_id) in logs.
+    # If empty, logs will use masked form (keeps only last 4 chars).
+    LOG_PII_SALT: str = ""
+
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

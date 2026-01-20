@@ -13,6 +13,7 @@ from sqlmodel import Session, select, col
 from ..services.news_parser import NewsParser
 from ..models.content import News
 from ..database import engine
+from ..utils.pii import redact_telegram_id
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,10 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
         settings = get_settings()
         bot_instance = Bot(token=settings.TELEGRAM_TOKEN)
         news_parser = NewsParser()
+
+    # Privacy: redact Telegram IDs in logs
+    from ..config import get_settings
+    pii_salt = (get_settings().LOG_PII_SALT or None)
     
     # Sources configuration
     sources = [
@@ -384,13 +389,13 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
                         if user_hits:
                             title_html = html.escape(title_raw)
                             url_html = html.escape(url_raw)
-                            parts = []
-                            for uid in sorted(user_hits.keys()):
-                                kw = ", ".join(sorted(user_hits[uid]))
-                                parts.append(
-                                    f'<a href="tg://user?id={uid}">User {uid}</a>（{html.escape(kw)}）'
-                                )
-                            related_line = "相關：" + "、".join(parts)
+                            # Privacy: do not include any user_id / tg://user link / numeric IDs in message.
+                            # We only show the union of matched keywords.
+                            all_hits: set[str] = set()
+                            for hits in user_hits.values():
+                                all_hits.update(hits)
+                            kw = "、".join([html.escape(x) for x in sorted(all_hits)])
+                            related_line = f"相關：{kw}"
                             msg_html = f"📰 <b>{title_html}</b>\n{url_html}\n{related_line}"
 
                             await bot_instance.send_message(
@@ -409,4 +414,6 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
                         disable_web_page_preview=True,
                     )
                 except Exception as e:
-                    logger.error(f"Failed to send news to {chat_id}: {e}")
+                    logger.error(
+                        f"Failed to send news to {redact_telegram_id(chat_id, salt=pii_salt)}: {e}"
+                    )

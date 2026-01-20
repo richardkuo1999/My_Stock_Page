@@ -20,7 +20,6 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
     # Initialize Bot
     from telegram import Bot
     from .config import get_settings
-    from .bot.state import SUBSCRIBERS
     from .services.report_generator import ReportGenerator
     import tempfile
     import shutil
@@ -31,6 +30,8 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
     settings = get_settings()
     bot = Bot(token=settings.TELEGRAM_TOKEN)
     chat_id = settings.TELEGRAM_CHAT_ID  # Admin/Main Group
+    from .utils.pii import redact_telegram_id
+    pii_salt = settings.LOG_PII_SALT or None
 
     # Send Start Message
     if chat_id:
@@ -155,8 +156,21 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
             else:
                  final_tickers = list(final_tickers_map.keys())
              
-        logger.info(f"Analyzing {len(final_tickers)} stocks (Daily={run_daily}, Anchors={run_anchors})")
+        logger.info(f"Analyzing {len(final_tickers)} stocks (Daily={run_daily}, Anchors={run_anchors}, Tracked={run_tracked})")
         tickers = list(final_tickers)
+
+        # If no tickers were selected, we should notify and exit early (otherwise users see only the start message).
+        if not tickers:
+            logger.warning("No tickers selected for daily analysis. Check active_daily_tags or enable run_tracked.")
+            if chat_id:
+                try:
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text="⚠️ Daily run skipped: 沒有任何股票被選入分析清單（請先在 Settings 開啟 tags，或改用 Tracked 模式）。",
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send empty-tickers msg: {e}")
+            return
         
         # Temp dir for reports
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -202,13 +216,13 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
                         f.write(report_text)
                         
                     # 3. Check Underestimated
-                    # Target: TL-2SD (Index 5 in 'targetprice' from MathUtils)
+                    # Target: TL-1SD (aka TL-SD) (Index 4 in 'targetprice' from MathUtils)
                     mr = result.get("analysis", {}).get("mean_reversion", {})
                     targets = mr.get("targetprice", [])
                     price = result.get("price", 0)
                     
-                    if len(targets) > 5 and price > 0:
-                        target_sad = targets[5] # TL-2SD
+                    if len(targets) > 4 and price > 0:
+                        target_sad = targets[4] # TL-1SD (TL-SD)
                         if price < target_sad:
                             potential = (target_sad - price) / price * 100
                             underestimated_stocks.append({
@@ -224,8 +238,10 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
 
                 except Exception as e:
                     logger.error(f"Error analyzing {ticker}: {e}")
-            
-            session.commit()
+
+            # NOTE: Do not call `session.commit()` here.
+            # DB writes are already committed inside the per-ticker `with Session(engine)` block above.
+            # Calling commit on a closed/out-of-scope session can crash the job, preventing ZIP/result messages from being sent.
             
             # 4. Create ZIP
             # Ensure reports directory exists
@@ -246,7 +262,7 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
             # 5. Send Notifications (ZIP + Underestimated)
             
             # Format Underestimated Message
-            under_msg = "📉 **Underestimated Stocks (Price < TL-2SD)**\n\n"
+            under_msg = "📉 **Underestimated Stocks (Price < TL-SD)**\n\n"
             if underestimated_stocks:
                 # Sort by potential desc
                 underestimated_stocks.sort(key=lambda x: x['potential'], reverse=True)
@@ -257,7 +273,7 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
                     under_msg += f"{s['ticker']:<6} {s['name'][:6]:<6} {s['sector'][:6]:<6} {s['potential']:>5.1f}%\n"
                 under_msg += "```"
             else:
-                under_msg += "No stocks found below TL-2SD."
+                under_msg += "No stocks found below TL-SD."
 
             # Function to send to list of users
             async def send_daily_bundle(target_chat_id):
@@ -276,7 +292,9 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
                      # Send Underestimated List
                      await bot.send_message(chat_id=target_chat_id, text=under_msg, parse_mode='Markdown')
                  except Exception as e:
-                     logger.error(f"Failed to send bundle to {target_chat_id}: {e}")
+                     logger.error(
+                        f"Failed to send bundle to {redact_telegram_id(target_chat_id, salt=pii_salt)}: {e}"
+                     )
 
             # Send to Admin
             if chat_id:
@@ -315,6 +333,8 @@ async def daily_podcast_job():
     settings = get_settings()
     bot = Bot(token=settings.TELEGRAM_TOKEN)
     chat_id = settings.TELEGRAM_CHAT_ID
+    from .utils.pii import redact_telegram_id
+    pii_salt = settings.LOG_PII_SALT or None
 
     try:
         # Returns list of (path, host, title, url)
@@ -337,7 +357,9 @@ async def daily_podcast_job():
                             caption=caption,
                             parse_mode='Markdown'
                         )
-                    logger.info(f"Sent {title} to Main Chat {chat_id}")
+                    logger.info(
+                        f"Sent {title} to Main Chat {redact_telegram_id(chat_id, salt=pii_salt)}"
+                    )
                 except Exception as e:
                     logger.error(f"Failed to send to Main Chat: {e}")
 
@@ -358,7 +380,9 @@ async def daily_podcast_job():
                             parse_mode='Markdown'
                         )
                 except Exception as e:
-                    logger.error(f"Failed to send to subscriber {sub_id}: {e}")
+                    logger.error(
+                        f"Failed to send to subscriber {redact_telegram_id(sub_id, salt=pii_salt)}: {e}"
+                    )
 
             # Mark as processed in DB (so we don't process again)
             service.mark_as_processed(host, title, url)
