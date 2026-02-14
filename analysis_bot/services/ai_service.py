@@ -45,7 +45,7 @@ class AIService:
             return "Error: No Gemini keys configured."
 
         # Models to try in order
-        models_to_try = ["gemini-2.0-flash-exp", "gemini-1.5-flash", "gemini-1.5-pro"]
+        models_to_try = ["gemini-3-flash-preview", "gemini-2.0-flash-exp", "gemini-1.5-flash", "gemini-1.5-pro"]
         
         # Retry parameters
         max_total_attempts = 10 

@@ -4,8 +4,11 @@ import difflib
 import html
 import re
 import unicodedata
+import shutil
+from contextlib import suppress
 from typing import List, Dict
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 from sqlmodel import Session, select, col
@@ -23,6 +26,209 @@ TICKER_MATCH_THRESHOLD = 0.85
 MAX_SEND_ARTICLES = 5
 
 _WORD_CHARS_RE = re.compile(r"[A-Z0-9]")
+
+_SOURCE_DISPLAY_NAME: dict[str, str] = {
+    "CNYES": "鉅亨網",
+    "MoneyDJ": "MoneyDJ",
+    "UAnalyze": "UAnalyze",
+    "Fugle": "Fugle",
+    "UDN": "聯合新聞網",
+    "YahooTW": "Yahoo 股市",
+    "NewsDigestAI": "NewsDigest AI",
+    "Macromicro": "財經M平方",
+    "FinGuider": "瑞星財經 (FinGuider)",
+    "Fintastic": "Fintastic",
+    "Forecastock": "Forecastock",
+    "SinoTradeIndustry": "永豐｜3分鐘產業百科",
+    "PocketReport": "口袋學堂｜研究報告",
+    "BuffettLetter": "Buffett 股東信",
+    "HowardMarksMemo": "Howard Marks 備忘錄",
+}
+
+# --- Cursor Agent Summary Helpers ---
+
+async def _run_cursor_agent_summary(prompt: str, timeout: float = 30.0) -> str | None:
+    """
+    Call cursor agent (headless) to summarize text. Returns None on failure.
+    """
+    if not shutil.which("cursor"):
+        logger.warning("cursor CLI 未安裝或不在 PATH，略過摘要。")
+        return None
+
+    proc = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "cursor",
+            "agent",
+            "--print",
+            "--output-format",
+            "text",
+            prompt,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        if proc.returncode == 0:
+            return stdout.decode().strip()
+        logger.warning(
+            "cursor agent 摘要失敗 (code=%s): %s",
+            proc.returncode,
+            (stderr.decode().strip() if stderr else ""),
+        )
+    except asyncio.TimeoutError:
+        logger.warning("cursor agent 摘要逾時，已中止。")
+        if proc:
+            proc.kill()
+            with suppress(Exception):
+                await proc.communicate()
+    except FileNotFoundError:
+        logger.warning("找不到 cursor 可執行檔，略過摘要。")
+    except Exception as e:
+        logger.error(f"cursor agent 摘要例外: {e}")
+    return None
+
+
+async def _run_opencode_summary(prompt: str, timeout: float = 60.0) -> str | None:
+    """
+    Call opencode to summarize text. Returns None on failure.
+    """
+    if not shutil.which("opencode"):
+        logger.warning("opencode CLI 未安裝或不在 PATH，略過摘要。")
+        return None
+
+    proc = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "opencode",
+            # "-m",
+            # "gpt-5-nano",
+            "run",
+            prompt,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        if proc.returncode == 0:
+            return stdout.decode().strip()
+        logger.warning(
+            "opencode 摘要失敗 (code=%s): %s",
+            proc.returncode,
+            (stderr.decode().strip() if stderr else ""),
+        )
+    except asyncio.TimeoutError:
+        logger.warning("opencode 摘要逾時，已中止。")
+        if proc:
+            proc.kill()
+            with suppress(Exception):
+                await proc.communicate()
+    except FileNotFoundError:
+        logger.warning("找不到 opencode 可執行檔，略過摘要。")
+    except Exception as e:
+        logger.error(f"opencode 摘要例外: {e}")
+    return None
+
+
+async def _prepare_news_text(news: dict, news_parser: "NewsParser") -> str:
+    """
+    決定用什麼文字送去摘要（優先取全文）：
+    1) 嘗試 fetch 網頁全文（所有已知來源皆支援）
+    2) 若全文比現有 content/description 長，使用全文
+    3) 退回 content/description -> title
+    """
+    existing_text = news.get("content") or news.get("description") or ""
+    base_text = existing_text
+
+    # Always try to fetch full article content for better summarization
+    if news.get("url"):
+        try:
+            fetched = await news_parser.fetch_news_content(news["url"])
+            if fetched and len(fetched) > len(existing_text):
+                base_text = fetched
+        except Exception as e:
+            logger.debug(f"抓取新聞全文失敗 {news.get('url')}: {e}")
+
+    if not base_text:
+        base_text = news.get("title") or ""
+    return str(base_text)[:4000]
+
+
+async def _summarize_news(news: dict, news_parser: "NewsParser") -> str | None:
+    """
+    產出繁體中文摘要。
+    """
+    text = await _prepare_news_text(news, news_parser)
+    if not text:
+        return None
+
+    # 1) cursor agent
+    prompt = (
+        "Summarize the following news in Traditional Chinese within the 3-5 bullet points."
+        "保留關鍵數字與主語；若資訊不足則回答「資訊不足」。\n\n"
+        f"{text}"
+    )
+    # summary = await _run_cursor_agent_summary(prompt)
+
+    # always use opencode
+    return await _run_opencode_summary(prompt)
+
+
+def _guess_source_label(source_name: str | None, url: str) -> str:
+    """
+    Convert internal source_name / URL into a user-facing source label.
+    Priority:
+      1) source_name mapping (e.g. CNYES -> 鉅亨網)
+      2) URL domain fallback (e.g. news.cnyes.com -> cnyes.com)
+    """
+    if source_name:
+        if source_name.startswith("Vocus"):
+            # e.g. "Vocus (@ieobserve)" -> "方格子 (@ieobserve)"
+            return source_name.replace("Vocus", "方格子", 1)
+        if source_name in _SOURCE_DISPLAY_NAME:
+            return _SOURCE_DISPLAY_NAME[source_name]
+        return source_name
+
+    try:
+        host = (urlparse(url).netloc or "").lower()
+        host = host.replace("www.", "")
+        if "cnyes.com" in host:
+            return "鉅亨網"
+        if "moneydj.com" in host:
+            return "MoneyDJ"
+        if "udn.com" in host:
+            return "聯合新聞網"
+        if "yahoo.com" in host or "yahoo" in host:
+            return "Yahoo"
+        if "fugle.tw" in host:
+            return "Fugle"
+        if "vocus.cc" in host:
+            return "方格子"
+        if "macromicro.me" in host:
+            return "財經M平方"
+        if "finguider.cc" in host:
+            return "瑞星財經 (FinGuider)"
+        if "sinotrade.com.tw" in host:
+            return "永豐｜3分鐘產業百科"
+        if "pocket.tw" in host:
+            return "口袋學堂｜研究報告"
+        return host or "來源"
+    except Exception:
+        return source_name or "來源"
+
+
+def _escape_markdown_text(text: str) -> str:
+    # Markdown v1: we mainly avoid breaking link syntax with [].
+    return (text or "").replace("[", "(").replace("]", ")")
+
+
+def _format_source_line_markdown(source_label: str, url: str) -> str:
+    label_md = _escape_markdown_text(source_label)
+    return f"來源：[{label_md}]({url})"
+
+
+def _format_source_line_html(source_label: str, url: str) -> str:
+    label_html = html.escape(source_label)
+    url_html = html.escape(url, quote=True)
+    return f'來源：<a href="{url_html}">{label_html}</a>'
 
 
 def _norm_text(text: str) -> str:
@@ -227,6 +433,22 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
             new_articles.extend(fc_res)
     except Exception as e: logger.error(f"Forecastock fetch error: {e}")
 
+    # Buffett Shareholder Letters (annual, from berkshirehathaway.com)
+    try:
+        buf_res = await news_parser.get_buffett_letters()
+        if buf_res:
+            for a in buf_res: a['source_name'] = "BuffettLetter"
+            new_articles.extend(buf_res)
+    except Exception as e: logger.error(f"BuffettLetter fetch error: {e}")
+
+    # Howard Marks Memos (from oaktreecapital.com)
+    try:
+        hm_res = await news_parser.get_howard_marks_memos(limit=5)
+        if hm_res:
+            for a in hm_res: a['source_name'] = "HowardMarksMemo"
+            new_articles.extend(hm_res)
+    except Exception as e: logger.error(f"HowardMarksMemo fetch error: {e}")
+
     if not new_articles:
         return
 
@@ -335,22 +557,39 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
         # Let's send individually for now as they appear, or in small batches.
         # Sending top MAX_SEND_ARTICLES latest to avoid flood if DB was empty
         to_send = new_articles[:MAX_SEND_ARTICLES]
+
+        # 4. 先對要送出的新聞做摘要（最佳化：限制前 MAX_SEND_ARTICLES 篇）
+        summaries: list[str | None] = []
+        for news in to_send:
+            summary = await _summarize_news(news, news_parser)
+            summaries.append(summary)
         
         # Pre-normalize all news articles to avoid repeated operations
         normalized_news = []
-        for news in to_send:
+        for idx, news in enumerate(to_send):
             title_raw = news["title"]
             url_raw = news["url"]
+            source_name = news.get("source_name") or news.get("source")
             title, title_norm, url, url_norm, content_norm = _normalize_content_for_matching(title_raw, url_raw)
             
             title_md = title.replace("[", "(").replace("]", ")")  # Simple markdown escape
-            msg_md = f"📰 *{title_md}*\n{url}"
+            source_label = _guess_source_label(source_name, url)
+            
+            summary_md = None
+            if idx < len(summaries) and summaries[idx]:
+                summary_md = _escape_markdown_text(summaries[idx])
+            
+            msg_md = f"📰 *{title_md}*"
+            if summary_md:
+                msg_md += f"\n{summary_md}"
+            msg_md += f"\n{_format_source_line_markdown(source_label, url)}"
             
             normalized_news.append({
                 'title_raw': title_raw,
                 'title_norm': title_norm,
                 'url_raw': url,
                 'url_norm': url_norm,
+                'source_name': source_name,
                 'content_upper': _norm_text(f"{title_raw}\n{url_raw}"),
                 'msg_md': msg_md
             })
@@ -360,6 +599,7 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
             url_raw = news_data['url_raw']
             content_upper = news_data['content_upper']
             msg_md = news_data['msg_md']
+            source_name = news_data.get("source_name")
             
             for chat_id in subscribers:
                 try:
@@ -388,7 +628,8 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
 
                         if user_hits:
                             title_html = html.escape(title_raw)
-                            url_html = html.escape(url_raw)
+                            source_label = _guess_source_label(source_name, url_raw)
+                            source_line_html = _format_source_line_html(source_label, url_raw)
                             # Privacy: do not include any user_id / tg://user link / numeric IDs in message.
                             # We only show the union of matched keywords.
                             all_hits: set[str] = set()
@@ -396,7 +637,7 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
                                 all_hits.update(hits)
                             kw = "、".join([html.escape(x) for x in sorted(all_hits)])
                             related_line = f"相關：{kw}"
-                            msg_html = f"📰 <b>{title_html}</b>\n{url_html}\n{related_line}"
+                            msg_html = f"📰 <b>{title_html}</b>\n{source_line_html}\n{related_line}"
 
                             await bot_instance.send_message(
                                 chat_id=chat_id,

@@ -412,22 +412,19 @@ def start_scheduler():
         replace_existing=True
     )
     
-    # Add Podcast Job (Running Interval every 1 hour)
-    # Start immediately? or wait 1 hour?
-    podcast_trigger = CronTrigger(minute=30, timezone='Asia/Taipei') # Run at xx:30 every hour
-    # Or use IntervalTrigger
     from apscheduler.triggers.interval import IntervalTrigger
-    
-    # Run every 60 minutes
-    podcast_interval = IntervalTrigger(minutes=60)
-    
-    scheduler.add_job(
-        daily_podcast_job,
-        trigger=podcast_interval,
-        id="daily_podcast",
-        replace_existing=True,
-        next_run_time=datetime.now() # Run immediately on startup for testing
-    )
+ 
+    # NOTE: Podcast job 先暫停（跑太久）。需要再啟用時，把下面區塊取消註解即可。
+    #
+    # # Run every 60 minutes
+    # podcast_interval = IntervalTrigger(minutes=60)
+    # scheduler.add_job(
+    #     daily_podcast_job,
+    #     trigger=podcast_interval,
+    #     id="daily_podcast",
+    #     replace_existing=True,
+    #     # next_run_time=datetime.now()  # 若要啟動後立刻跑，再打開這行
+    # )
     
     # Add News Check Job (Every 10 mins)
     from .bot.jobs import check_news_job

@@ -18,6 +18,8 @@ feedparser
 python-docx
 python-docx
 aiofiles
+pymupdf
+Brotli
 natsort
 pandas
 pytest==8.1.1

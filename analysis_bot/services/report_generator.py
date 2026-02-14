@@ -1,7 +1,45 @@
 from typing import Dict, Any
+from urllib.parse import urlparse
 
 class ReportGenerator:
     """Generates formatted text reports for stock analysis."""
+
+    @staticmethod
+    def _guess_source_label_from_url(url: str) -> str:
+        try:
+            host = (urlparse(url).netloc or "").lower().replace("www.", "")
+            if "cnyes.com" in host:
+                return "鉅亨網"
+            if "moneydj.com" in host:
+                return "MoneyDJ"
+            if "udn.com" in host:
+                return "聯合新聞網"
+            if "yahoo" in host:
+                return "Yahoo"
+            if "fugle.tw" in host:
+                return "Fugle"
+            if "vocus.cc" in host:
+                return "方格子"
+            if "macromicro.me" in host:
+                return "財經M平方"
+            if "finguider.cc" in host:
+                return "瑞星財經 (FinGuider)"
+            if "sinotrade.com.tw" in host:
+                return "永豐｜3分鐘產業百科"
+            if "pocket.tw" in host:
+                return "口袋學堂｜研究報告"
+            return host or "來源"
+        except Exception:
+            return "來源"
+
+    @staticmethod
+    def _format_source_line_markdown(url: str | None) -> str:
+        if not url or url == "N/A":
+            return "來源：N/A"
+        label = ReportGenerator._guess_source_label_from_url(url)
+        # Avoid breaking markdown link syntax if label contains [].
+        label = label.replace("[", "(").replace("]", ")")
+        return f"來源：[{label}]({url})"
     
     @staticmethod
     def generate_full_report(data: Dict[str, Any]) -> str:
@@ -118,7 +156,7 @@ class ReportGenerator:
             report.append(f"估計EPS: {est_eps if est_eps else 'N/A':>10}  預估本益比： {pe_est:>10}")
             report.append(f"Factest目標價: {est_price if est_price else 'N/A':>10}  推算潛在漲幅為: {pot_est:>10}")
             report.append(f"資料日期: {est.get('date', 'N/A')}  ")
-            report.append(f"url: {est.get('url', 'N/A')}")
+            report.append(ReportGenerator._format_source_line_markdown(est.get("url")))
             
         # PE / PB Stats
         pe_stats = analysis.get('pe_stats', {})
@@ -323,7 +361,7 @@ Factest預估
 估計EPS: {str(est_eps):>10}  預估本益比： {str(est_pe):>10}
 Factest目標價: {str(est_target):>10}  推算潛在漲幅為: {pot:>10.2f}
 資料日期: {est.get('date', 'N/A')}  
-url: {est.get('url', 'N/A')}
+{ReportGenerator._format_source_line_markdown(est.get('url'))}
 """
 
         # Used EPS/BPS
