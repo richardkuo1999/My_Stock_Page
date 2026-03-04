@@ -5,6 +5,8 @@ from .database import engine
 from .models.stock import StockData
 from .services.stock_analyzer import StockAnalyzer
 from datetime import datetime
+import asyncio
+import json
 
 from .services.podcast_service import PodcastService
 
@@ -17,8 +19,7 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
     logger.info("Starting daily analysis job...")
     analyzer = StockAnalyzer()
     
-    # Initialize Bot
-    from telegram import Bot
+    # Reuse existing bot instance from the running application if available
     from .config import get_settings
     from .services.report_generator import ReportGenerator
     import tempfile
@@ -28,7 +29,15 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
     from pathlib import Path
 
     settings = get_settings()
-    bot = Bot(token=settings.TELEGRAM_TOKEN)
+    
+    # Try to get the bot from the running application to avoid creating duplicate instances
+    from . import main as _main_mod
+    if getattr(_main_mod, 'bot_app', None) and _main_mod.bot_app.bot:
+        bot = _main_mod.bot_app.bot
+    else:
+        from telegram import Bot
+        bot = Bot(token=settings.TELEGRAM_TOKEN)
+    
     chat_id = settings.TELEGRAM_CHAT_ID  # Admin/Main Group
     from .utils.pii import redact_telegram_id
     pii_salt = settings.LOG_PII_SALT or None
@@ -171,77 +180,162 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
                 except Exception as e:
                     logger.error(f"Failed to send empty-tickers msg: {e}")
             return
-        
+
         # Temp dir for reports
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             report_path = temp_path / "reports"
             report_path.mkdir()
-            
-            underestimated_stocks = [] # List of (ticker, name, price, target, potential)
 
-            for ticker in tickers:
+            # === Parallel Stock Analysis ===
+            MAX_CONCURRENT = settings.MAX_CONCURRENT_ANALYSIS
+            PROGRESS_INTERVAL = settings.ANALYSIS_PROGRESS_INTERVAL
+            BATCH_SIZE = settings.ANALYSIS_BATCH_SIZE
+
+            semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+            processed_count = 0
+            progress_lock = asyncio.Lock()
+
+            async def analyze_single_stock(ticker: str) -> tuple[str, dict | None, str | None]:
+                """
+                Analyze a single stock with semaphore control.
+                Returns: (ticker, result or None, error_message or None)
+                """
+                nonlocal processed_count
                 try:
-                    result = await analyzer.analyze_stock(ticker)
-                    
+                    async with semaphore:
+                        result = await analyzer.analyze_stock(ticker)
+
                     if "error" in result:
-                        logger.warning(f"Skipping {ticker}: {result['error']}")
-                        continue
+                        return (ticker, None, result["error"])
 
+                    return (ticker, result, None)
+                except Exception as e:
+                    return (ticker, None, str(e))
 
-                    
-                    # 1. Update DB (StockData)
-                    import json
-                    json_data = json.dumps(result)
-                    
-                    with Session(engine) as session:
-                        stock_record = session.exec(select(StockData).where(StockData.ticker == ticker)).first()
+            async def analyze_with_progress(ticker: str) -> tuple[str, dict | None, str | None]:
+                """
+                Wrapper that tracks progress and sends updates.
+                """
+                nonlocal processed_count
+                result = await analyze_single_stock(ticker)
+
+                async with progress_lock:
+                    processed_count += 1
+                    current = processed_count
+                    total = len(tickers)
+
+                # Send progress update at intervals
+                if current % PROGRESS_INTERVAL == 0 or current == total:
+                    try:
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text=f"📊 分析進度：{current}/{total} ({current/total*100:.0f}%)"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to send progress update: {e}")
+
+                return result
+
+            logger.info(f"Starting parallel analysis with MAX_CONCURRENT={MAX_CONCURRENT}")
+            await bot.send_message(
+                chat_id=chat_id,
+                text=f"🔍 開始分析 {len(tickers)} 檔股票（並發數：{MAX_CONCURRENT}）..."
+            )
+
+            # Run all analyses in parallel
+            results = await asyncio.gather(
+                *[analyze_with_progress(ticker) for ticker in tickers],
+                return_exceptions=True
+            )
+
+            # Process results
+            successful_results = []
+            failed_tickers = []
+
+            for i, result in enumerate(results):
+                ticker = tickers[i]
+                if isinstance(result, Exception):
+                    logger.error(f"Exception analyzing {ticker}: {result}")
+                    failed_tickers.append((ticker, str(result)))
+                elif result[2] is not None:  # error_message
+                    logger.warning(f"Skipping {ticker}: {result[2]}")
+                    failed_tickers.append((ticker, result[2]))
+                elif result[1] is not None:  # has result
+                    successful_results.append((ticker, result[1]))
+
+            logger.info(f"Analysis complete: {len(successful_results)} succeeded, {len(failed_tickers)} failed")
+
+            # Send failure summary if any
+            if failed_tickers and chat_id:
+                fail_msg = f"⚠️ 失敗 {len(failed_tickers)} 檔：\n"
+                fail_msg += "\n".join([f"- {t}: {e[:30]}..." if len(e) > 30 else f"- {t}: {e}" for t, e in failed_tickers[:10]])
+                if len(failed_tickers) > 10:
+                    fail_msg += f"\n... 及其他 {len(failed_tickers) - 10} 檔"
+                try:
+                    await bot.send_message(chat_id=chat_id, text=fail_msg)
+                except Exception as e:
+                    logger.warning(f"Failed to send failure summary: {e}")
+
+            underestimated_stocks = []
+
+            # Batch database writes
+            with Session(engine) as session:
+                for i, (ticker, result) in enumerate(successful_results):
+                    try:
+                        # Update DB (StockData)
+                        json_data = json.dumps(result)
+
+                        stock_record = session.exec(
+                            select(StockData).where(StockData.ticker == ticker)
+                        ).first()
+
                         if not stock_record:
                             stock_record = StockData(ticker=ticker)
                             session.add(stock_record)
-                        
+
                         stock_record.data = json_data
                         stock_record.name = result.get('name')
                         stock_record.sector = result.get('sector')
                         stock_record.price = result.get('price')
                         stock_record.last_analyzed = datetime.now()
                         session.add(stock_record)
-                        session.commit()
-                    
-                    # 2. Generate Report
-                    report_text = ReportGenerator.generate_full_report(result) # Use Full Report for File
-                    filename = f"{ticker}_{result.get('name', 'Stock').replace('/', '_')}.txt"
-                    
-                    with open(report_path / filename, "w", encoding="utf-8") as f:
-                        f.write(report_text)
-                        
-                    # 3. Check Underestimated
-                    # Target: TL-1SD (aka TL-SD) (Index 4 in 'targetprice' from MathUtils)
-                    mr = result.get("analysis", {}).get("mean_reversion", {})
-                    targets = mr.get("targetprice", [])
-                    price = result.get("price", 0)
-                    
-                    if len(targets) > 4 and price > 0:
-                        target_sad = targets[4] # TL-1SD (TL-SD)
-                        if price < target_sad:
-                            potential = (target_sad - price) / price * 100
-                            underestimated_stocks.append({
-                                "ticker": ticker,
-                                "name": result.get("name"),
-                                "price": price,
-                                "target": target_sad,
-                                "potential": potential,
-                                "sector": result.get("sector", "N/A")
-                            })
 
-                    logger.debug(f"Processed {ticker}")
+                        # Generate Report
+                        report_text = ReportGenerator.generate_full_report(result)
+                        filename = f"{ticker}_{result.get('name', 'Stock').replace('/', '_')}.txt"
 
-                except Exception as e:
-                    logger.error(f"Error analyzing {ticker}: {e}")
+                        with open(report_path / filename, "w", encoding="utf-8") as f:
+                            f.write(report_text)
 
-            # NOTE: Do not call `session.commit()` here.
-            # DB writes are already committed inside the per-ticker `with Session(engine)` block above.
-            # Calling commit on a closed/out-of-scope session can crash the job, preventing ZIP/result messages from being sent.
+                        # Check Underestimated
+                        mr = result.get("analysis", {}).get("mean_reversion", {})
+                        targets = mr.get("targetprice", [])
+                        price = result.get("price", 0)
+
+                        if len(targets) > 4 and price > 0:
+                            target_sad = targets[4]  # TL-1SD (TL-SD)
+                            if price < target_sad:
+                                potential = (target_sad - price) / price * 100
+                                underestimated_stocks.append({
+                                    "ticker": ticker,
+                                    "name": result.get("name"),
+                                    "price": price,
+                                    "target": target_sad,
+                                    "potential": potential,
+                                    "sector": result.get("sector", "N/A")
+                                })
+
+                        # Batch commit every BATCH_SIZE records
+                        if (i + 1) % BATCH_SIZE == 0:
+                            session.commit()
+                            logger.debug(f"Committed batch at {i + 1} records")
+
+                    except Exception as e:
+                        logger.error(f"Error processing result for {ticker}: {e}")
+
+                # Final commit for remaining records
+                session.commit()
             
             # 4. Create ZIP
             # Ensure reports directory exists
@@ -321,17 +415,21 @@ async def daily_podcast_job():
     logger.info("Starting daily podcast job...")
     service = PodcastService()
     
-    # Needs Telegram Bot instance to send messages
-    # We can instantiate a Bot here or import settings
-    from telegram import Bot
+    # Reuse existing bot instance from the running application if available
     from .config import get_settings
-    # from .bot.state import SUBSCRIBERS # Deprecated
     from .models.subscriber import Subscriber
     from sqlmodel import Session, select
     from .database import engine
 
     settings = get_settings()
-    bot = Bot(token=settings.TELEGRAM_TOKEN)
+    
+    from . import main as _main_mod
+    if getattr(_main_mod, 'bot_app', None) and _main_mod.bot_app.bot:
+        bot = _main_mod.bot_app.bot
+    else:
+        from telegram import Bot
+        bot = Bot(token=settings.TELEGRAM_TOKEN)
+    
     chat_id = settings.TELEGRAM_CHAT_ID
     from .utils.pii import redact_telegram_id
     pii_salt = settings.LOG_PII_SALT or None
@@ -427,16 +525,8 @@ def start_scheduler():
     # )
     
     # Add News Check Job (Every 10 mins)
-    from .bot.jobs import check_news_job
-    news_interval = IntervalTrigger(minutes=10)
-    
-    scheduler.add_job(
-        check_news_job,
-        trigger=news_interval,
-        id="check_news",
-        replace_existing=True,
-        # next_run_time=datetime.now() # Uncomment to run immediately on startup 
-    )
+    # 註: check_news_job 已交由 telegram.ext.Application.job_queue 排程 (bot/main.py)
+    # 為避免產生 ConflictError (雙 Bot 實例衝突)，這裡不再透過 apscheduler 排程。
 
     scheduler.start()
     logger.info("Scheduler started.")
