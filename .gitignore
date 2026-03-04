@@ -3,6 +3,7 @@ __pycache__
 .DS_Store
 .claude
 .cursor
+.worktrees/
 
 .env
 
