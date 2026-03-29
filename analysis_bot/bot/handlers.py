@@ -234,6 +234,32 @@ async def hold888_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ 取得大額權證買超失敗：{str(e)[:200]}")
 
 
+async def chatid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """回傳目前 chat 的 ID，方便設定通知目標。"""
+    chat = update.effective_chat
+    lines = [f"Chat ID: {chat.id}"]
+    if getattr(update.message, 'message_thread_id', None):
+        lines.append(f"Topic (thread) ID: {update.message.message_thread_id}")
+    lines.append(f"Chat type: {chat.type}")
+    if chat.title:
+        lines.append(f"Chat name: {chat.title}")
+    await update.message.reply_text("\n".join(lines))
+
+
+async def vix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """手動查詢 VIX 恐慌指數現值。"""
+    await update.message.reply_text("📊 查詢 VIX 中...")
+    try:
+        from ..services.vix_fetcher import fetch_vix_snapshot, format_vix_message
+        snap = await fetch_vix_snapshot()
+        if snap is None:
+            await update.message.reply_text("❌ 無法取得 VIX 資料，請稍後再試。")
+            return
+        await update.message.reply_text(format_vix_message(snap))
+    except Exception as e:
+        await update.message.reply_text(f"❌ VIX 查詢失敗：{e}")
+
+
 async def spike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """手動觸發爆量偵測：掃描台灣上市櫃股票，找出成交量異常放大的個股。"""
     await update.message.reply_text("🔥 正在掃描爆量股...（約 1–2 分鐘）")

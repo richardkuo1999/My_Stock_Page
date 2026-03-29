@@ -621,6 +621,98 @@ async def daily_volume_spike_job():
     logger.info("Daily volume spike job completed.")
 
 
+_VIX_COOLDOWN_HOURS = 4  # 同等級 4 小時內不重複推播
+_VIX_LAST_ALERT_KEY = "vix_last_alert"  # SystemConfig key
+
+
+def _load_vix_last_alert() -> dict:
+    """從 DB 讀取上次推播狀態。"""
+    from .database import engine
+    from .models.config import SystemConfig
+    from sqlmodel import Session, select
+    import json
+    try:
+        with Session(engine) as session:
+            row = session.exec(select(SystemConfig).where(SystemConfig.key == _VIX_LAST_ALERT_KEY)).first()
+            if row:
+                return json.loads(row.value)
+    except Exception as e:
+        logger.warning(f"VIX alert state load failed: {e}")
+    return {"level": None, "time": None}
+
+
+def _save_vix_last_alert(level: str, time_iso: str) -> None:
+    """將推播狀態持久化到 DB。"""
+    from .database import engine
+    from .models.config import SystemConfig
+    from sqlmodel import Session, select
+    import json
+    try:
+        with Session(engine) as session:
+            row = session.exec(select(SystemConfig).where(SystemConfig.key == _VIX_LAST_ALERT_KEY)).first()
+            value = json.dumps({"level": level, "time": time_iso})
+            if row:
+                row.value = value
+                session.add(row)
+            else:
+                session.add(SystemConfig(key=_VIX_LAST_ALERT_KEY, value=value))
+            session.commit()
+    except Exception as e:
+        logger.warning(f"VIX alert state save failed: {e}")
+
+
+async def vix_check_job():
+    """定時檢查 VIX，有警報才推播。去重：同等級 4 小時內只推一次（重啟後仍有效）。"""
+    from .services.vix_fetcher import fetch_vix_snapshot, format_vix_message
+    from .config import get_settings
+    from . import main as _main_mod
+    from datetime import datetime, timedelta, timezone
+
+    settings = get_settings()
+    chat_id = settings.TELEGRAM_CHAT_ID
+    if not chat_id:
+        return
+
+    if getattr(_main_mod, 'bot_app', None) and _main_mod.bot_app.bot:
+        bot = _main_mod.bot_app.bot
+    else:
+        from telegram import Bot
+        bot = Bot(token=settings.TELEGRAM_TOKEN)
+
+    snap = await fetch_vix_snapshot()
+    if snap is None:
+        logger.warning("VIX check: no data")
+        return
+
+    logger.info(f"VIX check: {snap.current:.2f} ({snap.level}), alert={snap.alert}")
+
+    if not snap.alert:
+        return
+
+    # 去重：從 DB 讀取上次推播狀態
+    state = await asyncio.to_thread(_load_vix_last_alert)
+    now = datetime.now()
+    last_level = state.get("level")
+    last_time_str = state.get("time")
+    if last_time_str:
+        try:
+            last_time = datetime.fromisoformat(last_time_str)
+            if (last_level == snap.level and now - last_time < timedelta(hours=_VIX_COOLDOWN_HOURS)):
+                logger.info(f"VIX alert suppressed (same level '{snap.level}', cooldown active)")
+                return
+        except ValueError:
+            pass
+
+    try:
+        kwargs = {"chat_id": chat_id, "text": format_vix_message(snap)}
+        if settings.TELEGRAM_TOPIC_ID:
+            kwargs["message_thread_id"] = settings.TELEGRAM_TOPIC_ID
+        await bot.send_message(**kwargs)
+        await asyncio.to_thread(_save_vix_last_alert, snap.level, now.isoformat())
+    except Exception as e:
+        logger.error(f"VIX alert send failed: {e}")
+
+
 def start_scheduler():
     """Start the scheduler."""
     # Run at 14:00 Taipei time (UTC+8) -> 06:00 UTC? 
@@ -658,6 +750,15 @@ def start_scheduler():
     #     # next_run_time=datetime.now()  # 若要啟動後立刻跑，再打開這行
     # )
     
+    # VIX 定時檢查：台股盤前 08:30、台股收盤後 13:35、美股開盤後 22:30
+    for vix_hour, vix_minute in [(8, 30), (13, 35), (22, 30)]:
+        scheduler.add_job(
+            vix_check_job,
+            trigger=CronTrigger(hour=vix_hour, minute=vix_minute, timezone='Asia/Taipei'),
+            id=f"vix_check_{vix_hour:02d}{vix_minute:02d}",
+            replace_existing=True,
+        )
+
     # Add News Check Job (Every 10 mins)
     # 註: check_news_job 已交由 telegram.ext.Application.job_queue 排程 (bot/main.py)
     # 為避免產生 ConflictError (雙 Bot 實例衝突)，這裡不再透過 apscheduler 排程。

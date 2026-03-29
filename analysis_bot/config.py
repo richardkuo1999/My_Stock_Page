@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     # Web API
     WEB_API_KEY: Optional[str] = None
 
+    # VIX 通知目標（不設定則用預設 TELEGRAM_CHAT_ID）
+    TELEGRAM_TOPIC_ID: Optional[int] = None      # Topic ID（Forum 群組用）
+
     # Logging / Privacy
     # Optional salt for redacting Telegram IDs (chat_id/user_id) in logs.
     # If empty, logs will use masked form (keeps only last 4 chars).

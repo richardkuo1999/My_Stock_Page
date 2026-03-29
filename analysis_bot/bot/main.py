@@ -13,6 +13,8 @@ from .handlers import (
     price_command,
     hold981_command,
     hold888_command,
+    vix_command,
+    chatid_command,
     spike_command,
     google_news_start, google_news_handle,
     research_start, research_handle, research_finish, cancel,
@@ -74,6 +76,8 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("hold981", hold981_command))
     application.add_handler(CommandHandler("hold888", hold888_command))
     application.add_handler(CommandHandler("spike", spike_command))
+    application.add_handler(CommandHandler("vix", vix_command))
+    application.add_handler(CommandHandler("chatid", chatid_command))
 
     # Conversation: Research
     research_conv = ConversationHandler(
