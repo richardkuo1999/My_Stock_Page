@@ -8,6 +8,7 @@ __pycache__
 his.txt
 log.txt
 test_lohas*.py
+config.toml
 
 .env
 

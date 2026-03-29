@@ -1,0 +1,9 @@
+# 元大報告下載腳本所需依賴
+# 安裝: pip install -r scripts/requirements-yuanta.txt
+# 並執行: playwright install chromium
+# 驗證碼 OCR 需安裝系統 Tesseract: brew install tesseract (macOS)
+
+playwright>=1.40.0
+python-dotenv>=1.0.0
+pytesseract>=0.3.10
+Pillow>=10.0.0

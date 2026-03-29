@@ -8,6 +8,7 @@ class News(SQLModel, table=True):
     title: str = Field(index=True)
     link: str = Field(unique=True)
     source: Optional[str] = None
+    content: Optional[str] = None  # Description/snippet for search (RSS description or API content)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class Report(SQLModel, table=True):

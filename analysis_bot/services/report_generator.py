@@ -1,5 +1,9 @@
+import logging
 from typing import Dict, Any
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
+
 
 class ReportGenerator:
     """Generates formatted text reports for stock analysis."""
@@ -44,9 +48,10 @@ class ReportGenerator:
     @staticmethod
     def generate_full_report(data: Dict[str, Any]) -> str:
         """Generates a comprehensive report similar to legacy output."""
-        ticker = data['ticker']
-        name = data['name']
-        price = data['price']
+        ticker = data.get('ticker', 'N/A') or 'N/A'
+        name = data.get('name') or 'N/A'
+        price = data.get('price')
+        price = float(price) if price is not None else 0.0
         fin = data.get("financials", {})
         analysis = data.get("analysis", {})
         est = data.get("estimates") or {}
@@ -63,20 +68,23 @@ class ReportGenerator:
             report.append(f"公司資訊: {summary}")
         
         report.append("")
-        report.append(f"目前股價: {price:>10.2f}\t\t毛利率: {fin.get('gross_margins', 'N/A')}")
-        report.append(f"EPS(TTM): {fin.get('eps_ttm', 'N/A'):>10}\t\tBPS: {fin.get('bps', 'N/A'):>10}")
-        report.append(f"PE(TTM): {fin.get('pe_ttm', 'N/A'):>10}\t\tPB(TTM): {fin.get('pb_ttm', 'N/A'):>10}")
+        _g = fin.get('gross_margins'); _g = f"{_g:>10.2%}" if _g is not None else "N/A"
+        _e = fin.get('eps_ttm'); _e = f"{_e:>10.2f}" if _e is not None else "N/A"
+        _b = fin.get('bps'); _b = f"{_b:>10.2f}" if _b is not None else "N/A"
+        _pe = fin.get('pe_ttm'); _pe = f"{_pe:>10.2f}" if _pe is not None else "N/A"
+        _pb = fin.get('pb_ttm'); _pb = f"{_pb:>10.2f}" if _pb is not None else "N/A"
+        report.append(f"目前股價: {price:>10.2f}\t\t毛利率: {_g}")
+        report.append(f"EPS(TTM): {_e}\t\tBPS: {_b}")
+        report.append(f"PE(TTM): {_pe}\t\tPB(TTM): {_pb}")
         
         # Yahoo Target
         report.append("="*76)
         report.append("Yahoo Finance 1y Target Est....")
         report.append("")
         target_price = fin.get('target_mean_price')
-        if target_price:
-            potential = ((target_price - price) / price) * 100 if price else 0
-            # Note: User example had "預估eps" here too, but Yahoo doesn't give forward EPS easily in summary
-            # We skip EPS here unless we have it from another source
-            report.append(f"目標價位: {target_price:>10.2f}\t\t潛在漲幅: {potential:>10.2f}%")
+        if target_price is not None and price and price > 0:
+            potential = ((float(target_price) - price) / price) * 100
+            report.append(f"目標價位: {float(target_price):>10.2f}\t\t潛在漲幅: {potential:>10.2f}%")
         else:
              report.append("N/A")
              
@@ -91,32 +99,41 @@ class ReportGenerator:
             report.append("")
             
             probs = mr.get('prob', [0, 0, 0])
-            report.append(f"{ticker} 往上的機率為: {probs[0]:>10.2f}%, 維持在這個區間的機率為: {probs[1]:>10.2f}%, 往下的機率為: {probs[2]:>10.2f}%")
+            p0 = probs[0] if probs and probs[0] is not None else 0
+            p1 = probs[1] if len(probs) > 1 and probs[1] is not None else 0
+            p2 = probs[2] if len(probs) > 2 and probs[2] is not None else 0
+            report.append(f"{ticker} 往上的機率為: {p0:>10.2f}%, 維持在這個區間的機率為: {p1:>10.2f}%, 往下的機率為: {p2:>10.2f}%")
             
-            tl_val = mr['TL'][0]
-            if tl_val is not None:
-                tl_growth = mr.get('targetprice', [])[3] - price # TL is index 3
-                report.append(f"目前股價: {price:>10.2f}, TL價: {tl_val:>10.2f}, TL價潛在漲幅: {tl_growth:>10.2f}")
+            tl_list = mr.get('TL', [])
+            tl_val = tl_list[0] if tl_list else None
+            if tl_val is not None and price:
+                targets_tl = mr.get('targetprice', [])
+                tl_growth = (targets_tl[3] - price) if len(targets_tl) > 3 and targets_tl[3] is not None else 0
+                report.append(f"目前股價: {price:>10.2f}, TL價: {float(tl_val):>10.2f}, TL價潛在漲幅: {tl_growth:>10.2f}")
             else:
                 report.append(f"目前股價: {price:>10.2f}, TL價: N/A, TL價潛在漲幅: N/A")
             
             expects = mr.get('expect', [0, 0, 0])
-            
+            e0 = expects[0] if expects and expects[0] is not None else 0
+            e1 = expects[1] if len(expects) > 1 and expects[1] is not None else 0
+            e2 = expects[2] if len(expects) > 2 and expects[2] is not None else 0
+
             # ROI Calculations
-            roi_bull_1 = (expects[0] / price) * 100 if price else 0
-            roi_bull_2 = (expects[1] / price) * 100 if price else 0
-            roi_bear = (expects[2] / price) * 100 if price else 0
-            
+            roi_bull_1 = (e0 / price) * 100 if price else 0
+            roi_bull_2 = (e1 / price) * 100 if price else 0
+            roi_bear = (e2 / price) * 100 if price else 0
+
             report.append("做多評估：")
-            report.append(f"期望值為: {expects[0]:>10.2f}, 期望報酬率為: {roi_bull_1:>10.2f}% (保守計算: 上檔TL，下檔歸零)")
-            report.append(f"期望值為: {expects[1]:>10.2f}, 期望報酬率為: {roi_bull_2:>10.2f}% (樂觀計算: 上檔TL，下檔-3SD)")
+            report.append(f"期望值為: {e0:>10.2f}, 期望報酬率為: {roi_bull_1:>10.2f}% (保守計算: 上檔TL，下檔歸零)")
+            report.append(f"期望值為: {e1:>10.2f}, 期望報酬率為: {roi_bull_2:>10.2f}% (樂觀計算: 上檔TL，下檔-3SD)")
             report.append("")
             report.append("做空評估: ")
-            report.append(f"期望值為: {expects[2]:>10.2f}, 期望報酬率為: {roi_bear:>10.2f}% (樂觀計算: 上檔+3SD，下檔TL)")
+            report.append(f"期望值為: {e2:>10.2f}, 期望報酬率為: {roi_bear:>10.2f}% (樂觀計算: 上檔+3SD，下檔TL)")
             
             # Bands (Lohas Spectrum)
+            lohas_years = mr.get('lohas_years', 3.5)
             report.append("="*76)
-            report.append("樂活五線譜......")
+            report.append(f"樂活五線譜 ({lohas_years} 年)......")
             report.append("")
             
             labels_map = {
@@ -135,7 +152,10 @@ class ReportGenerator:
                     target = targets[i]
                     if target is not None:
                         pot = ((target - price) / price) * 100 if price else 0
-                        report.append(f"    {labels_map[i]:<10}: {target:>10.2f}, 潛在漲幅: {pot:>10.2f}%")
+                        if pot < 0:
+                            report.append(f"    {labels_map[i]:<10}: {target:>10.2f}, 預期回檔: {abs(pot):>10.2f}%")
+                        else:
+                            report.append(f"    {labels_map[i]:<10}: {target:>10.2f}, 潛在漲幅: {pot:>10.2f}%")
                     else:
                         report.append(f"    {labels_map[i]:<10}: N/A, 潛在漲幅: N/A")
         
@@ -184,26 +204,24 @@ class ReportGenerator:
             report.append("本益比標準差......")
             report.append("")
             # Bands Logic
-            sd_bands = pe_stats.get("bands", {})
+            sd_bands = pe_stats.get("bands", [])
             if sd_bands:
-               ordered_keys = [f"TL+{i}SD" for i in range(3, 0, -1)] + ["TL"] + [f"TL-{i}SD" for i in range(1, 4)]
+               ordered_labels = [f"TL+{i}SD" for i in range(3, 0, -1)] + ["TL   "] + [f"TL-{i}SD" for i in range(1, 4)]
+               reversed_bands = list(reversed(sd_bands))
                
-               for key in ordered_keys:
-                   if key in sd_bands:
-                       band_val = sd_bands[key]
-                       if isinstance(band_val, list):
-                           band_val = band_val[-1]
-                       
+               for i, label in enumerate(ordered_labels):
+                   if i < len(reversed_bands):
+                       band_val = reversed_bands[i]
                        target = band_val * eps_ttm if isinstance(eps_ttm, (int, float)) else "N/A"
                        pot = ((target - price) / price) * 100 if isinstance(target, (int, float)) and price else "N/A"
                        
                        target_str = f"{target:.2f}" if isinstance(target, (int, float)) else "N/A"
                        pot_str = f"{pot:.2f}%" if isinstance(pot, (int, float)) else "N/A"
                        
-                       report.append(f"PE {key:<5}: {band_val:>10.2f}          目標價位: {target_str:>10}          潛在漲幅: {pot_str:>10}")
+                       report.append(f"PE {label:<5}: {band_val:>10.2f}          目標價位: {target_str:>10}          潛在漲幅: {pot_str:>10}")
 
         pb_stats = analysis.get('pb_stats', {})
-        print(pb_stats)
+        logger.debug("pb_stats: %s", pb_stats)
         if pb_stats:
             report.append("="*76)
             report.append("股價淨值比四分位數與平均本益比......")
@@ -228,22 +246,44 @@ class ReportGenerator:
             report.append("股價淨值比標準差......")
             report.append("")
             
-            sd_bands = pb_stats.get("bands", {})
+            sd_bands = pb_stats.get("bands", [])
             if sd_bands:
-               ordered_keys = [f"TL+{i}SD" for i in range(3, 0, -1)] + ["TL"] + [f"TL-{i}SD" for i in range(1, 4)]
-               for key in ordered_keys:
-                   if key in sd_bands:
-                       band_val = sd_bands[key]
-                       if isinstance(band_val, list):
-                           band_val = band_val[-1]
-                       
+               ordered_labels = [f"TL+{i}SD" for i in range(3, 0, -1)] + ["TL   "] + [f"TL-{i}SD" for i in range(1, 4)]
+               reversed_bands = list(reversed(sd_bands))
+               for i, label in enumerate(ordered_labels):
+                   if i < len(reversed_bands):
+                       band_val = reversed_bands[i]
                        target = band_val * bps if isinstance(bps, (int, float)) else "N/A"
                        pot = ((target - price) / price) * 100 if isinstance(target, (int, float)) and price else "N/A"
                        
                        target_str = f"{target:.2f}" if isinstance(target, (int, float)) else "N/A"
                        pot_str = f"{pot:.2f}%" if isinstance(pot, (int, float)) else "N/A"
                        
-                       report.append(f"PB {key:<5}: {band_val:>10.2f}          目標價位: {target_str:>10}          潛在漲幅: {pot_str:>10}")
+                       report.append(f"PB {label:<5}: {band_val:>10.2f}          目標價位: {target_str:>10}          潛在漲幅: {pot_str:>10}")
+
+        # EPS Momentum
+        eps_mom = analysis.get('eps_momentum', {})
+        if eps_mom and eps_mom.get('history'):
+            report.append("="*76)
+            report.append("獲利動能 (EPS Momentum) - FactSet 預估追蹤......")
+            report.append("")
+            report.append("近期 EPS 預估修正歷史：")
+            timeline = eps_mom['history']
+            for i, entry in enumerate(timeline):
+                eps_str = f"{entry['est_eps']:.2f}"
+                if i == 0:
+                    report.append(f"  {entry['date']}:  {eps_str} 元")
+                else:
+                    prev_eps = timeline[i-1]['est_eps']
+                    chg = ((entry['est_eps'] - prev_eps) / abs(prev_eps) * 100) if prev_eps else 0
+                    arrow = "↑" if chg > 0 else "↓" if chg < 0 else "→"
+                    report.append(f"  {entry['date']}:  {eps_str} 元 ({arrow} {chg:+.2f}%)")
+            report.append("")
+            trend_emoji = "📈" if "上修" in eps_mom.get('eps_trend', '') else "📉" if "下修" in eps_mom.get('eps_trend', '') else "➡️"
+            signal_emoji = "✅" if "正面" in eps_mom.get('signal', '') else "⚠️" if "中性" in eps_mom.get('signal', '') else "❌"
+            report.append(f"趨勢方向: {eps_mom.get('eps_trend', 'N/A')} {trend_emoji}")
+            report.append(f"總修正幅度: {eps_mom.get('total_revision_pct', 0):+.2f}%")
+            report.append(f"動能訊號: {eps_mom.get('signal', 'N/A')} {signal_emoji}")
 
         report.append("="*76)
         
@@ -334,18 +374,21 @@ Yahoo Finance 1y Target Est....
         if mr and 'targetprice' in mr:
             targets = mr['targetprice']
             labels = ["超極樂觀價位", "極樂觀價位", "樂觀價位", "趨勢價位", "悲觀價位", "極悲觀價位", "超極悲觀價位"]
+            lohas_years = mr.get('lohas_years', 3.5)
             
             text += f"""
 ============================================================================
-樂活五線譜......      
-
+樂活五線譜 ({lohas_years} 年)......      
 
 """
             for i, label in enumerate(labels):
                 if i < len(targets):
                     tp = targets[i]
                     pot = get_profit(tp, price)
-                    text += f"    {label}: {tp:>10.2f}, 潛在漲幅: {pot:>10.2f}%\n"
+                    if pot < 0:
+                        text += f"    {label:<7}: {tp:>10.2f}, 預期回檔: {abs(pot):>10.2f}%\n"
+                    else:
+                        text += f"    {label:<7}: {tp:>10.2f}, 潛在漲幅: {pot:>10.2f}%\n"
 
         # 5. FactSet Estimates
         est_eps = est.get('est_eps')
@@ -465,5 +508,28 @@ PEG估值......
 PEG:       {float(peg):<10.2f}           EPS成長率:      {growth:.2f}
 目標價位:    {target_peg}          潛在漲幅:     {pot_peg}
 """
+
+        # 9. EPS Momentum
+        eps_mom = analysis.get('eps_momentum', {})
+        if eps_mom and eps_mom.get('history'):
+            text += "\n============================================================================\n"
+            text += "獲利動能 (EPS Momentum) - FactSet 預估追蹤......\n\n"
+            text += "近期 EPS 預估修正歷史：\n"
+            timeline = eps_mom['history']
+            for i, entry in enumerate(timeline):
+                eps_str = f"{entry['est_eps']:.2f}"
+                if i == 0:
+                    text += f"  {entry['date']}:  {eps_str} 元\n"
+                else:
+                    prev_eps = timeline[i-1]['est_eps']
+                    chg = ((entry['est_eps'] - prev_eps) / abs(prev_eps) * 100) if prev_eps else 0
+                    arrow = "↑" if chg > 0 else "↓" if chg < 0 else "→"
+                    text += f"  {entry['date']}:  {eps_str} 元 ({arrow} {chg:+.2f}%)\n"
+            text += "\n"
+            trend_emoji = "📈" if "上修" in eps_mom.get('eps_trend', '') else "📉" if "下修" in eps_mom.get('eps_trend', '') else "➡️"
+            signal_emoji = "✅" if "正面" in eps_mom.get('signal', '') else "⚠️" if "中性" in eps_mom.get('signal', '') else "❌"
+            text += f"趨勢方向: {eps_mom.get('eps_trend', 'N/A')} {trend_emoji}\n"
+            text += f"總修正幅度: {eps_mom.get('total_revision_pct', 0):+.2f}%\n"
+            text += f"動能訊號: {eps_mom.get('signal', 'N/A')} {signal_emoji}\n"
 
         return text

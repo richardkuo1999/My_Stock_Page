@@ -51,7 +51,7 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
 
         # 0. Load Active Tags
         from .services.stock_service import StockService
-        active_tags = StockService.get_daily_tags()
+        active_tags = await asyncio.to_thread(StockService.get_daily_tags)
         logger.info(f"Active Tags: {active_tags}")
         
         # 1. Initialize StockSelector
@@ -116,14 +116,12 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
                  except Exception as e:
                     logger.error(f"Error processing User Choice: {e}")
                     
-        # 2. Update DB Tags (Merge with existing or Create new)
+    # 2. Update DB Tags (Merge with existing or Create new)
+    def update_db_tags(final_map, managed_tags):
         with Session(engine) as session:
             # Fetch all existing stocks to clean up old tags
             all_stocks = session.exec(select(StockData)).all()
             existing_tickers = {s.ticker for s in all_stocks}
-            
-            # Managed Tags that should be reset every run
-            MANAGED_TAG_SET = {"ETF", "ETF_Rank", "Institutional", "InvestAnchor", "User_Choice"}
             
             # 1. Update Existing Stocks (Clean old managed tags + Add new ones)
             for stock in all_stocks:
@@ -132,13 +130,13 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
                 # Remove Managed Tags (Exact match or Prefix for ETF_ codes)
                 tags_to_keep = set()
                 for t in current_tags:
-                    if t in MANAGED_TAG_SET or t.startswith("ETF_"):
+                    if t in managed_tags or t.startswith("ETF_"):
                         continue
                     tags_to_keep.add(t)
                 
                 # Add back new tags if this stock is in the current map
-                if stock.ticker in final_tickers_map:
-                    tags_to_keep.update(final_tickers_map[stock.ticker])
+                if stock.ticker in final_map:
+                    tags_to_keep.update(final_map[stock.ticker])
                 
                 # Update DB if changed
                 new_tag_str = ",".join(sorted(list(tags_to_keep)))
@@ -147,141 +145,144 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
                     session.add(stock)
 
             # 2. Create New Stocks (That didn't exist in DB)
-            for ticker, new_tags in final_tickers_map.items():
+            for ticker, new_tags in final_map.items():
                 if ticker not in existing_tickers:
                     stock = StockData(ticker=ticker, tag=",".join(sorted(list(new_tags))))
                     session.add(stock)
             
             session.commit()
-            
-            # 3. Final List to Analyze (Active tags + Tracked if enabled)
-            if run_tracked:
-                 # Re-fetch or just add all existing tickers?
-                 # If run_tracked is True, we want to analyze EVERYTHING in StockData
-                 # (which now includes all previous stocks + newly added ones)
-                 ticker_set = set(final_tickers_map.keys())
-                 ticker_set.update(existing_tickers)
-                 final_tickers = list(ticker_set)
-            else:
-                 final_tickers = list(final_tickers_map.keys())
-             
-        logger.info(f"Analyzing {len(final_tickers)} stocks (Daily={run_daily}, Anchors={run_anchors}, Tracked={run_tracked})")
-        tickers = list(final_tickers)
+            return existing_tickers
 
-        # If no tickers were selected, we should notify and exit early (otherwise users see only the start message).
-        if not tickers:
-            logger.warning("No tickers selected for daily analysis. Check active_daily_tags or enable run_tracked.")
-            if chat_id:
+    MANAGED_TAG_SET = {"ETF", "ETF_Rank", "Institutional", "InvestAnchor", "User_Choice"}
+    existing_tickers = await asyncio.to_thread(update_db_tags, final_tickers_map, MANAGED_TAG_SET)
+            
+    # 3. Final List to Analyze (Active tags + Tracked if enabled)
+    if run_tracked:
+        ticker_set = set(final_tickers_map.keys())
+        ticker_set.update(existing_tickers)
+        final_tickers = list(ticker_set)
+    else:
+        final_tickers = list(final_tickers_map.keys())
+
+    logger.info(f"Analyzing {len(final_tickers)} stocks (Daily={run_daily}, Anchors={run_anchors}, Tracked={run_tracked})")
+    tickers = list(final_tickers)
+
+    # If no tickers were selected, we should notify and exit early (otherwise users see only the start message).
+    if not tickers:
+        logger.warning("No tickers selected for daily analysis. Check active_daily_tags or enable run_tracked.")
+        if chat_id:
+            try:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text="⚠️ Daily run skipped: 沒有任何股票被選入分析清單（請先在 Settings 開啟 tags，或改用 Tracked 模式）。",
+                )
+            except Exception as e:
+                logger.error(f"Failed to send empty-tickers msg: {e}")
+        return
+
+    # Temp dir for reports
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp_path = Path(temp_dir)
+        report_path = temp_path / "reports"
+        report_path.mkdir()
+
+        # === Parallel Stock Analysis ===
+        MAX_CONCURRENT = settings.MAX_CONCURRENT_ANALYSIS
+        PROGRESS_INTERVAL = settings.ANALYSIS_PROGRESS_INTERVAL
+        BATCH_SIZE = settings.ANALYSIS_BATCH_SIZE
+
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+        processed_count = 0
+        progress_lock = asyncio.Lock()
+
+        async def analyze_single_stock(ticker: str) -> tuple[str, dict | None, str | None]:
+            """
+            Analyze a single stock with semaphore control.
+            Returns: (ticker, result or None, error_message or None)
+            """
+            nonlocal processed_count
+            try:
+                async with semaphore:
+                    result = await analyzer.analyze_stock(ticker)
+
+                if "error" in result:
+                    return (ticker, None, result["error"])
+
+                return (ticker, result, None)
+            except Exception as e:
+                return (ticker, None, str(e))
+
+        async def analyze_with_progress(ticker: str) -> tuple[str, dict | None, str | None]:
+            """
+            Wrapper that tracks progress and sends updates.
+            """
+            nonlocal processed_count
+            result = await analyze_single_stock(ticker)
+
+            async with progress_lock:
+                processed_count += 1
+                current = processed_count
+                total = len(tickers)
+
+            # Send progress update at intervals
+            if current % PROGRESS_INTERVAL == 0 or current == total:
                 try:
                     await bot.send_message(
                         chat_id=chat_id,
-                        text="⚠️ Daily run skipped: 沒有任何股票被選入分析清單（請先在 Settings 開啟 tags，或改用 Tracked 模式）。",
+                        text=f"📊 分析進度：{current}/{total} ({current/total*100:.0f}%)"
                     )
                 except Exception as e:
-                    logger.error(f"Failed to send empty-tickers msg: {e}")
-            return
+                    logger.warning(f"Failed to send progress update: {e}")
 
-        # Temp dir for reports
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            report_path = temp_path / "reports"
-            report_path.mkdir()
+            return result
 
-            # === Parallel Stock Analysis ===
-            MAX_CONCURRENT = settings.MAX_CONCURRENT_ANALYSIS
-            PROGRESS_INTERVAL = settings.ANALYSIS_PROGRESS_INTERVAL
-            BATCH_SIZE = settings.ANALYSIS_BATCH_SIZE
+        logger.info(f"Starting parallel analysis with MAX_CONCURRENT={MAX_CONCURRENT}")
+        await bot.send_message(
+            chat_id=chat_id,
+            text=f"🔍 開始分析 {len(tickers)} 檔股票（並發數：{MAX_CONCURRENT}）..."
+        )
 
-            semaphore = asyncio.Semaphore(MAX_CONCURRENT)
-            processed_count = 0
-            progress_lock = asyncio.Lock()
+        # Run all analyses in parallel
+        results = await asyncio.gather(
+            *[analyze_with_progress(ticker) for ticker in tickers],
+            return_exceptions=True
+        )
 
-            async def analyze_single_stock(ticker: str) -> tuple[str, dict | None, str | None]:
-                """
-                Analyze a single stock with semaphore control.
-                Returns: (ticker, result or None, error_message or None)
-                """
-                nonlocal processed_count
-                try:
-                    async with semaphore:
-                        result = await analyzer.analyze_stock(ticker)
+        # Process results
+        successful_results = []
+        failed_tickers = []
 
-                    if "error" in result:
-                        return (ticker, None, result["error"])
+        for i, result in enumerate(results):
+            ticker = tickers[i]
+            if isinstance(result, Exception):
+                logger.error(f"Exception analyzing {ticker}: {result}")
+                failed_tickers.append((ticker, str(result)))
+            elif result[2] is not None:  # error_message
+                logger.warning(f"Skipping {ticker}: {result[2]}")
+                failed_tickers.append((ticker, result[2]))
+            elif result[1] is not None:  # has result
+                successful_results.append((ticker, result[1]))
 
-                    return (ticker, result, None)
-                except Exception as e:
-                    return (ticker, None, str(e))
+        logger.info(f"Analysis complete: {len(successful_results)} succeeded, {len(failed_tickers)} failed")
 
-            async def analyze_with_progress(ticker: str) -> tuple[str, dict | None, str | None]:
-                """
-                Wrapper that tracks progress and sends updates.
-                """
-                nonlocal processed_count
-                result = await analyze_single_stock(ticker)
+        # Send failure summary if any
+        if failed_tickers and chat_id:
+            fail_msg = f"⚠️ 失敗 {len(failed_tickers)} 檔：\n"
+            fail_msg += "\n".join([f"- {t}: {e[:30]}..." if len(e) > 30 else f"- {t}: {e}" for t, e in failed_tickers[:10]])
+            if len(failed_tickers) > 10:
+                fail_msg += f"\n... 及其他 {len(failed_tickers) - 10} 檔"
+            try:
+                await bot.send_message(chat_id=chat_id, text=fail_msg)
+            except Exception as e:
+                logger.warning(f"Failed to send failure summary: {e}")
 
-                async with progress_lock:
-                    processed_count += 1
-                    current = processed_count
-                    total = len(tickers)
+        underestimated_stocks = []
 
-                # Send progress update at intervals
-                if current % PROGRESS_INTERVAL == 0 or current == total:
-                    try:
-                        await bot.send_message(
-                            chat_id=chat_id,
-                            text=f"📊 分析進度：{current}/{total} ({current/total*100:.0f}%)"
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to send progress update: {e}")
-
-                return result
-
-            logger.info(f"Starting parallel analysis with MAX_CONCURRENT={MAX_CONCURRENT}")
-            await bot.send_message(
-                chat_id=chat_id,
-                text=f"🔍 開始分析 {len(tickers)} 檔股票（並發數：{MAX_CONCURRENT}）..."
-            )
-
-            # Run all analyses in parallel
-            results = await asyncio.gather(
-                *[analyze_with_progress(ticker) for ticker in tickers],
-                return_exceptions=True
-            )
-
-            # Process results
-            successful_results = []
-            failed_tickers = []
-
-            for i, result in enumerate(results):
-                ticker = tickers[i]
-                if isinstance(result, Exception):
-                    logger.error(f"Exception analyzing {ticker}: {result}")
-                    failed_tickers.append((ticker, str(result)))
-                elif result[2] is not None:  # error_message
-                    logger.warning(f"Skipping {ticker}: {result[2]}")
-                    failed_tickers.append((ticker, result[2]))
-                elif result[1] is not None:  # has result
-                    successful_results.append((ticker, result[1]))
-
-            logger.info(f"Analysis complete: {len(successful_results)} succeeded, {len(failed_tickers)} failed")
-
-            # Send failure summary if any
-            if failed_tickers and chat_id:
-                fail_msg = f"⚠️ 失敗 {len(failed_tickers)} 檔：\n"
-                fail_msg += "\n".join([f"- {t}: {e[:30]}..." if len(e) > 30 else f"- {t}: {e}" for t, e in failed_tickers[:10]])
-                if len(failed_tickers) > 10:
-                    fail_msg += f"\n... 及其他 {len(failed_tickers) - 10} 檔"
-                try:
-                    await bot.send_message(chat_id=chat_id, text=fail_msg)
-                except Exception as e:
-                    logger.warning(f"Failed to send failure summary: {e}")
-
-            underestimated_stocks = []
-
-            # Batch database writes
+        # Batch database writes (Synchronous part moved to to_thread)
+        def process_results_and_generate_reports(results_list, report_dir):
+            underestimated = []
             with Session(engine) as session:
-                for i, (ticker, result) in enumerate(successful_results):
+                for i, (ticker, result) in enumerate(results_list):
                     try:
                         # Update DB (StockData)
                         json_data = json.dumps(result)
@@ -305,7 +306,7 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
                         report_text = ReportGenerator.generate_full_report(result)
                         filename = f"{ticker}_{result.get('name', 'Stock').replace('/', '_')}.txt"
 
-                        with open(report_path / filename, "w", encoding="utf-8") as f:
+                        with open(report_dir / filename, "w", encoding="utf-8") as f:
                             f.write(report_text)
 
                         # Check Underestimated
@@ -317,7 +318,7 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
                             target_sad = targets[4]  # TL-1SD (TL-SD)
                             if price < target_sad:
                                 potential = (target_sad - price) / price * 100
-                                underestimated_stocks.append({
+                                underestimated.append({
                                     "ticker": ticker,
                                     "name": result.get("name"),
                                     "price": price,
@@ -336,77 +337,76 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
 
                 # Final commit for remaining records
                 session.commit()
-            
-            # 4. Create ZIP
-            # Ensure reports directory exists
-            reports_dir = Path("reports")
-            reports_dir.mkdir(exist_ok=True)
-            
-            zip_filename = f"Daily_Report_{datetime.now().strftime('%Y%m%d')}.zip"
-            zip_filepath = reports_dir / zip_filename # Save to persistent reports/ dir
-            
-            # Write to persistent location
-            with zipfile.ZipFile(zip_filepath, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                 for root, dirs, files in os.walk(report_path):
-                    for file in files:
-                        zipf.write(os.path.join(root, file), arcname=file)
-            
-            # Clean up temp files (handled by TemporaryDirectory, but ZIP is now outside)
-            
-            # 5. Send Notifications (ZIP + Underestimated)
-            
-            # Format Underestimated Message
-            under_msg = "📉 **Underestimated Stocks (Price < TL-SD)**\n\n"
-            if underestimated_stocks:
-                # Sort by potential desc
-                underestimated_stocks.sort(key=lambda x: x['potential'], reverse=True)
-                
-                header = f"{'Code':<6} {'Name':<6} {'Sector':<6} {'Pot%':>5}\n"
-                under_msg += f"```\n{header}"
-                for s in underestimated_stocks:
-                    under_msg += f"{s['ticker']:<6} {s['name'][:6]:<6} {s['sector'][:6]:<6} {s['potential']:>5.1f}%\n"
-                under_msg += "```"
-            else:
-                under_msg += "No stocks found below TL-SD."
+            return underestimated
 
-            # Function to send to list of users
-            async def send_daily_bundle(target_chat_id):
-                 try:
-                     # Send ZIP
-                     with open(zip_filepath, 'rb') as f:
-                         await bot.send_document(
-                            chat_id=target_chat_id,
-                            document=f,
-                            filename=zip_filename,
-                            caption="📊 Daily Analysis Reports",
-                            read_timeout=60, 
-                            write_timeout=60, 
-                            connect_timeout=60
-                         )
-                     # Send Underestimated List
-                     await bot.send_message(chat_id=target_chat_id, text=under_msg, parse_mode='Markdown')
-                 except Exception as e:
-                     logger.error(
-                        f"Failed to send bundle to {redact_telegram_id(target_chat_id, salt=pii_salt)}: {e}"
-                     )
+        underestimated_stocks = await asyncio.to_thread(
+            process_results_and_generate_reports, successful_results, report_path
+        )
 
-            # Send to Admin
-            if chat_id:
-                try:
-                    await bot.send_message(chat_id=chat_id, text="✅ Run Finished. Sending results...")
-                except: pass
-                await send_daily_bundle(chat_id)
-            
-            # Send to Subscribers
-            from .models.subscriber import Subscriber
-            
-            subscribers = []
+        # 4. Create ZIP
+        reports_dir = Path("reports")
+        reports_dir.mkdir(exist_ok=True)
+
+        zip_filename = f"Daily_Report_{datetime.now().strftime('%Y%m%d')}.zip"
+        zip_filepath = reports_dir / zip_filename
+
+        with zipfile.ZipFile(zip_filepath, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(report_path):
+                for file in files:
+                    zipf.write(os.path.join(root, file), arcname=file)
+
+        # 5. Send Notifications (ZIP + Underestimated)
+        under_msg = "📉 **Underestimated Stocks (Price < TL-SD)**\n\n"
+        if underestimated_stocks:
+            underestimated_stocks.sort(key=lambda x: x['potential'], reverse=True)
+            header = f"{'Code':<6} {'Name':<6} {'Sector':<6} {'Pot%':>5}\n"
+            under_msg += f"```\n{header}"
+            for s in underestimated_stocks:
+                nm = (s.get('name') or 'N/A')[:6]
+                sec = (s.get('sector') or 'N/A')[:6]
+                pot = s.get('potential')
+                pot_str = f"{pot:>5.1f}%" if pot is not None else "N/A"
+                under_msg += f"{s['ticker']:<6} {nm:<6} {sec:<6} {pot_str}\n"
+            under_msg += "```"
+        else:
+            under_msg += "No stocks found below TL-SD."
+
+        async def send_daily_bundle(target_chat_id):
+            try:
+                with open(zip_filepath, 'rb') as f:
+                    await bot.send_document(
+                        chat_id=target_chat_id,
+                        document=f,
+                        filename=zip_filename,
+                        caption="📊 Daily Analysis Reports",
+                        read_timeout=60,
+                        write_timeout=60,
+                        connect_timeout=60
+                    )
+                await bot.send_message(chat_id=target_chat_id, text=under_msg, parse_mode='Markdown')
+            except Exception as e:
+                logger.error(
+                    f"Failed to send bundle to {redact_telegram_id(target_chat_id, salt=pii_salt)}: {e}"
+                )
+
+        if chat_id:
+            try:
+                await bot.send_message(chat_id=chat_id, text="✅ Run Finished. Sending results...")
+            except Exception as e:
+                logger.warning("Failed to send run-finished msg: %s", e)
+            await send_daily_bundle(chat_id)
+
+        from .models.subscriber import Subscriber
+
+        def get_subscribers():
             with Session(engine) as session:
-                 subs = session.exec(select(Subscriber).where(Subscriber.is_active == True)).all()
-                 subscribers = [s.chat_id for s in subs]
-            
-            for sub_id in subscribers:
-                await send_daily_bundle(sub_id)
+                subs = session.exec(select(Subscriber).where(Subscriber.is_active == True)).all()
+                return [s.chat_id for s in subs]
+
+        subscribers = await asyncio.to_thread(get_subscribers)
+
+        for sub_id in subscribers:
+            await send_daily_bundle(sub_id)
 
     logger.info("Daily analysis job completed.")
 
@@ -438,6 +438,13 @@ async def daily_podcast_job():
         # Returns list of (path, host, title, url)
         new_episodes = await service.process_daily_podcasts()
         
+        def get_sub_ids():
+            with Session(engine) as session:
+                 subs = session.exec(select(Subscriber).where(Subscriber.is_active == True)).all()
+                 return [s.chat_id for s in subs]
+
+        sub_ids = await asyncio.to_thread(get_sub_ids)
+
         for file_path, host, title, url in new_episodes:
             if not file_path.exists():
                 continue
@@ -462,12 +469,7 @@ async def daily_podcast_job():
                     logger.error(f"Failed to send to Main Chat: {e}")
 
             # Send to Subscribers
-            subscribers = []
-            with Session(engine) as session:
-                 subs = session.exec(select(Subscriber).where(Subscriber.is_active == True)).all()
-                 subscribers = [s.chat_id for s in subs]
-                 
-            for sub_id in subscribers:
+            for sub_id in sub_ids:
                 try:
                     with open(file_path, 'rb') as f:
                         await bot.send_document(
@@ -483,7 +485,7 @@ async def daily_podcast_job():
                     )
 
             # Mark as processed in DB (so we don't process again)
-            service.mark_as_processed(host, title, url)
+            await asyncio.to_thread(service.mark_as_processed, host, title, url)
             
             # Remove file after sending? Or keep for record?
             # Implementation plan said "Clean up file after sending"
@@ -496,6 +498,129 @@ async def daily_podcast_job():
     except Exception as e:
         logger.error(f"Podcast job failed: {e}")
 
+
+async def daily_volume_spike_job():
+    """Daily job: scan for volume spikes + AI news analysis, push to Telegram."""
+    logger.info("Starting daily volume spike job...")
+
+    from .config import get_settings
+    from .services.volume_spike_scanner import VolumeSpikeScanner
+    from .models.subscriber import Subscriber
+
+    settings = get_settings()
+
+    # Reuse running bot instance
+    from . import main as _main_mod
+    if getattr(_main_mod, 'bot_app', None) and _main_mod.bot_app.bot:
+        bot = _main_mod.bot_app.bot
+    else:
+        from telegram import Bot
+        bot = Bot(token=settings.TELEGRAM_TOKEN)
+
+    chat_id = settings.TELEGRAM_CHAT_ID
+    from .utils.pii import redact_telegram_id
+    pii_salt = settings.LOG_PII_SALT or None
+
+    try:
+        scanner = VolumeSpikeScanner()
+
+        # 1. Scan
+        spike_scan = await scanner.scan()
+        results = spike_scan.results
+        if not results:
+            if chat_id:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        "📊 無符合條件之爆量股（成交量 ≥ 1000 張，倍數 ≥ 1.5x）\n\n"
+                        f"📅 {spike_scan.data_date_caption}"
+                    ),
+                )
+            logger.info("No volume spike stocks found.")
+            return
+
+        from .config import get_settings
+
+        if get_settings().SPIKE_NEWS_ENRICHMENT_ENABLED:
+            try:
+                results = await scanner.enrich_with_news(results, top_n=1)
+            except Exception as e:
+                logger.error(f"Spike news enrichment failed: {e}")
+
+        from .services.spike_pager import (
+            build_spike_markdown_header,
+            build_spike_telegram_html_messages,
+        )
+
+        _spike_header = build_spike_markdown_header(len(results))
+        spike_msgs = build_spike_telegram_html_messages(results, _spike_header)
+
+        async def send_to(target_id):
+            try:
+                for m in spike_msgs:
+                    await bot.send_message(
+                        chat_id=target_id, text=m,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                    await asyncio.sleep(0.5)  # 避免 Telegram flood control
+            except Exception as e:
+                logger.error(f"Failed to send spike table to {redact_telegram_id(target_id, salt=pii_salt)}: {e}")
+
+        async def send_detail(target_id, text):
+            try:
+                await bot.send_message(
+                    chat_id=target_id, text=text,
+                    parse_mode="Markdown",
+                    disable_web_page_preview=True,
+                )
+            except Exception as e:
+                logger.error(f"Failed to send spike detail: {e}")
+
+        if chat_id:
+            await send_to(chat_id)
+
+        for r in results[:1]:
+            if r.analysis and r.analysis != "近期無相關新聞":
+                detail = (
+                    f"📈 *{r.name}*（{r.ticker}）{r.spike_ratio:.1f}x\n"
+                    f"{r.analysis}"
+                )
+                if chat_id:
+                    await send_detail(chat_id, detail)
+            break
+
+        # 4. Send to subscribers
+        def get_sub_chat_ids():
+            with Session(engine) as session:
+                subs = session.exec(select(Subscriber).where(Subscriber.is_active == True)).all()
+                return [s.chat_id for s in subs]
+
+        sub_ids = await asyncio.to_thread(get_sub_chat_ids)
+
+        for sub_id in sub_ids:
+            await send_to(sub_id)
+            for r in results[:1]:
+                if r.analysis and r.analysis != "近期無相關新聞":
+                    detail = (
+                        f"📈 *{r.name}*（{r.ticker}）{r.spike_ratio:.1f}x\n"
+                        f"{r.analysis}"
+                    )
+                    await send_detail(sub_id, detail)
+                break
+            await asyncio.sleep(0.5)
+
+    except Exception as e:
+        logger.error(f"Volume spike job failed: {e}")
+        if chat_id:
+            try:
+                await bot.send_message(chat_id=chat_id, text=f"❌ 爆量偵測失敗：{str(e)[:100]}")
+            except Exception:
+                pass
+
+    logger.info("Daily volume spike job completed.")
+
+
 def start_scheduler():
     """Start the scheduler."""
     # Run at 14:00 Taipei time (UTC+8) -> 06:00 UTC? 
@@ -504,12 +629,21 @@ def start_scheduler():
     
     # Add job
     scheduler.add_job(
-        daily_analysis_job, 
-        trigger=trigger, 
-        id="daily_analysis", 
+        daily_analysis_job,
+        trigger=trigger,
+        id="daily_analysis",
         replace_existing=True
     )
-    
+
+    # Volume Spike Detection — runs at 14:30 Taipei time (after daily analysis)
+    spike_trigger = CronTrigger(hour=14, minute=30, timezone='Asia/Taipei')
+    scheduler.add_job(
+        daily_volume_spike_job,
+        trigger=spike_trigger,
+        id="daily_volume_spike",
+        replace_existing=True,
+    )
+
     from apscheduler.triggers.interval import IntervalTrigger
  
     # NOTE: Podcast job 先暫停（跑太久）。需要再啟用時，把下面區塊取消註解即可。
