@@ -25,11 +25,12 @@ GOODINFO_HEADERS = {
 )
 async def fetch_webpage(session, url: str, headers: dict = DEFAULT_HEADERS, timeout: int = 10) -> BeautifulSoup | None:
     try:
+        is_moneydj = "moneydj.com" in url
         async with session.get(
             url,
             headers=headers,
             timeout=timeout,
-            ssl=False,
+            ssl=(not is_moneydj),
         ) as response:
             response.raise_for_status()
             text = await response.text(encoding="utf-8")

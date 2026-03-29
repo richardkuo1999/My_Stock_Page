@@ -28,7 +28,8 @@ class StockSelector:
 
     async def fetch_webpage(self, session, url: str) -> BeautifulSoup:
         try:
-            async with session.get(url, headers=self.headers, timeout=10, ssl=False) as response:
+            is_moneydj = "moneydj.com" in url
+            async with session.get(url, headers=self.headers, timeout=10, ssl=(not is_moneydj)) as response:
                 response.raise_for_status()
                 text = await response.text(encoding="utf-8")
                 return BeautifulSoup(text, "html.parser")

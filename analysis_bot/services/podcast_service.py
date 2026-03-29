@@ -126,8 +126,8 @@ class PodcastService:
             # 5. Cleanup audio
             try:
                 os.remove(filepath)
-            except:
-                pass
+            except OSError as e:
+                logger.warning(f"Failed to remove temp audio file {filepath}: {e}")
             
             # 6. Save DB History happens AFTER successful processing?
             # Or should scheduler handle it?

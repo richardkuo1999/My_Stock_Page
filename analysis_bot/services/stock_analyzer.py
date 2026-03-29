@@ -1,3 +1,4 @@
+import logging
 from typing import Dict, Any, Optional
 import numpy as np
 import pandas as pd
@@ -8,9 +9,12 @@ from .data_fetcher import DataFetcher
 from .math_utils import MathUtils
 from .finmind_fetcher import FinMindFetcher
 from .anue_scraper import AnueScraper
+from .eps_momentum_service import EpsMomentumService
 from ..config import get_settings
+from ..utils.ticker_utils import get_tw_search_tickers, is_taiwan_ticker
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 class StockAnalyzer:
     """Core service for stock analysis and valuation."""
@@ -20,43 +24,49 @@ class StockAnalyzer:
         self.finmind = FinMindFetcher() # Tokens loaded from settings automatically
         self.anue = AnueScraper()
 
-    async def analyze_stock(self, ticker: str) -> Dict[str, Any]:
+    async def analyze_stock(self, ticker: str, lohas_years: float = 3.5) -> Dict[str, Any]:
         """
         Perform comprehensive analysis on a stock.
         """
         try:
             # 1. Fetch Basic Price Data (Yahoo)
-            # 1. Fetch Basic Price Data (Yahoo)
             search_ticker = ticker
             data = None
-            
-            if ticker.isdigit():
-                # Try .TW first
-                search_ticker = f"{ticker}.TW"
-                try:
-                    data = self.fetcher.fetch_yahoo_data(search_ticker)
-                    if data["history"].empty:
-                        # Fallback trigger
-                        raise ValueError("Empty history")
-                except Exception:
-                    # If failed (exception or empty), try .TWO
-                    search_ticker = f"{ticker}.TWO"
-                    data = self.fetcher.fetch_yahoo_data(search_ticker)
-            else:
-                 # User provided suffix or US stock
-                 data = self.fetcher.fetch_yahoo_data(search_ticker)
+
+            if is_taiwan_ticker(ticker):
+                # 台股：先試 .TW，再試 .TWO（含 00637L 等英數字代碼）
+                data = None
+                for suf in [".TW", ".TWO"]:
+                    search_ticker = f"{ticker}{suf}"
+                    try:
+                        data = await asyncio.to_thread(
+                            self.fetcher.fetch_yahoo_data, search_ticker
+                        )
+                        if not data["history"].empty:
+                            break
+                    except Exception:
+                        data = None
+                if not data or data["history"].empty:
+                    data = None
+            if data is None:
+                # User provided suffix or US stock
+                data = await asyncio.to_thread(
+                    self.fetcher.fetch_yahoo_data, ticker
+                )
             
             history: pd.DataFrame = data["history"]
             info: Dict = data["info"]
             
             if history.empty:
-                return {"error": f"No data found for {ticker} (tried .TW and .TWO)" if ticker.isdigit() else f"No data found for {ticker}"}
-            
-            # Debug: Check Yahoo Info fields
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.info(f"Yahoo Info Keys for {ticker}: {list(info.keys())[:20]}...")
-            logger.info(f"TargetMeanPrice: {info.get('targetMeanPrice')}, PEG: {info.get('pegRatio')}")
+                err_msg = (
+                    f"No data found for {ticker} (tried .TW and .TWO)"
+                    if is_taiwan_ticker(ticker)
+                    else f"No data found for {ticker}"
+                )
+                return {"error": err_msg}
+
+            logger.info("Yahoo Info Keys for %s: %s...", ticker, list(info.keys())[:20])
+            logger.info("TargetMeanPrice: %s, PEG: %s", info.get("targetMeanPrice"), info.get("pegRatio"))
             
             # 2. Fetch Advanced Data (FinMind) - if numeric
             per_list, pbr_list = [], []
@@ -91,8 +101,8 @@ class StockAnalyzer:
                              
                              if curr_price and anue_data["est_eps"] > 0:
                                  anue_data["est_pe"] = round(curr_price / anue_data["est_eps"], 2)
-                         except Exception:
-                             pass
+                         except (ZeroDivisionError, TypeError, KeyError) as e:
+                             logger.warning(f"est_pe calculation failed for {ticker}: {e}")
 
         except Exception as e:
             return {"error": f"Failed to fetch data for {ticker}: {str(e)}"}
@@ -117,15 +127,30 @@ class StockAnalyzer:
             if current_price and pb_ratio:
                 try:
                     bps = current_price / pb_ratio
-                except:
-                    pass
+                except (ZeroDivisionError, TypeError) as e:
+                    logger.warning(f"BPS calculation failed for {ticker}: {e}")
         
         target_mean_price = info.get("targetMeanPrice")
         gross_margins = info.get("grossMargins")
         
-        # 3. Mean Reversion Analysis (Price based)
-        mr_analysis = MathUtils.mean_reversion(price_series)
-        
+        # 3. Mean Reversion Analysis (Price based - default to 3.5 years / ~882 trading days)
+        target_days = int(lohas_years * 252)
+        lohas_series = price_series[-target_days:] if len(price_series) > target_days else price_series
+        mr_analysis = MathUtils.mean_reversion(lohas_series)
+        mr_analysis["lohas_years"] = lohas_years # Store for report awareness
+
+        # 3.5. EPS Momentum (FactSet historical estimates)
+        eps_momentum = {}
+        if ticker.isdigit():
+            try:
+                eps_momentum_svc = EpsMomentumService()
+                stock_name_for_search = info.get("longName", ticker) or ticker
+                eps_momentum = await eps_momentum_svc.collect_and_analyze(
+                    ticker, stock_name_for_search
+                )
+            except Exception as e:
+                logger.warning(f"EPS Momentum analysis failed for {ticker}: {e}")
+
         # 4. PE/PB Analysis (using FinMind if available)
         pe_analysis = {}
         pb_analysis = {}
@@ -179,7 +204,8 @@ class StockAnalyzer:
             "analysis": {
                 "mean_reversion": mr_analysis,
                 "pe_stats": pe_analysis,
-                "pb_stats": pb_analysis
+                "pb_stats": pb_analysis,
+                "eps_momentum": eps_momentum,
             },
             "chart_data": {
                 "dates": [d.strftime("%Y-%m-%d") for d in valid_history.index.tolist()],

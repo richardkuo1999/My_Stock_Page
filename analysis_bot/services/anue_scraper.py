@@ -34,10 +34,10 @@ class AnueScraper:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
             }
-            print(f"DEBUG: Searching URL: {url}")
-            async with session.get(url, headers=headers, ssl=False) as resp:
+            logger.debug("Searching URL: %s", url)
+            async with session.get(url, headers=headers) as resp:
                 if resp.status != 200:
-                    print(f"DEBUG: Search failed with status {resp.status}")
+                    logger.debug("Search failed with status %s", resp.status)
                     return None
                 text = await resp.text()
                 # print(f"DEBUG: Search result text length: {len(text)}")
@@ -57,8 +57,8 @@ class AnueScraper:
                      if "RU=" in href:
                          try:
                              clean_link = unquote(href.split("RU=")[1].split("/RK=")[0])
-                         except:
-                             pass
+                         except (IndexError, ValueError) as e:
+                             logger.debug(f"URL decode failed for {href}: {e}")
                      
                      if CNYEA_URL_PART in clean_link:
                          target_urls.append(clean_link)
@@ -66,7 +66,7 @@ class AnueScraper:
             # Remove duplicates while preserving order
             target_urls = list(dict.fromkeys(target_urls))
             
-            print(f"DEBUG: filtered target_urls: {target_urls}")
+            logger.debug("Filtered target_urls: %s", target_urls)
             if not target_urls:
                 return None
                 
@@ -76,7 +76,7 @@ class AnueScraper:
             candidates = []
             
             for article_url in target_urls:
-                print(f"DEBUG: Processing article: {article_url}")
+                logger.debug("Processing article: %s", article_url)
                 result = await self._process_article(session, article_url, stock_id, tm_yday)
                 if result:
                     candidates.append(result)
@@ -88,18 +88,69 @@ class AnueScraper:
             # Ensure 'date' is a datetime object
             candidates.sort(key=lambda x: x['date'], reverse=True)
             
-            print(f"DEBUG: Found {len(candidates)} candidates. Choosing latest: {candidates[0]['date']} - {candidates[0]['url']}")
+            logger.debug("Found %d candidates. Choosing latest: %s - %s", len(candidates), candidates[0]['date'], candidates[0]['url'])
             return candidates[0]
                     
         except Exception as e:
             logger.error(f"Anue scrape error: {e}")
-            print(f"DEBUG: Exception in Anue scrape: {e}")
+            logger.debug("Exception in Anue scrape: %s", e)
             
         return None
 
+    async def fetch_all_estimates(self, session: aiohttp.ClientSession, stock_id: str, stock_name: str) -> List[Dict]:
+        """
+        Fetch ALL available FactSet EPS estimate articles (not just the latest).
+        Used by EpsMomentumService to build historical EPS timeline.
+        Returns list of dicts sorted by date descending.
+        """
+        search_query = f"鉅亨速報 - Factset 最新調查：{stock_name}({stock_id}-TW)EPS預估+site:news.cnyes.com"
+        url = f"https://tw.search.yahoo.com/search?p={search_query}"
+
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+            async with session.get(url, headers=headers) as resp:
+                if resp.status != 200:
+                    return []
+                text = await resp.text()
+                soup = BeautifulSoup(text, "html.parser")
+
+            target_urls = []
+            for link in soup.find_all("a"):
+                href = link.get("href")
+                if href:
+                    clean_link = href
+                    if "RU=" in href:
+                        try:
+                            clean_link = unquote(href.split("RU=")[1].split("/RK=")[0])
+                        except (IndexError, ValueError) as e:
+                            logger.debug(f"URL decode failed for {href}: {e}")
+                    if CNYEA_URL_PART in clean_link:
+                        target_urls.append(clean_link)
+
+            target_urls = list(dict.fromkeys(target_urls))
+            if not target_urls:
+                return []
+
+            tm_yday = float(datetime.now().timetuple().tm_yday)
+            candidates = []
+            for article_url in target_urls:
+                result = await self._process_article(session, article_url, stock_id, tm_yday)
+                if result:
+                    candidates.append(result)
+
+            candidates.sort(key=lambda x: x['date'], reverse=True)
+            return candidates
+
+        except Exception as e:
+            logger.error(f"Anue fetch_all_estimates error: {e}")
+
+        return []
+
     async def _process_article(self, session, url, stock_id, tm_yday) -> Optional[Dict]:
         try:
-            async with session.get(url, ssl=False) as resp:
+            async with session.get(url) as resp:
                 if resp.status != 200: return None
                 text = await resp.text()
                 soup = BeautifulSoup(text, "html.parser")
@@ -125,7 +176,8 @@ class AnueScraper:
             if "預估目標價為" in title_text:
                 try:
                     est_price = float(title_text.split("預估目標價為")[1].split("元")[0])
-                except: pass
+                except (ValueError, IndexError):
+                    pass
             
             # 3. Extract EPS Table
             weighted_eps = None
@@ -158,11 +210,13 @@ class AnueScraper:
                                         if idx + 1 < len(cols):
                                              try:
                                                 next_year_eps = float(cols[idx+1].split("(")[0])
-                                             except: pass
+                                             except (ValueError, IndexError):
+                                                pass
                                         
                                         weighted_eps = ((366 - tm_yday) / 366) * this_year_eps + \
                                                        (tm_yday / 366) * next_year_eps
-                                    except: pass
+                                    except (ValueError, IndexError):
+                                        pass
                                     break
 
             # 4. Extract Date
@@ -174,9 +228,8 @@ class AnueScraper:
                 try:
                     # Try simplified date parse if standard fails
                     # Anue meta sometimes has Chinese like "2024/1/19 下午5:11:18"
-                    # We can try to parse it or just fall back
                     article_date = datetime.fromisoformat(meta_date["content"])
-                except:
+                except (ValueError, TypeError):
                     pass
             
             # Fallback to time tag if meta failed
@@ -186,7 +239,8 @@ class AnueScraper:
                     try:
                         # "2024-01-19T09:11:18.000Z" - Python 3.13 handles Z
                         article_date = datetime.fromisoformat(time_tag["datetime"])
-                    except: pass
+                    except (ValueError, TypeError):
+                        pass
                     
             # Final fallback to now if everything failed
             if not article_date:
@@ -201,6 +255,6 @@ class AnueScraper:
                 }
 
         except Exception as e:
-            pass
-            
+            logger.debug("Article parse failed for %s: %s", url, e)
+
         return None

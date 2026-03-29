@@ -4,8 +4,15 @@ __pycache__
 .claude
 .cursor
 .worktrees/
+.gemini/
+his.txt
+log.txt
+test_lohas*.py
 
 .env
+
+# Threads 監控腳本狀態（含已見過貼文 id）
+data/threads_watch_state.json
 
 .venv/
 venv/
@@ -15,6 +22,8 @@ results/
 reports/
 
 *.db
+*.db-shm
+*.db-wal
 *.md
 *.mp3
 

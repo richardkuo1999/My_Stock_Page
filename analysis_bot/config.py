@@ -5,7 +5,7 @@ from typing import List, Optional
 
 class Settings(BaseSettings):
     APP_NAME: str = "My Stock Analysis Bot"
-    DEBUG: bool = True
+    DEBUG: bool = False
 
     # Telegram
     TELEGRAM_TOKEN: str = ""
@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     # Financial Data
     FINMIND_TOKENS: List[str] = []  # Supports JSON list from .env
     NEWS_API_KEY: Optional[str] = None
+    # 富果行情 REST API：https://developer.fugle.tw/docs/data/http-api/getting-started/
+    FUGLE_API_KEY: Optional[str] = None
 
     # News Source Toggles
     ENABLE_UDN_NEWS: bool = False
@@ -47,10 +49,20 @@ class Settings(BaseSettings):
     ]
     PODCAST_LOOKUP_URL: str = "https://itunes.apple.com/lookup?id="
 
+    # Web API
+    WEB_API_KEY: Optional[str] = None
+
     # Logging / Privacy
     # Optional salt for redacting Telegram IDs (chat_id/user_id) in logs.
     # If empty, logs will use masked form (keeps only last 4 chars).
     LOG_PII_SALT: str = ""
+
+    # Threads 監控（Bot 指令 + 定時 job，需安裝 playwright）
+    # 0 = 不啟用背景輪詢（仍可用 /threads check）
+    THREADS_WATCH_INTERVAL_SEC: int = 900
+
+    # 爆量偵測：是否擷取前 N 檔題材／新聞＋ AI（預設關閉，程式仍保留）
+    SPIKE_NEWS_ENRICHMENT_ENABLED: bool = False
 
     # Parallel Analysis Settings
     MAX_CONCURRENT_ANALYSIS: int = 10  # Maximum concurrent stock analyses
