@@ -50,7 +50,8 @@ class Settings(BaseSettings):
     # Web API
     WEB_API_KEY: str | None = None
 
-    # VIX 通知目標（不設定則用預設 TELEGRAM_CHAT_ID）
+    # VIX 通知目標（不設定則 fallback 到 TELEGRAM_CHAT_ID）
+    TELEGRAM_VIX_CHAT_ID: str = ""   # VIX 專用 chat_id（可填不同群組）
     TELEGRAM_TOPIC_ID: int | None = None  # Topic ID（Forum 群組用）
 
     # Logging / Privacy

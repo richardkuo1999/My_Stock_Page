@@ -56,9 +56,7 @@ from .jobs import check_news_job, threads_watch_job
 
 settings = get_settings()
 
-# 只允許白名單內的 chat 使用 Bot
-_ALLOWED_CHATS = {int(settings.TELEGRAM_CHAT_ID)} if settings.TELEGRAM_CHAT_ID else set()
-ALLOWED_CHATS_FILTER = filters.Chat(chat_id=list(_ALLOWED_CHATS)) if _ALLOWED_CHATS else filters.ALL
+ALLOWED_CHATS_FILTER = filters.ALL
 
 # 主選單按鈕：在對話流程中點擊時，跳出並執行對應功能（須放在 state handler 之前）
 MENU_BREAKOUT_HANDLERS = [

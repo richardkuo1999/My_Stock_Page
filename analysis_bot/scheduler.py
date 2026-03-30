@@ -713,7 +713,8 @@ async def vix_check_job():
     from .services.vix_fetcher import fetch_vix_snapshot, format_vix_message
 
     settings = get_settings()
-    chat_id = settings.TELEGRAM_CHAT_ID
+    # VIX 可設獨立 chat_id，否則 fallback 到預設
+    chat_id = settings.TELEGRAM_VIX_CHAT_ID or settings.TELEGRAM_CHAT_ID
     if not chat_id:
         return
 

@@ -18,7 +18,7 @@ from .volume_spike_scanner import VolumeSpikeResult
 
 def build_spike_markdown_header(total: int) -> str:
     """表格上方僅一行條件說明。"""
-    return f"共 {total} 檔 (≥1000張, ≥1.5x)\n\n"
+    return f"共 {total} 檔 (≥1.5x)\n\n"
 
 
 def build_spike_telegram_html_messages(

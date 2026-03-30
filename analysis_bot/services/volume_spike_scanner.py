@@ -21,7 +21,7 @@ from .market_data_fetcher import MarketDataFetcher
 logger = logging.getLogger(__name__)
 
 # Default thresholds
-DEFAULT_MIN_VOLUME_LOTS = 1000  # 1000 張 = 1,000,000 股
+DEFAULT_MIN_VOLUME_LOTS = 100  # 預過濾：API 資料 ≥ 100 張（排除極度冷門股，加速 yfinance 下載）
 DEFAULT_SPIKE_RATIO = 1.5
 DEFAULT_MA_DAYS = 20
 # 若日線最後一根早於「今天（台北）」超過此曆日天數，視為過期資料略過（長假可調大）

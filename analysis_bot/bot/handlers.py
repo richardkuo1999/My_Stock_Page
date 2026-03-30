@@ -272,7 +272,7 @@ async def spike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not results:
             await update.message.reply_text(
-                "📊 無符合條件之爆量股（成交量 ≥ 1000 張，倍數 ≥ 1.5x）\n\n"
+                "📊 無符合條件之爆量股（倍數 ≥ 1.5x）\n\n"
                 f"📅 {spike_scan.data_date_caption}"
             )
             return
