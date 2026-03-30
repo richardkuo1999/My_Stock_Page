@@ -28,6 +28,12 @@ from .jobs import check_news_job, threads_watch_job
 
 settings = get_settings()
 
+# 只允許白名單內的 chat 使用 Bot
+_ALLOWED_CHATS = (
+    {int(settings.TELEGRAM_CHAT_ID)} if settings.TELEGRAM_CHAT_ID else set()
+)
+ALLOWED_CHATS_FILTER = filters.Chat(chat_id=list(_ALLOWED_CHATS)) if _ALLOWED_CHATS else filters.ALL
+
 # 主選單按鈕：在對話流程中點擊時，跳出並執行對應功能（須放在 state handler 之前）
 MENU_BREAKOUT_HANDLERS = [
     MessageHandler(filters.Regex("^📰 最新新聞$"), _menu_breakout(news_command)),
@@ -60,24 +66,25 @@ def create_bot_application() -> Application:
     # Initialize Services
     application.bot_data["news_parser"] = NewsParser()
 
-    # Commands
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("info", info_command))
-    application.add_handler(CommandHandler("esti", esti_command))
-    application.add_handler(CommandHandler("news", news_command))
-    application.add_handler(CommandHandler("chat", chat_command))
-    application.add_handler(CommandHandler("subscribe", subscribe_command))
-    application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
-    application.add_handler(CommandHandler("watch", watch_command))
-    application.add_handler(CommandHandler("threads", threads_command))
-    application.add_handler(CommandHandler("name", name_command))
-    application.add_handler(CommandHandler("p", price_command))
-    application.add_handler(CommandHandler("hold981", hold981_command))
-    application.add_handler(CommandHandler("hold888", hold888_command))
-    application.add_handler(CommandHandler("spike", spike_command))
-    application.add_handler(CommandHandler("vix", vix_command))
-    application.add_handler(CommandHandler("chatid", chatid_command))
+    # Commands（僅允許白名單 chat）
+    f = ALLOWED_CHATS_FILTER
+    application.add_handler(CommandHandler("start", start_command, filters=f))
+    application.add_handler(CommandHandler("help", help_command, filters=f))
+    application.add_handler(CommandHandler("info", info_command, filters=f))
+    application.add_handler(CommandHandler("esti", esti_command, filters=f))
+    application.add_handler(CommandHandler("news", news_command, filters=f))
+    application.add_handler(CommandHandler("chat", chat_command, filters=f))
+    application.add_handler(CommandHandler("subscribe", subscribe_command, filters=f))
+    application.add_handler(CommandHandler("unsubscribe", unsubscribe_command, filters=f))
+    application.add_handler(CommandHandler("watch", watch_command, filters=f))
+    application.add_handler(CommandHandler("threads", threads_command, filters=f))
+    application.add_handler(CommandHandler("name", name_command, filters=f))
+    application.add_handler(CommandHandler("p", price_command, filters=f))
+    application.add_handler(CommandHandler("hold981", hold981_command, filters=f))
+    application.add_handler(CommandHandler("hold888", hold888_command, filters=f))
+    application.add_handler(CommandHandler("spike", spike_command, filters=f))
+    application.add_handler(CommandHandler("vix", vix_command, filters=f))
+    application.add_handler(CommandHandler("chatid", chatid_command, filters=f))
 
     # Conversation: Research
     research_conv = ConversationHandler(

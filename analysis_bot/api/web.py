@@ -69,7 +69,7 @@ def validate_ticker(ticker: str) -> str:
     return ticker
 
 @router.post("/analyze/{ticker}")
-async def analyze_stock_api(ticker: str, background_tasks: BackgroundTasks, force: bool = False):
+async def analyze_stock_api(ticker: str, background_tasks: BackgroundTasks, force: bool = False, _key: str = Depends(verify_api_key)):
     """Async analysis endpoint."""
     ticker = validate_ticker(ticker)
     

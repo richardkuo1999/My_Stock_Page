@@ -654,8 +654,9 @@ async def google_news_handle(update: Update, context: ContextTypes.DEFAULT_TYPE)
     keyword = update.message.text
     news_parser: NewsParser = context.bot_data.get("news_parser") or NewsParser()
 
+    from urllib.parse import quote
     url = (
-        f"https://news.google.com/rss/search?q={keyword}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+        f"https://news.google.com/rss/search?q={quote(keyword)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
     )
     news_list = await news_parser.fetch_news_list(url)
 

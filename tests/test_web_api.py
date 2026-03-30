@@ -27,7 +27,7 @@ class TestHealthCheck:
 
 
 class TestStockAPI:
-    def test_analyze_stock_with_valid_ticker(self, client):
+    def test_analyze_stock_with_valid_ticker(self, client, auth_headers):
         with patch('analysis_bot.services.stock_service.StockService.get_or_analyze_stock') as mock_analyze:
             mock_analyze.return_value = ({
                 'name': 'Test Stock',
@@ -35,28 +35,28 @@ class TestStockAPI:
                 'sector': 'Technology',
                 '_last_analyzed': None
             }, False)
-            
-            response = client.post("/analyze/AAPL")
-            
+
+            response = client.post("/analyze/AAPL", headers=auth_headers)
+
             assert response.status_code == 200
             assert response.json()["status"] == "success"
             assert response.json()["ticker"] == "AAPL"
-    
-    def test_analyze_stock_with_error(self, client):
+
+    def test_analyze_stock_with_error(self, client, auth_headers):
         with patch('analysis_bot.services.stock_service.StockService.get_or_analyze_stock') as mock_analyze:
             mock_analyze.return_value = ({'error': 'Stock not found'}, False)
-            
-            response = client.post("/analyze/INVALID")
-            
+
+            response = client.post("/analyze/INVALID", headers=auth_headers)
+
             assert response.status_code == 200
             assert "error" in response.json()
-    
-    def test_analyze_stock_with_force_update(self, client):
+
+    def test_analyze_stock_with_force_update(self, client, auth_headers):
         with patch('analysis_bot.services.stock_service.StockService.get_or_analyze_stock') as mock_analyze:
             mock_analyze.return_value = ({'name': 'Test Stock', 'price': 100.0}, False)
-            
-            response = client.post("/analyze/AAPL?force=True")
-            
+
+            response = client.post("/analyze/AAPL?force=True", headers=auth_headers)
+
             assert response.status_code == 200
             assert response.json()["status"] == "success"
 

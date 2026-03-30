@@ -49,72 +49,72 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
         except Exception as e:
             logger.error(f"Failed to send start msg: {e}")
 
-        # 0. Load Active Tags
-        from .services.stock_service import StockService
-        active_tags = await asyncio.to_thread(StockService.get_daily_tags)
-        logger.info(f"Active Tags: {active_tags}")
-        
-        # 1. Initialize StockSelector
-        from .services.stock_selector import StockSelector
-        selector = StockSelector()
-        
-        final_tickers_map = {} # Ticker -> Set of Tags
+    # 0. Load Active Tags
+    from .services.stock_service import StockService
+    active_tags = await asyncio.to_thread(StockService.get_daily_tags)
+    logger.info(f"Active Tags: {active_tags}")
 
-        import aiohttp
-        async with aiohttp.ClientSession() as http_session:
-            
-            # --- Tag: ETF ---
-            if "ETF" in active_tags:
-                try:
-                    targets = await selector.get_target_etfs() # List of '0050', '0056'
-                    logger.info(f"Processing Target ETFs: {targets}")
-                    for etf_code in targets:
-                        constituents = await selector.fetch_etf_constituents(http_session, etf_code)
-                        for c in constituents:
-                            if c not in final_tickers_map: final_tickers_map[c] = set()
-                            final_tickers_map[c].add(f"ETF_{etf_code}")
-                except Exception as e:
-                    logger.error(f"Error processing ETF tag: {e}")
+    # 1. Initialize StockSelector
+    from .services.stock_selector import StockSelector
+    selector = StockSelector()
 
-            # --- Tag: ETF_Rank ---
-            if "ETF_Rank" in active_tags:
-                try:
-                    stocks = await selector.fetch_etf_rank_stocks(http_session)
-                    for s in stocks:
-                        if s not in final_tickers_map: final_tickers_map[s] = set()
-                        final_tickers_map[s].add("ETF_Rank")
-                except Exception as e:
-                    logger.error(f"Error processing ETF_Rank: {e}")
+    final_tickers_map = {} # Ticker -> Set of Tags
 
-            # --- Tag: Institutional_TOP50 ---
-            if "Institutional_TOP50" in active_tags:
-                 try:
-                    stocks = await selector.fetch_institutional_top50(http_session)
-                    for s in stocks:
-                        if s not in final_tickers_map: final_tickers_map[s] = set()
-                        final_tickers_map[s].add("Institutional")
-                 except Exception as e:
-                    logger.error(f"Error processing Institutional: {e}")
+    import aiohttp
+    async with aiohttp.ClientSession() as http_session:
 
-            # --- Tag: Invest Anchors ---
-            if "investanchors" in active_tags:
-                 try:
-                    stocks = await selector.get_invest_anchors()
-                    for s in stocks:
-                        if s not in final_tickers_map: final_tickers_map[s] = set()
-                        final_tickers_map[s].add("InvestAnchor")
-                 except Exception as e:
-                    logger.error(f"Error processing Anchors: {e}")
+        # --- Tag: ETF ---
+        if "ETF" in active_tags:
+            try:
+                targets = await selector.get_target_etfs() # List of '0050', '0056'
+                logger.info(f"Processing Target ETFs: {targets}")
+                for etf_code in targets:
+                    constituents = await selector.fetch_etf_constituents(http_session, etf_code)
+                    for c in constituents:
+                        if c not in final_tickers_map: final_tickers_map[c] = set()
+                        final_tickers_map[c].add(f"ETF_{etf_code}")
+            except Exception as e:
+                logger.error(f"Error processing ETF tag: {e}")
 
-            # --- Tag: User Choice ---
-            if "User_Choice" in active_tags:
-                 try:
-                    stocks = await selector.get_user_choice()
-                    for s in stocks:
-                        if s not in final_tickers_map: final_tickers_map[s] = set()
-                        final_tickers_map[s].add("User_Choice")
-                 except Exception as e:
-                    logger.error(f"Error processing User Choice: {e}")
+        # --- Tag: ETF_Rank ---
+        if "ETF_Rank" in active_tags:
+            try:
+                stocks = await selector.fetch_etf_rank_stocks(http_session)
+                for s in stocks:
+                    if s not in final_tickers_map: final_tickers_map[s] = set()
+                    final_tickers_map[s].add("ETF_Rank")
+            except Exception as e:
+                logger.error(f"Error processing ETF_Rank: {e}")
+
+        # --- Tag: Institutional_TOP50 ---
+        if "Institutional_TOP50" in active_tags:
+            try:
+                stocks = await selector.fetch_institutional_top50(http_session)
+                for s in stocks:
+                    if s not in final_tickers_map: final_tickers_map[s] = set()
+                    final_tickers_map[s].add("Institutional")
+            except Exception as e:
+                logger.error(f"Error processing Institutional: {e}")
+
+        # --- Tag: Invest Anchors ---
+        if "investanchors" in active_tags:
+            try:
+                stocks = await selector.get_invest_anchors()
+                for s in stocks:
+                    if s not in final_tickers_map: final_tickers_map[s] = set()
+                    final_tickers_map[s].add("InvestAnchor")
+            except Exception as e:
+                logger.error(f"Error processing Anchors: {e}")
+
+        # --- Tag: User Choice ---
+        if "User_Choice" in active_tags:
+            try:
+                stocks = await selector.get_user_choice()
+                for s in stocks:
+                    if s not in final_tickers_map: final_tickers_map[s] = set()
+                    final_tickers_map[s].add("User_Choice")
+            except Exception as e:
+                logger.error(f"Error processing User Choice: {e}")
                     
     # 2. Update DB Tags (Merge with existing or Create new)
     def update_db_tags(final_map, managed_tags):
