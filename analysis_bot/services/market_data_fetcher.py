@@ -2,11 +2,12 @@
 MarketDataFetcher — Fetches daily market data from TWSE and TPEx OpenAPI.
 台灣上市櫃股票每日收盤資料，無需 API Key。
 """
+
 from __future__ import annotations
 
-import re
-import logging
 import asyncio
+import logging
+import re
 from datetime import date
 
 import aiohttp
@@ -36,6 +37,7 @@ def parse_roc_minguo_date(raw: str | None) -> date | None:
         return date(gregorian_year, month, day)
     except ValueError:
         return None
+
 
 TWSE_DAILY_URL = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
 TPEX_DAILY_URL = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"
@@ -81,15 +83,17 @@ class MarketDataFetcher:
                         change_pct = (change_val / prev_close * 100) if prev_close else 0.0
                     except (ValueError, TypeError):
                         change_pct = None
-                    results.append({
-                        "ticker": code,
-                        "name": item.get("Name", "").strip(),
-                        "close": close,
-                        "volume_shares": volume_shares,
-                        "market": "TWSE",
-                        "change_pct": change_pct,
-                        "trade_date": trade_date,
-                    })
+                    results.append(
+                        {
+                            "ticker": code,
+                            "name": item.get("Name", "").strip(),
+                            "close": close,
+                            "volume_shares": volume_shares,
+                            "market": "TWSE",
+                            "change_pct": change_pct,
+                            "trade_date": trade_date,
+                        }
+                    )
                 except (ValueError, TypeError):
                     continue
             return results
@@ -125,8 +129,16 @@ class MarketDataFetcher:
                     vol_str = item.get("TradingShares", "0").replace(",", "")
                     volume_shares = int(vol_str)
                     close_str = item.get("Close", "0").replace(",", "").strip()
-                    close = float(close_str) if close_str and close_str not in ("--", "---") else 0.0
-                    change_str = item.get("Change", "0").replace(",", "").strip().replace("+", "").replace(" ", "")
+                    close = (
+                        float(close_str) if close_str and close_str not in ("--", "---") else 0.0
+                    )
+                    change_str = (
+                        item.get("Change", "0")
+                        .replace(",", "")
+                        .strip()
+                        .replace("+", "")
+                        .replace(" ", "")
+                    )
                     if change_str and change_str not in ("---", "除息", "除權", "除權息"):
                         try:
                             change_val = float(change_str)
@@ -136,15 +148,17 @@ class MarketDataFetcher:
                             change_pct = None
                     else:
                         change_pct = None
-                    results.append({
-                        "ticker": code,
-                        "name": item.get("CompanyName", "").strip(),
-                        "close": close,
-                        "volume_shares": volume_shares,
-                        "market": "TPEx",
-                        "change_pct": change_pct,
-                        "trade_date": trade_date,
-                    })
+                    results.append(
+                        {
+                            "ticker": code,
+                            "name": item.get("CompanyName", "").strip(),
+                            "close": close,
+                            "volume_shares": volume_shares,
+                            "market": "TPEx",
+                            "change_pct": change_pct,
+                            "trade_date": trade_date,
+                        }
+                    )
                 except (ValueError, TypeError):
                     continue
             return results
@@ -156,7 +170,9 @@ class MarketDataFetcher:
                 await session.close()
 
     @classmethod
-    async def fetch_all_market_daily(cls, session: aiohttp.ClientSession | None = None) -> list[dict]:
+    async def fetch_all_market_daily(
+        cls, session: aiohttp.ClientSession | None = None
+    ) -> list[dict]:
         """Fetch combined TWSE + TPEx daily data."""
         close_after = False
         if session is None:

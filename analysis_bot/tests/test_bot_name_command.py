@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from analysis_bot.bot import handlers
 from analysis_bot.tests.bot_fakes import FakeContext, FakeMessage, FakeUpdate
 
@@ -33,4 +32,3 @@ async def test_name_command_usage_no_args() -> None:
     await handlers.name_command(update, context)
 
     assert msg.reply_text_calls[-1].text.startswith("用法：/name")
-

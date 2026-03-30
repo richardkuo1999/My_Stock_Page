@@ -4,9 +4,9 @@
 來源：invest.cnyes.com/twstock/{stock_id}
 台股與外匯為即時資訊（頁面聲明）。
 """
+
 import logging
 import re
-from typing import Optional
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -23,8 +23,8 @@ DEFAULT_HEADERS = {
 
 async def fetch_tw_quote(
     stock_id: str,
-    session: Optional[aiohttp.ClientSession] = None,
-) -> Optional[dict]:
+    session: aiohttp.ClientSession | None = None,
+) -> dict | None:
     """
     從鉅亨網抓取台股即時報價。
 
@@ -58,7 +58,7 @@ async def fetch_tw_quote(
     return _parse_quote_page(text, stock_id)
 
 
-def _parse_quote_page(html: str, stock_id: str) -> Optional[dict]:
+def _parse_quote_page(html: str, stock_id: str) -> dict | None:
     """解析鉅亨個股頁面，提取股名、價格、漲跌。"""
     soup = BeautifulSoup(html, "html.parser")
 

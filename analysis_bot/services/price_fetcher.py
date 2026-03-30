@@ -6,9 +6,9 @@
 查詢時附帶 Google News 前 5 筆相關新聞。
 台股代碼支援 4-5 位數字或英數字（如 00637L）。
 """
+
 import asyncio
 import logging
-from typing import Optional
 
 import aiohttp
 import yfinance as yf
@@ -42,6 +42,7 @@ async def _append_news(price_text: str, ticker: str, name: str, is_tw: bool = Tr
     """在股價訊息後附加相關新聞。"""
     try:
         from .stock_news_fetcher import fetch_stock_news
+
         news_list = await fetch_stock_news(ticker, name, limit=5, is_tw=is_tw)
         return price_text + _format_news_section(news_list)
     except Exception as e:
@@ -69,6 +70,7 @@ async def fetch_price(ticker: str) -> str:
         # 1. 鉅亨網爬蟲（即時）
         try:
             from .cnyes_quote_scraper import fetch_tw_quote
+
             async with aiohttp.ClientSession() as session:
                 quote = await fetch_tw_quote(stock_id, session)
                 if quote:
@@ -81,7 +83,10 @@ async def fetch_price(ticker: str) -> str:
                     pct_str = f"({chp:+.2f}%)" if chp is not None else ""
                     return await _append_news(
                         f"{sign}{stock_id} {name}\n💰{p:.2f} {ch_str}{pct_str}",
-                        stock_id, name, is_tw=True)
+                        stock_id,
+                        name,
+                        is_tw=True,
+                    )
         except Exception as e:
             logger.debug("CNYES quote: %s", e)
 
@@ -89,6 +94,7 @@ async def fetch_price(ticker: str) -> str:
         try:
             from ..config import get_settings
             from .finmind_fetcher import FinMindFetcher
+
             settings = get_settings()
             if settings.FINMIND_TOKENS:
                 async with aiohttp.ClientSession() as session:
@@ -111,7 +117,10 @@ async def fetch_price(ticker: str) -> str:
                         pct_str = f"({chp:+.2f}%)" if chp is not None else ""
                         return await _append_news(
                             f"{sign}{stock_id} {name}\n💰{p:.2f} {ch_str}{pct_str}",
-                            stock_id, name, is_tw=True)
+                            stock_id,
+                            name,
+                            is_tw=True,
+                        )
         except Exception as e:
             logger.debug("FinMind tick snapshot: %s", e)
 
@@ -127,7 +136,9 @@ async def fetch_price(ticker: str) -> str:
             prev_close = None
             if fast:
                 try:
-                    price = getattr(fast, "last_price", None) or getattr(fast, "previous_close", None)
+                    price = getattr(fast, "last_price", None) or getattr(
+                        fast, "previous_close", None
+                    )
                     prev_close = getattr(fast, "previous_close", None)
                 except Exception:
                     pass
@@ -167,6 +178,7 @@ async def fetch_price(ticker: str) -> str:
                 try:
                     from ..config import get_settings
                     from .finmind_fetcher import FinMindFetcher
+
                     settings = get_settings()
                     if settings.FINMIND_TOKENS:
                         async with aiohttp.ClientSession() as session:
@@ -187,11 +199,18 @@ async def fetch_price(ticker: str) -> str:
                 sign = "📊"
                 ch_str = ""
                 pct_str = ""
-            delay_note = "\n（約 15–20 分鐘延遲）" if (is_taiwan_ticker(ticker) or sym.endswith(".TW") or sym.endswith(".TWO")) else ""
+            delay_note = (
+                "\n（約 15–20 分鐘延遲）"
+                if (is_taiwan_ticker(ticker) or sym.endswith(".TW") or sym.endswith(".TWO"))
+                else ""
+            )
             stock_id = ticker if is_taiwan_ticker(ticker) else sym.split(".")[0]
             is_tw = is_taiwan_ticker(ticker) or sym.endswith(".TW") or sym.endswith(".TWO")
             return await _append_news(
                 f"{sign}{result['ticker']} {name}\n💰{p:.2f} {ch_str}{pct_str}{delay_note}",
-                stock_id, name, is_tw=is_tw)
+                stock_id,
+                name,
+                is_tw=is_tw,
+            )
 
     return f"❌ 找不到 {ticker} 的股價資料"

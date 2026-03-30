@@ -1,4 +1,5 @@
 """Ticker format utilities for Taiwan and other markets."""
+
 import re
 
 # 台股代碼：4-5 位數字，或 4-5 位數字 + 1 個英文字母（如 00637L）

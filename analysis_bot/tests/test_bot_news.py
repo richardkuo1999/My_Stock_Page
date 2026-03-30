@@ -1,12 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Iterable, Set
 
 import pytest
-from telegram import InlineKeyboardMarkup
-from telegram.constants import ParseMode
-
 from analysis_bot.bot import handlers
 from analysis_bot.tests.bot_fakes import (
     FakeCallbackQuery,
@@ -15,10 +11,12 @@ from analysis_bot.tests.bot_fakes import (
     FakeNewsParser,
     FakeUpdate,
 )
+from telegram import InlineKeyboardMarkup
+from telegram.constants import ParseMode
 
 
-def _callback_data_set(markup: InlineKeyboardMarkup) -> Set[str]:
-    cbs: Set[str] = set()
+def _callback_data_set(markup: InlineKeyboardMarkup) -> set[str]:
+    cbs: set[str] = set()
     for row in markup.inline_keyboard:
         for btn in row:
             if btn.callback_data:
@@ -109,8 +107,16 @@ async def test_news_button_handler_vocus_menu_renders_submenu_and_back_button() 
 @pytest.mark.parametrize(
     "callback_data,seed_key,expected_back",
     [
-        ("news_cnyes", "https://api.cnyes.com/media/api/v1/newslist/category/headline", "news_main_menu"),
-        ("news_google", "https://news.google.com/rss?hl=zh-TW&gl=TW&ceid=TW:zh-Hant", "news_main_menu"),
+        (
+            "news_cnyes",
+            "https://api.cnyes.com/media/api/v1/newslist/category/headline",
+            "news_main_menu",
+        ),
+        (
+            "news_google",
+            "https://news.google.com/rss?hl=zh-TW&gl=TW&ceid=TW:zh-Hant",
+            "news_main_menu",
+        ),
         ("news_moneydj", "moneydj", "news_main_menu"),
         ("news_yahoo", "yahoo_tw", "news_main_menu"),
         ("news_udn", "udn", "news_main_menu"),
@@ -146,7 +152,20 @@ async def test_news_button_handler_fetches_and_renders_news(
             "vocus:@miula": [item],
             "vocus:65ab564cfd897800018a88cc": [item],
         }
-    elif seed_key in ("moneydj", "yahoo_tw", "udn", "uanalyze", "macromicro", "finguider", "fintastic", "forecastock", "ndai", "fugle", "sinotrade_industry", "pocket_report"):
+    elif seed_key in (
+        "moneydj",
+        "yahoo_tw",
+        "udn",
+        "uanalyze",
+        "macromicro",
+        "finguider",
+        "fintastic",
+        "forecastock",
+        "ndai",
+        "fugle",
+        "sinotrade_industry",
+        "pocket_report",
+    ):
         results_by_key = {seed_key: [item]}
     else:
         # fetch_news_list uses URL as key in FakeNewsParser
@@ -189,4 +208,3 @@ async def test_news_button_handler_empty_results_shows_back_to_main_menu() -> No
     markup = edit.kwargs.get("reply_markup")
     assert isinstance(markup, InlineKeyboardMarkup)
     assert _first_button_callback(markup) == "news_main_menu"
-

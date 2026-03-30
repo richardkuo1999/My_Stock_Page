@@ -2,10 +2,11 @@
 VolumeSpikeScanner — Detects stocks with abnormal volume spikes.
 台灣上市櫃股票爆量偵測：每日掃描，找出成交量異常放大的個股。
 """
+
 from __future__ import annotations
 
-import logging
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from urllib.parse import quote
@@ -20,7 +21,7 @@ from .market_data_fetcher import MarketDataFetcher
 logger = logging.getLogger(__name__)
 
 # Default thresholds
-DEFAULT_MIN_VOLUME_LOTS = 1000    # 1000 張 = 1,000,000 股
+DEFAULT_MIN_VOLUME_LOTS = 1000  # 1000 張 = 1,000,000 股
 DEFAULT_SPIKE_RATIO = 1.5
 DEFAULT_MA_DAYS = 20
 # 若日線最後一根早於「今天（台北）」超過此曆日天數，視為過期資料略過（長假可調大）
@@ -38,10 +39,10 @@ class VolumeSpikeResult:
     ticker: str
     name: str
     close: float
-    today_volume: int          # in shares
-    ma20_volume: float        # in shares（最近 ma_days 日算術平均，含當日）
+    today_volume: int  # in shares
+    ma20_volume: float  # in shares（最近 ma_days 日算術平均，含當日）
     spike_ratio: float
-    market: str               # "TWSE" or "TPEx"
+    market: str  # "TWSE" or "TPEx"
     change_pct: float | None = None  # 當日漲跌幅 %
     trade_date: date | None = None  # Yahoo 日線最後一根日期（yfinance）
     yahoo_bar_is_taipei_today: bool = False  # 最後一根日線是否等於台北曆日「今天」
@@ -184,14 +185,11 @@ def _build_spike_scan_caption(
             today_note = "｜部分標的最後一根非今日曆日（盤中／Yahoo 延遲時常見）"
         else:
             today_note = (
-                f"｜最後一根多為前一交易日（今日曆日 {tw.isoformat()}；"
-                "盤中或收盤後尚未更新屬正常）"
+                f"｜最後一根多為前一交易日（今日曆日 {tw.isoformat()}；盤中或收盤後尚未更新屬正常）"
             )
         if len(dates) == 1:
             extra = "；與證交所網頁顯示可能有修正時間差"
-            return (
-                f"{label}結算日 {dates[0].isoformat()}（量／價／倍數同源{extra}）{today_note}"
-            )
+            return f"{label}結算日 {dates[0].isoformat()}（量／價／倍數同源{extra}）{today_note}"
         return f"{label}結算日：{'、'.join(d.isoformat() for d in dates)}{today_note}"
     ref = _build_data_date_caption(all_stocks)
     return f"無符合標的。證交所／櫃買列表參考：{ref}"
@@ -222,7 +220,9 @@ class VolumeSpikeScanner:
         filtered = [s for s in all_stocks if s["volume_shares"] >= min_shares]
         logger.info(
             "Volume filter: %d/%d stocks have >= %d lots",
-            len(filtered), len(all_stocks), min_volume_lots,
+            len(filtered),
+            len(all_stocks),
+            min_volume_lots,
         )
 
         if not filtered:
@@ -289,8 +289,7 @@ class VolumeSpikeScanner:
         results.sort(key=lambda r: r.spike_ratio, reverse=True)
         n_bar_today = sum(1 for r in results if r.yahoo_bar_is_taipei_today)
         logger.info(
-            "爆量結果：%d 檔（倍數≥%.1fx、最少 %d 張、MA%d 含當日）；"
-            "最後一根日線＝今日曆日：%d 檔",
+            "爆量結果：%d 檔（倍數≥%.1fx、最少 %d 張、MA%d 含當日）；最後一根日線＝今日曆日：%d 檔",
             len(results),
             spike_ratio,
             min_volume_lots,
@@ -337,12 +336,13 @@ class VolumeSpikeScanner:
 
     @staticmethod
     async def _fetch_google_news(
-        ticker: str, name: str, limit: int = 5,
+        ticker: str,
+        name: str,
+        limit: int = 5,
     ) -> list[str]:
         query = quote(f"{name} {ticker} 股票")
         url = (
-            f"https://news.google.com/rss/search"
-            f"?q={query}+when:60d&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+            f"https://news.google.com/rss/search?q={query}+when:60d&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
         )
         feed = await asyncio.to_thread(feedparser.parse, url)
         titles = []

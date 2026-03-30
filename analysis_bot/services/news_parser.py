@@ -1,13 +1,15 @@
-import aiohttp
 import asyncio
-from bs4 import BeautifulSoup
-from datetime import datetime
 import html
-import re
 import logging
-import feedparser
-from dateutil import parser as dateparser
+import re
+from datetime import datetime
 from urllib.parse import quote
+
+import aiohttp
+import feedparser
+from bs4 import BeautifulSoup
+from dateutil import parser as dateparser
+
 from ..config import get_settings
 
 settings = get_settings()
@@ -78,21 +80,15 @@ class NewsParser:
                 try:
                     text = raw.decode("utf-8")
                 except UnicodeDecodeError:
-                    text = raw.decode(
-                        resp.get_encoding() or "latin-1", errors="replace"
-                    )
+                    text = raw.decode(resp.get_encoding() or "latin-1", errors="replace")
             feed = feedparser.parse(text)
             results = [
                 {
                     "title": entry.title,
                     "url": entry.link,
-                    "description": entry.description
-                    if hasattr(entry, "description")
-                    else None,
+                    "description": entry.description if hasattr(entry, "description") else None,
                     "pubTime": (
-                        dateparser.parse(entry.published)
-                        if hasattr(entry, "published")
-                        else None
+                        dateparser.parse(entry.published) if hasattr(entry, "published") else None
                     ),
                     "src": "rss",
                 }
@@ -114,9 +110,7 @@ class NewsParser:
                 try:
                     text = raw.decode("utf-8")
                 except UnicodeDecodeError:
-                    text = raw.decode(
-                        resp.get_encoding() or "latin-1", errors="replace"
-                    )
+                    text = raw.decode(resp.get_encoding() or "latin-1", errors="replace")
                 return BeautifulSoup(text, "html.parser")
         except Exception as e:
             self.logger.error(f"HTTP request error {url}: {e}")
@@ -171,9 +165,7 @@ class NewsParser:
                 paragraphs = container.find_all("p")
                 if paragraphs:
                     content = "\n".join(
-                        p.get_text(strip=True)
-                        for p in paragraphs
-                        if p.get_text(strip=True)
+                        p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True)
                     )
                     if content and len(content) > 50:
                         return content
@@ -187,9 +179,7 @@ class NewsParser:
                 paragraphs = container.find_all("p")
                 if paragraphs:
                     content = "\n".join(
-                        p.get_text(strip=True)
-                        for p in paragraphs
-                        if p.get_text(strip=True)
+                        p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True)
                     )
                     if content and len(content) > 50:
                         return content
@@ -321,9 +311,7 @@ class NewsParser:
             if el:
                 raw = html.unescape(el["data-content"])
                 if raw and len(raw) > 100:
-                    content = BeautifulSoup(raw, "html.parser").get_text(
-                        separator="\n", strip=True
-                    )
+                    content = BeautifulSoup(raw, "html.parser").get_text(separator="\n", strip=True)
                     if content and len(content) > 80:
                         return content
             # Secondary: try common containers
@@ -691,9 +679,7 @@ class NewsParser:
                             continue
                         if "/post/" in href:
                             full_link = (
-                                f"https://blog.fugle.tw{href}"
-                                if href.startswith("/")
-                                else href
+                                f"https://blog.fugle.tw{href}" if href.startswith("/") else href
                             )
                             cat_reports.append({"title": title, "url": full_link})
                     return cat_reports
@@ -877,12 +863,7 @@ class NewsParser:
                 resp.raise_for_status()
                 data = await resp.json(content_type=None)
 
-            items = (
-                (data or {})
-                .get("data", {})
-                .get("clientGetArticleList", {})
-                .get("filtered", [])
-            )
+            items = (data or {}).get("data", {}).get("clientGetArticleList", {}).get("filtered", [])
             results: list[dict] = []
             for it in items[: int(limit)]:
                 if not isinstance(it, dict):
@@ -969,9 +950,7 @@ class NewsParser:
                 label = a.get_text(strip=True)
                 if not label:
                     continue
-                if href.endswith(".pdf") or (
-                    href.endswith(".html") and href != "letters.html"
-                ):
+                if href.endswith(".pdf") or (href.endswith(".html") and href != "letters.html"):
                     url = href if href.startswith("http") else base + href
                     results.append({"title": f"Buffett 股東信 — {label}", "url": url})
 
@@ -998,9 +977,7 @@ class NewsParser:
                     doc.close()
                     return text.strip()
                 except ImportError:
-                    self.logger.warning(
-                        "pymupdf not installed, cannot extract PDF text"
-                    )
+                    self.logger.warning("pymupdf not installed, cannot extract PDF text")
                     return ""
             else:
                 soup = await self.news_request(url)
@@ -1042,9 +1019,7 @@ class NewsParser:
                 if parent:
                     time_el = parent.find("time", class_="embedded-date")
                     if time_el:
-                        date_str = time_el.get("datetime", "") or time_el.get_text(
-                            strip=True
-                        )
+                        date_str = time_el.get("datetime", "") or time_el.get_text(strip=True)
 
                 if href.startswith("/insights/memo/"):
                     full_url = f"https://www.oaktreecapital.com{href}"
@@ -1105,9 +1080,7 @@ class NewsParser:
                     doc.close()
                     return text.strip()
                 except ImportError:
-                    self.logger.warning(
-                        "pymupdf not installed, cannot extract PDF text"
-                    )
+                    self.logger.warning("pymupdf not installed, cannot extract PDF text")
                     return ""
             else:
                 soup = await self.news_request(url)

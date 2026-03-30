@@ -3,6 +3,7 @@ VolumeSpikeFormatter — 爆量偵測結果的格式化輸出。
 供 handlers、scheduler、run_volume_spike 共用。
 中／英欄寬以「顯示寬度」對齊（CJK 佔 2），避免 Telegram 等寬字體跑版。
 """
+
 from __future__ import annotations
 
 import unicodedata
@@ -84,7 +85,7 @@ def pad_stock_name(name: str, width: int = NAME_W) -> str:
 
 
 def pad_price_chg_cell(
-    r: "VolumeSpikeResult",
+    r: VolumeSpikeResult,
     width: int | None = None,
 ) -> str:
     """股價與漲跌幅合併，右對齊於固定顯示寬度。"""
@@ -99,7 +100,7 @@ def pad_price_chg_cell(
     return _fit_visual_width(inner, w)
 
 
-def format_spike_row(r: "VolumeSpikeResult") -> str:
+def format_spike_row(r: VolumeSpikeResult) -> str:
     """單筆爆量股的表格列。"""
     ratio_s = f"{r.spike_ratio:>6.1f}x".rjust(RATIO_FIELD_W)
     return (
@@ -123,7 +124,7 @@ def get_table_header() -> str:
 
 
 def build_spike_messages(
-    results: list["VolumeSpikeResult"],
+    results: list[VolumeSpikeResult],
     header: str,
     chunk: int = SPIKE_TABLE_CHUNK,
 ) -> list[str]:
@@ -137,7 +138,7 @@ def build_spike_messages(
         if i == 0:
             msg = header
         else:
-            msg = f"（續）第 {i+1}-{i+len(part)} 筆\n\n"
+            msg = f"（續）第 {i + 1}-{i + len(part)} 筆\n\n"
         msg += get_table_header() + "".join(format_spike_row(r) for r in part) + "```\n"
         msgs.append(msg)
     return msgs

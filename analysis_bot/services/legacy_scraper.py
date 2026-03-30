@@ -1,9 +1,9 @@
-import aiohttp
-import asyncio
 import logging
-from bs4 import BeautifulSoup
-from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 import re
+
+import aiohttp
+from bs4 import BeautifulSoup
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 logger = logging.getLogger(__name__)
 
@@ -18,12 +18,15 @@ GOODINFO_HEADERS = {
     "Referer": "https://goodinfo.tw/tw/BasicInfo.asp",
 }
 
+
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_fixed(2),
     retry=retry_if_exception_type((aiohttp.ClientError, Exception)),
 )
-async def fetch_webpage(session, url: str, headers: dict = DEFAULT_HEADERS, timeout: int = 10) -> BeautifulSoup | None:
+async def fetch_webpage(
+    session, url: str, headers: dict = DEFAULT_HEADERS, timeout: int = 10
+) -> BeautifulSoup | None:
     try:
         is_moneydj = "moneydj.com" in url
         async with session.get(
@@ -34,10 +37,13 @@ async def fetch_webpage(session, url: str, headers: dict = DEFAULT_HEADERS, time
         ) as response:
             response.raise_for_status()
             text = await response.text(encoding="utf-8")
-            return BeautifulSoup(text, "html.parser") # html5lib might not be installed, using html.parser
+            return BeautifulSoup(
+                text, "html.parser"
+            )  # html5lib might not be installed, using html.parser
     except Exception as e:
         logger.error(f"Error fetching {url}: {e}")
         raise
+
 
 class Goodinfo:
     COMPANY_INFO_BASE_URL = "https://goodinfo.tw/tw/BasicInfo.asp?STOCK_ID={}"
@@ -53,26 +59,27 @@ class Goodinfo:
             logger.info(f"Fetching Goodinfo URL: {url}")
             soup = await fetch_webpage(session, url, GOODINFO_HEADERS)
             if not soup:
-                 logger.error(f"Failed to fetch soup for {url}")
-                 return None
-                 
+                logger.error(f"Failed to fetch soup for {url}")
+                return None
+
             info_dict = {}
-            
+
             raw_keys = soup.find_all("th", {"class": "bg_h1"})
             raw_values = soup.find_all("td", {"bgcolor": "white"})
-            
+
             logger.info(f"Found {len(raw_keys)} keys and {len(raw_values)} values for {stock_id}")
-            
-            for k, v in zip(raw_keys, raw_values):
+
+            for k, v in zip(raw_keys, raw_values, strict=False):
                 key = k.get_text(strip=True)
                 val = v.get_text(strip=True)
                 info_dict[key] = val
-            
+
             logger.info(f"Parsed info keys: {list(info_dict.keys())}")
             return info_dict
         except Exception as e:
             logger.error(f"Goodinfo fetch error {stock_id}: {e}")
             return None
+
 
 class LegacyMoneyDJ:
     def __init__(self) -> None:
@@ -88,15 +95,15 @@ class LegacyMoneyDJ:
             return None, None
 
         c_info = goodinfo_data["company_info"]
-        company_name = c_info.get('公司名稱')
-        stock_name = c_info.get('股票名稱')
-        
+        company_name = c_info.get("公司名稱")
+        stock_name = c_info.get("股票名稱")
+
         if not company_name:
             return None, None
 
         # Clean name
         company_name_clean = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]", "", company_name)
-        
+
         # Search MoneyDJ
         url = self.query_url + company_name_clean + self.wiki_url
         soup = await fetch_webpage(session, url, headers=GOODINFO_HEADERS)
@@ -107,20 +114,20 @@ class LegacyMoneyDJ:
         # section_title = soup.find("td", string=company_name)
         # BS4 string argument matches exact string.
         section_title = soup.find("td", string=company_name)
-        
+
         company_url = None
         if section_title:
-             link = section_title.select_one('a')
-             if link:
-                 href = link.get("href")
-                 # href usually starts with ../wiki/.... , prefix is https://www.moneydj.com/kmdj/
-                 # if href is relative like ../, we need to handle it.
-                 # Old code: company_url = self.prefix_url + company_url[2:] 
-                 # implicating href is `../wiki/...`
-                 if href.startswith(".."):
-                     company_url = self.prefix_url + href[3:] # skip ../
-                 else:
-                     company_url = self.prefix_url + href
+            link = section_title.select_one("a")
+            if link:
+                href = link.get("href")
+                # href usually starts with ../wiki/.... , prefix is https://www.moneydj.com/kmdj/
+                # if href is relative like ../, we need to handle it.
+                # Old code: company_url = self.prefix_url + company_url[2:]
+                # implicating href is `../wiki/...`
+                if href.startswith(".."):
+                    company_url = self.prefix_url + href[3:]  # skip ../
+                else:
+                    company_url = self.prefix_url + href
         else:
             logger.warning(f"MoneyDJ search failed for {company_name}")
 
@@ -131,18 +138,18 @@ class LegacyMoneyDJ:
             stock_name, company_url = await self.get_company_url(session, stock_id)
             if not company_url:
                 return None, None
-            
+
             soup = await fetch_webpage(session, company_url, headers=GOODINFO_HEADERS)
             if not soup:
                 return stock_name, None
 
             # data = soup.find('div', class_='UserDefined') # Old commented out
-            data = soup.find('article')
-            
+            data = soup.find("article")
+
             if data:
-                raw_text = data.get_text(separator='\n', strip=True)
+                raw_text = data.get_text(separator="\n", strip=True)
                 lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
-                clean_text = '\n'.join(lines)
+                clean_text = "\n".join(lines)
                 return stock_name, clean_text
-            
+
             return stock_name, ""

@@ -1,11 +1,13 @@
+import logging
+import random
+from enum import Enum
+from pathlib import Path
+from typing import Any
+
 from google.genai import Client as GeminiClient
 from google.genai import types
 from ollama import AsyncClient as OllamaAsyncClient
-from typing import List, Union, Any
-import random
-import logging
-from pathlib import Path
-from enum import Enum
+
 from ..config import get_settings
 
 settings = get_settings()
@@ -28,9 +30,7 @@ class AIService:
         self.current_key_idx = 0
 
         # Initialize Gemini Clients
-        self.gemini_clients = [
-            self._create_gemini_client(key) for key in self.gemini_keys
-        ]
+        self.gemini_clients = [self._create_gemini_client(key) for key in self.gemini_keys]
         self.gemini_model = "gemini-2.0-flash-exp"
 
         # Initialize Ollama Client (Cloud or Local)
@@ -65,9 +65,7 @@ class AIService:
         import time
 
         final_prompt = (
-            prompt + "\n" + contents
-            if prompt and isinstance(contents, str)
-            else str(contents)
+            prompt + "\n" + contents if prompt and isinstance(contents, str) else str(contents)
         )
 
         # Web search (Ollama Cloud only) — 15s hard timeout, skip if slow
@@ -87,16 +85,16 @@ class AIService:
                             logger.info(
                                 f"  [{i}] {getattr(r, 'title', 'N/A')} - {getattr(r, 'url', '')}"
                             )
-                    final_prompt = f"Background Information:\n{search_res}\n\nUser Request:\n{final_prompt}"
+                    final_prompt = (
+                        f"Background Information:\n{search_res}\n\nUser Request:\n{final_prompt}"
+                    )
                 logger.info(
                     f"Ollama web_search completed in {elapsed:.2f}s ({len(getattr(search_res, 'results', []))} results)"
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("Ollama web_search timed out (>15s). Skipping search.")
             except Exception as e:
-                logger.warning(
-                    f"Ollama web_search failed: {e}. Proceeding without search."
-                )
+                logger.warning(f"Ollama web_search failed: {e}. Proceeding without search.")
 
         t1 = time.time()
         response = await self.ollama_client.chat(
@@ -165,9 +163,7 @@ class AIService:
                     parts = []
                     if isinstance(contents, list):
                         for mime, data in contents:
-                            parts.append(
-                                types.Part.from_bytes(data=data, mime_type=mime)
-                            )
+                            parts.append(types.Part.from_bytes(data=data, mime_type=mime))
                     elif isinstance(contents, (Path, str)):
                         p = Path(contents)
                         if p.exists():
@@ -179,9 +175,7 @@ class AIService:
                             elif p.suffix.lower() == ".wav":
                                 mime = "audio/wav"
                             with open(p, "rb") as f:
-                                parts.append(
-                                    types.Part.from_bytes(data=f.read(), mime_type=mime)
-                                )
+                                parts.append(types.Part.from_bytes(data=f.read(), mime_type=mime))
 
                     parts.append(prompt if prompt else "請分析這份檔案/多媒體內容。")
                     response = await client.models.generate_content(
@@ -198,28 +192,16 @@ class AIService:
                 )
 
                 if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                    self.current_key_idx = (self.current_key_idx + 1) % len(
-                        self.gemini_clients
-                    )
+                    self.current_key_idx = (self.current_key_idx + 1) % len(self.gemini_clients)
                     wait_time = min(2 * (1.5**attempt) + random.uniform(0, 1), 15)
-                    logger.info(
-                        f"Rate limit hit. Rotating key, waiting {wait_time:.2f}s..."
-                    )
+                    logger.info(f"Rate limit hit. Rotating key, waiting {wait_time:.2f}s...")
                     await asyncio.sleep(wait_time)
-                elif (
-                    "404" in error_str
-                    or "not found" in error_str.lower()
-                    or "400" in error_str
-                ):
-                    logger.warning(
-                        f"Model {current_model} failed. Switching fallback..."
-                    )
+                elif "404" in error_str or "not found" in error_str.lower() or "400" in error_str:
+                    logger.warning(f"Model {current_model} failed. Switching fallback...")
                     await asyncio.sleep(1)
                 else:
                     # For other errors, rotate key anyway as a precaution
-                    self.current_key_idx = (self.current_key_idx + 1) % len(
-                        self.gemini_clients
-                    )
+                    self.current_key_idx = (self.current_key_idx + 1) % len(self.gemini_clients)
                     await asyncio.sleep(1)
 
                 attempt += 1
@@ -230,7 +212,7 @@ class AIService:
     async def call(
         self,
         req_type: RequestType,
-        contents: Union[str, List[Any], Path],
+        contents: str | list[Any] | Path,
         prompt: str = None,
         use_search: bool = False,
         force_provider: str = None,
@@ -270,7 +252,5 @@ class AIService:
             else:
                 return await self._call_gemini(req_type, contents, prompt, use_search)
         except Exception as e:
-            logger.error(
-                f"Fallback provider [{fallback}] also failed: {type(e).__name__} - {e}"
-            )
+            logger.error(f"Fallback provider [{fallback}] also failed: {type(e).__name__} - {e}")
             return "Error: All AI providers failed. Service unavailable."

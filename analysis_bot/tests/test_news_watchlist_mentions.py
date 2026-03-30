@@ -1,19 +1,20 @@
 from __future__ import annotations
 
-import pytest
-from sqlmodel import SQLModel, Session, create_engine
-from telegram.constants import ParseMode
-
 import analysis_bot.bot.jobs as jobs
+import pytest
 from analysis_bot.models.subscriber import Subscriber
 from analysis_bot.models.watchlist import WatchlistEntry
+from sqlmodel import Session, SQLModel, create_engine
+from telegram.constants import ParseMode
 
 
 class FakeBot:
     def __init__(self) -> None:
         self.send_message_calls = []
 
-    async def send_message(self, *, chat_id: int, text: str, parse_mode=None, disable_web_page_preview=None, **kwargs):
+    async def send_message(
+        self, *, chat_id: int, text: str, parse_mode=None, disable_web_page_preview=None, **kwargs
+    ):
         self.send_message_calls.append(
             {
                 "chat_id": chat_id,
@@ -34,12 +35,9 @@ class FakeJobContext:
 def isolated_engine(tmp_path, monkeypatch: pytest.MonkeyPatch):
     db_path = tmp_path / "news_watchlist.sqlite"
     engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
-    
+
     # Import all models to ensure they are registered
-    from analysis_bot.models.watchlist import WatchlistEntry
-    from analysis_bot.models.subscriber import Subscriber
-    from analysis_bot.models.stock import StockData
-    
+
     SQLModel.metadata.create_all(engine)
 
     # jobs.py imports engine at module import time, patch the module-level reference.
@@ -120,4 +118,3 @@ async def test_check_news_job_mentions_by_alias(isolated_engine):
     assert "User 222" not in msg
     assert "相關：" in msg
     assert "台積電" in msg
-

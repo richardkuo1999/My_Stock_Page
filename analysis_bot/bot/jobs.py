@@ -1,23 +1,23 @@
-import json
-import logging
 import asyncio
 import difflib
 import html
+import json
+import logging
 import re
-import unicodedata
 import shutil
+import unicodedata
 from contextlib import suppress
-from typing import List, Dict
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
-from telegram.ext import ContextTypes
-from telegram.constants import ParseMode
-from sqlmodel import Session, select, col
 
-from ..services.news_parser import NewsParser
+from sqlmodel import Session, col, select
+from telegram.constants import ParseMode
+from telegram.ext import ContextTypes
+
+from ..database import engine
 from ..models.content import News
 from ..models.threads_watch import ThreadsWatchEntry
-from ..database import engine
+from ..services.news_parser import NewsParser
 from ..utils.pii import redact_telegram_id
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ async def _run_cursor_agent_summary(prompt: str, timeout: float = 30.0) -> str |
             proc.returncode,
             (stderr.decode().strip() if stderr else ""),
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("cursor agent 摘要逾時，已中止。")
         if proc:
             proc.kill()
@@ -126,9 +126,7 @@ async def _prepare_news_text(
     # Always try to fetch full article content for better summarization
     if news.get("url"):
         try:
-            fetched = await news_parser.fetch_news_content(
-                news["url"], ai_service=ai_service
-            )
+            fetched = await news_parser.fetch_news_content(news["url"], ai_service=ai_service)
             if fetched and len(fetched) > len(existing_text):
                 base_text = fetched
         except Exception as e:
@@ -222,9 +220,7 @@ def _norm_text(text: str) -> str:
     return unicodedata.normalize("NFKC", text or "").upper()
 
 
-def _normalize_content_for_matching(
-    title: str, url: str
-) -> tuple[str, str, str, str, str]:
+def _normalize_content_for_matching(title: str, url: str) -> tuple[str, str, str, str, str]:
     """
     Normalize title and URL for matching to avoid repeated operations.
 
@@ -255,9 +251,7 @@ def _contains_ticker(text_upper: str, ticker_upper: str) -> bool:
             return False
         left_ok = idx == 0 or not _WORD_CHARS_RE.match(text_upper[idx - 1])
         right_i = idx + len(ticker_upper)
-        right_ok = right_i >= len(text_upper) or not _WORD_CHARS_RE.match(
-            text_upper[right_i]
-        )
+        right_ok = right_i >= len(text_upper) or not _WORD_CHARS_RE.match(text_upper[right_i])
         if left_ok and right_ok:
             return True
         start = idx + 1
@@ -281,9 +275,10 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
         ai_service = AIService()
     else:
         # Fallback for standalone run (create bot from settings)
-        from ..config import get_settings
         from telegram import Bot
         from telegram.request import HTTPXRequest
+
+        from ..config import get_settings
 
         settings = get_settings()
         req = HTTPXRequest(
@@ -344,9 +339,7 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
 
         # Fugle
         try:
-            fugle_articles = await news_parser.get_fugle_report(
-                "https://blog.fugle.tw/"
-            )
+            fugle_articles = await news_parser.get_fugle_report("https://blog.fugle.tw/")
             if fugle_articles:
                 for a in fugle_articles:
                     a["source_name"] = "Fugle"
@@ -501,9 +494,7 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
         with Session(engine) as session:
             # Pre-fetch recent titles for fuzzy matching (last 24 hours)
             yesterday = datetime.utcnow() - timedelta(days=1)
-            recent_news = session.exec(
-                select(News).where(News.created_at >= yesterday)
-            ).all()
+            recent_news = session.exec(select(News).where(News.created_at >= yesterday)).all()
             recent_titles = [n.title for n in recent_news]
 
             for article in new_articles:
@@ -515,9 +506,7 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
                     continue
 
                 # A. Check exact URL match (Fast)
-                existing_link = session.exec(
-                    select(News).where(News.link == link)
-                ).first()
+                existing_link = session.exec(select(News).where(News.link == link)).first()
                 if existing_link:
                     continue
 
@@ -541,10 +530,7 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
                 # Let's check against final_new_articles as well
                 in_batch_duplicate = False
                 for added in final_new_articles:
-                    if (
-                        difflib.SequenceMatcher(None, title, added["title"]).ratio()
-                        > 0.85
-                    ):
+                    if difflib.SequenceMatcher(None, title, added["title"]).ratio() > 0.85:
                         in_batch_duplicate = True
                         break
 
@@ -573,45 +559,37 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
 
         # Send notifications
         if new_articles:
+            from ..models.stock import StockData
             from ..models.subscriber import Subscriber
             from ..models.watchlist import WatchlistEntry
-            from ..models.stock import StockData
             # Session, select already imported at top
 
             subscribers = []
             with Session(engine) as session:
-                subs = session.exec(
-                    select(Subscriber).where(Subscriber.is_active == True)
-                ).all()
+                subs = session.exec(select(Subscriber).where(Subscriber.is_active)).all()
                 subscribers = [s.chat_id for s in subs]
 
             # Preload watchlist entries for subscriber chats
-            watch_by_chat: Dict[int, Dict[int, List[WatchlistEntry]]] = {}
-            tickers_by_chat: Dict[int, set[str]] = {}
+            watch_by_chat: dict[int, dict[int, list[WatchlistEntry]]] = {}
+            tickers_by_chat: dict[int, set[str]] = {}
             if subscribers:
                 with Session(engine) as session:
                     entries = session.exec(
-                        select(WatchlistEntry).where(
-                            col(WatchlistEntry.chat_id).in_(subscribers)
-                        )
+                        select(WatchlistEntry).where(col(WatchlistEntry.chat_id).in_(subscribers))
                     ).all()
                     for e in entries:
-                        watch_by_chat.setdefault(e.chat_id, {}).setdefault(
-                            e.user_id, []
-                        ).append(e)
+                        watch_by_chat.setdefault(e.chat_id, {}).setdefault(e.user_id, []).append(e)
                         tickers_by_chat.setdefault(e.chat_id, set()).add(e.ticker)
 
             # Optional enrichment: pull known company names from StockData for tickers
-            names_by_ticker: Dict[str, str] = {}
+            names_by_ticker: dict[str, str] = {}
             all_tickers: set[str] = set()
             for tset in tickers_by_chat.values():
                 all_tickers.update(tset)
             if all_tickers:
                 with Session(engine) as session:
                     rows = session.exec(
-                        select(StockData).where(
-                            col(StockData.ticker).in_(list(all_tickers))
-                        )
+                        select(StockData).where(col(StockData.ticker).in_(list(all_tickers)))
                     ).all()
                     for r in rows:
                         if r.ticker and r.name:
@@ -643,13 +621,11 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
                 title_raw = news["title"]
                 url_raw = news["url"]
                 source_name = news.get("source_name") or news.get("source")
-                title, title_norm, url, url_norm, content_norm = (
-                    _normalize_content_for_matching(title_raw, url_raw)
+                title, title_norm, url, url_norm, content_norm = _normalize_content_for_matching(
+                    title_raw, url_raw
                 )
 
-                title_md = title.replace("[", "(").replace(
-                    "]", ")"
-                )  # Simple markdown escape
+                title_md = title.replace("[", "(").replace("]", ")")  # Simple markdown escape
                 source_label = _guess_source_label(source_name, url)
 
                 summary_md = None
@@ -685,7 +661,7 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
                         # If we have watchlist entries for this chat, try to mention matching users
                         related = watch_by_chat.get(chat_id, {})
                         if related:
-                            user_hits: Dict[int, set[str]] = {}
+                            user_hits: dict[int, set[str]] = {}
                             for uid, entries in related.items():
                                 hits: set[str] = set()
                                 for e in entries:
@@ -693,9 +669,7 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
                                     if t and _contains_ticker(content_upper, t):
                                         hits.add(t)
                                     if e.alias:
-                                        alias_norm = unicodedata.normalize(
-                                            "NFKC", e.alias
-                                        ).strip()
+                                        alias_norm = unicodedata.normalize("NFKC", e.alias).strip()
                                         if (
                                             alias_norm
                                             and alias_norm
@@ -705,9 +679,7 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
                                     # StockData name enrichment
                                     name = names_by_ticker.get(t)
                                     if name:
-                                        name_norm = unicodedata.normalize(
-                                            "NFKC", name
-                                        ).strip()
+                                        name_norm = unicodedata.normalize("NFKC", name).strip()
                                         if (
                                             name_norm
                                             and name_norm
@@ -715,7 +687,7 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
                                         ):
                                             hits.add(name_norm)
                                 step_hits = list(hits)  # Workaround to use in set
-                                for step_hit in step_hits:
+                                for _step_hit in step_hits:
                                     # Not sure why the original loop was slightly weird, simplifying the `user_hits[uid] = set()`
                                     pass
                                 if hits:
@@ -724,19 +696,17 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
                             if user_hits:
                                 title_html = html.escape(title_raw)
                                 source_label = _guess_source_label(source_name, url_raw)
-                                source_line_html = _format_source_line_html(
-                                    source_label, url_raw
-                                )
+                                source_line_html = _format_source_line_html(source_label, url_raw)
                                 # Privacy: do not include any user_id / tg://user link / numeric IDs in message.
                                 # We only show the union of matched keywords.
                                 all_hits: set[str] = set()
                                 for hits in user_hits.values():
                                     all_hits.update(hits)
-                                kw = "、".join(
-                                    [html.escape(x) for x in sorted(all_hits)]
-                                )
+                                kw = "、".join([html.escape(x) for x in sorted(all_hits)])
                                 related_line = f"相關：{kw}"
-                                msg_html = f"📰 <b>{title_html}</b>\n{source_line_html}\n{related_line}"
+                                msg_html = (
+                                    f"📰 <b>{title_html}</b>\n{source_line_html}\n{related_line}"
+                                )
 
                                 await bot_instance.send_message(
                                     chat_id=chat_id,
@@ -824,9 +794,7 @@ async def process_threads_watch_entry(
             )
             return sent, str(e)[:200]
 
-    entry.seen_post_ids = merge_seen_json(
-        entry.seen_post_ids, [p.post_id for p in fresh]
-    )
+    entry.seen_post_ids = merge_seen_json(entry.seen_post_ids, [p.post_id for p in fresh])
     session.add(entry)
     session.commit()
     return sent, None

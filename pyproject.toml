@@ -14,7 +14,12 @@ select = [
     "C4",     # flake8-comprehensions
     "UP",     # pyupgrade
 ]
-ignore = ["E501"]  # line length handled by formatter
+ignore = [
+    "E501",   # line length handled by formatter
+    "B008",   # FastAPI Depends() in function defaults is intentional
+    "E402",   # module-level imports not at top — intentional lazy imports
+    "B017",   # pytest.raises(Exception) — acceptable in test files
+]
 
 [tool.ruff.format]
 quote-style = "double"

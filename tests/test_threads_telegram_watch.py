@@ -3,8 +3,6 @@
 import json
 from pathlib import Path
 
-import pytest
-
 from analysis_bot.services.threads_watch_service import (
     ThreadPost,
     load_state,

@@ -1,16 +1,16 @@
-from sqlmodel import create_engine, SQLModel, Session
+from sqlmodel import Session, SQLModel, create_engine
+
 from .config import get_settings
 
 settings = get_settings()
 
 # check_same_thread=False is needed for SQLite with FastAPI/Async
 engine = create_engine(
-    settings.DATABASE_URL, 
-    echo=settings.DEBUG, 
-    connect_args={"check_same_thread": False}
+    settings.DATABASE_URL, echo=settings.DEBUG, connect_args={"check_same_thread": False}
 )
 
 from sqlalchemy import event, text
+
 
 @event.listens_for(engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
@@ -19,15 +19,9 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.close()
 
+
 def create_db_and_tables():
     # Helper to import all models so SQLModel metadata is populated
-    from .models.stock import StockData
-    from .models.subscriber import Subscriber
-    from .models.config import SystemConfig
-    from .models.content import News, Report, Podcast
-    from .models.watchlist import WatchlistEntry
-    from .models.eps_estimate import EpsEstimate
-    from .models.threads_watch import ThreadsWatchEntry
 
     SQLModel.metadata.create_all(engine)
 
@@ -41,6 +35,7 @@ def create_db_and_tables():
                 err = str(e).lower()
                 if "duplicate column" not in err and "already exists" not in err:
                     raise
+
 
 def get_session():
     with Session(engine) as session:

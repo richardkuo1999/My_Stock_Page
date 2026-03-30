@@ -3,6 +3,7 @@
 
 使用 HTML + <pre>，避免舊版 Markdown 對括號、底線等字元解析失敗。
 """
+
 from __future__ import annotations
 
 import html
@@ -35,7 +36,7 @@ def build_spike_telegram_html_messages(
         if i == 0:
             plain = header
         else:
-            plain = f"（續）第 {i+1}-{i+len(part)} 筆\n\n"
+            plain = f"（續）第 {i + 1}-{i + len(part)} 筆\n\n"
         plain += get_table_header() + "".join(format_spike_row(r) for r in part) + "```\n"
         body = plain.replace("```", "").strip()
         msgs.append(f"<pre>{html.escape(body)}</pre>")

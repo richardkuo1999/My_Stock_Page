@@ -8,12 +8,14 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 try:
-    from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+    from playwright.sync_api import sync_playwright
 except ImportError:
     sync_playwright = None  # type: ignore[misc, assignment]
     PlaywrightTimeout = Exception  # type: ignore[misc, assignment]
@@ -84,7 +86,9 @@ def merge_seen_json(old_json: str, new_ids: Iterable[str]) -> str:
             old = []
     except json.JSONDecodeError:
         old = []
-    merged: list[str] = list(dict.fromkeys([str(x) for x in old if x] + [str(x) for x in new_ids if x]))
+    merged: list[str] = list(
+        dict.fromkeys([str(x) for x in old if x] + [str(x) for x in new_ids if x])
+    )
     return json.dumps(merged[-MAX_SEEN_IDS:], ensure_ascii=False)
 
 
@@ -143,7 +147,9 @@ EXTRACT_POSTS_JS = r"""
 """
 
 
-def fetch_posts_playwright(profile_url: str, timeout_ms: int = DEFAULT_FETCH_TIMEOUT_MS) -> list[ThreadPost]:
+def fetch_posts_playwright(
+    profile_url: str, timeout_ms: int = DEFAULT_FETCH_TIMEOUT_MS
+) -> list[ThreadPost]:
     if sync_playwright is None:
         raise RuntimeError(
             "未安裝 playwright。請執行: pip install playwright && playwright install chromium"
@@ -191,6 +197,7 @@ def fetch_posts_playwright(profile_url: str, timeout_ms: int = DEFAULT_FETCH_TIM
 
 
 # --- CLI 用 state 檔（與 DB 分離）---
+
 
 def load_state(path: Path) -> dict[str, Any]:
     if not path.exists():

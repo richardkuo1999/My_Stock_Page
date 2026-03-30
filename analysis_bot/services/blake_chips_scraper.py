@@ -5,10 +5,10 @@ Blake Finance CHIPS 資料抓取服務。
 - 00981A_match_888: 大額權證買超持股
 日期可透過 date 參數指定，格式 YYYY-MM-DD。
 """
+
 import logging
 import re
 from datetime import datetime
-from typing import Optional
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -17,14 +17,12 @@ logger = logging.getLogger(__name__)
 
 BASE_URL_981 = "https://blake-finance-notes.org/chips_blake_finance/code_php/00981A.php"
 BASE_URL_888 = "https://blake-finance-notes.org/chips_blake_finance/code_php/00981A_match_888.php"
-DEFAULT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-}
+DEFAULT_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
 
 async def fetch_chips_data(
-    date_str: Optional[str] = None,
-    session: Optional[aiohttp.ClientSession] = None,
+    date_str: str | None = None,
+    session: aiohttp.ClientSession | None = None,
 ) -> str:
     """
     抓取指定日期的 CHIPS 資料頁面，回傳整理後的文字。
@@ -114,8 +112,8 @@ def _parse_page_888(html: str, date_str: str) -> str:
 
 
 async def fetch_chips_data_888(
-    date_str: Optional[str] = None,
-    session: Optional[aiohttp.ClientSession] = None,
+    date_str: str | None = None,
+    session: aiohttp.ClientSession | None = None,
 ) -> str:
     """
     抓取 00981A_match_888 CHIPS 持股資料。
@@ -146,7 +144,9 @@ async def fetch_chips_data_888(
 CHANGE_COLUMN_KEYWORDS = ("張數變化", "張數變動", "增減", "增减", "變化", "變動", "異動")
 
 
-def _find_column_index(header_cells: list[str], keywords: tuple[str, ...], exclude: tuple[str, ...] = ()) -> int | None:
+def _find_column_index(
+    header_cells: list[str], keywords: tuple[str, ...], exclude: tuple[str, ...] = ()
+) -> int | None:
     """找出表頭中符合關鍵字的欄位索引。"""
     for i, cell in enumerate(header_cells):
         if any(ex in cell for ex in exclude):
@@ -252,10 +252,26 @@ def _parse_page(html: str, date_str: str, title: str = "00981A持股變化") -> 
                 # Emoji 區分增減：📈 增、📉 減
                 sign = _get_change_sign(change_val)
                 emoji = "📈" if sign > 0 else "📉"
-                code = cell_texts[indices[0]] if indices[0] is not None and indices[0] < len(cell_texts) else ""
-                name = cell_texts[indices[1]] if indices[1] is not None and indices[1] < len(cell_texts) else ""
-                shares = cell_texts[indices[2]] if indices[2] is not None and indices[2] < len(cell_texts) else ""
-                amount = cell_texts[indices[4]] if indices[4] is not None and indices[4] < len(cell_texts) else ""
+                code = (
+                    cell_texts[indices[0]]
+                    if indices[0] is not None and indices[0] < len(cell_texts)
+                    else ""
+                )
+                name = (
+                    cell_texts[indices[1]]
+                    if indices[1] is not None and indices[1] < len(cell_texts)
+                    else ""
+                )
+                shares = (
+                    cell_texts[indices[2]]
+                    if indices[2] is not None and indices[2] < len(cell_texts)
+                    else ""
+                )
+                amount = (
+                    cell_texts[indices[4]]
+                    if indices[4] is not None and indices[4] < len(cell_texts)
+                    else ""
+                )
                 change_display = change_val if change_val.startswith("-") else f"+{change_val}"
                 amount_str = f"({amount}萬)" if amount else ""
                 line = f"{emoji} {code} {name}  {shares}張 {change_display} {amount_str}".strip()
@@ -269,7 +285,7 @@ def _parse_page(html: str, date_str: str, title: str = "00981A持股變化") -> 
     else:
         main = soup.find("main") or soup.find("article") or soup.find("body")
         if main:
-            text = main.get_text(separator="\n", strip=True)
+            main.get_text(separator="\n", strip=True)
             lines.append("（無表格結構，請檢查頁面）")
         else:
             lines.append("（無法解析頁面結構）")

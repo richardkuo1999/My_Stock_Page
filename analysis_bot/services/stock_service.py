@@ -1,15 +1,18 @@
-from datetime import datetime, timedelta
 import json
 import logging
-from typing import Optional, Dict, Any, Tuple
+from datetime import datetime, timedelta
+from typing import Any
+
 from sqlmodel import Session, select
+
 from ..database import engine
-from ..models.stock import StockData
 from ..models.config import SystemConfig
 from ..models.content import News
+from ..models.stock import StockData
 from .stock_analyzer import StockAnalyzer
 
 logger = logging.getLogger(__name__)
+
 
 class StockService:
     @staticmethod
@@ -18,7 +21,7 @@ class StockService:
         with Session(engine) as session:
             # 1. Get all distinct sources
             sources = session.exec(select(News.source).distinct()).all()
-            
+
             all_news = []
             for src in sources:
                 # Get Top N per source
@@ -29,29 +32,33 @@ class StockService:
                     .limit(limit_per_source)
                 ).all()
                 all_news.extend(news)
-                
+
             # Sort final list by date desc
             all_news.sort(key=lambda x: x.created_at, reverse=True)
             return all_news
 
     @staticmethod
-    async def get_or_analyze_stock(ticker: str, force_update: bool = False) -> Tuple[Optional[Dict[str, Any]], bool]:
+    async def get_or_analyze_stock(
+        ticker: str, force_update: bool = False
+    ) -> tuple[dict[str, Any] | None, bool]:
         """
         Get stock analysis result.
         Returns: (data, from_cache)
         """
         analyzer = StockAnalyzer()
-        
+
         # Check Cache
         if not force_update:
             with Session(engine) as session:
-                stock_record = session.exec(select(StockData).where(StockData.ticker == ticker)).first()
+                stock_record = session.exec(
+                    select(StockData).where(StockData.ticker == ticker)
+                ).first()
                 if stock_record and stock_record.data and stock_record.last_analyzed:
                     if datetime.now() - stock_record.last_analyzed < timedelta(hours=6):
                         try:
                             data = json.loads(stock_record.data)
-                            data['_last_analyzed'] = stock_record.last_analyzed
-                            data['_tag'] = stock_record.tag
+                            data["_last_analyzed"] = stock_record.last_analyzed
+                            data["_tag"] = stock_record.tag
                             return data, True
                         except json.JSONDecodeError:
                             logger.warning(f"Failed to decode cached data for {ticker}")
@@ -64,24 +71,26 @@ class StockService:
         # Save to DB (Auto-Subscribe)
         try:
             with Session(engine) as session:
-                stock_record = session.exec(select(StockData).where(StockData.ticker == ticker)).first()
+                stock_record = session.exec(
+                    select(StockData).where(StockData.ticker == ticker)
+                ).first()
                 if not stock_record:
                     stock_record = StockData(ticker=ticker)
                     session.add(stock_record)
-                
+
                 stock_record.data = json.dumps(data)
-                stock_record.name = data.get('name')
-                stock_record.sector = data.get('sector')
-                stock_record.price = data.get('price')
+                stock_record.name = data.get("name")
+                stock_record.sector = data.get("sector")
+                stock_record.price = data.get("price")
                 stock_record.last_analyzed = datetime.now()
                 session.add(stock_record)
                 session.commit()
                 session.refresh(stock_record)
-                data['_last_analyzed'] = stock_record.last_analyzed
-                data['_tag'] = stock_record.tag
+                data["_last_analyzed"] = stock_record.last_analyzed
+                data["_tag"] = stock_record.tag
         except Exception as e:
             logger.error(f"Failed to save StockData for {ticker}: {e}")
-            
+
         return data, False
 
     @staticmethod
@@ -108,7 +117,7 @@ class StockService:
             current_tags.add(tag)
         else:
             current_tags.discard(tag)
-        
+
         # Save back
         new_val = " ".join(current_tags)
         StockService.set_system_config("active_daily_tags", new_val)

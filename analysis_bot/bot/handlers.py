@@ -1,23 +1,23 @@
 import asyncio
+import io
 import json
 import logging
-import io
 import re
 from datetime import datetime
+
 from telegram import (
-    Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InputFile,
     ReplyKeyboardMarkup,
+    Update,
 )
-from telegram.constants import ParseMode, ChatAction
+from telegram.constants import ChatAction, ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 
-from ..services.stock_analyzer import StockAnalyzer
 from ..services.ai_service import AIService, RequestType
-from ..services.news_parser import NewsParser
 from ..services.legacy_scraper import LegacyMoneyDJ
+from ..services.news_parser import NewsParser
 from ..services.report_generator import ReportGenerator
 from ..services.stock_service import StockService
 
@@ -66,9 +66,7 @@ async def run_info_analysis(update: Update, ticker: str):
         stock_name, wiki_text = await dj.get_wiki_result(ticker)
 
         if not stock_name:
-            await update.message.reply_text(
-                f"Information of Ticker {ticker} is not found."
-            )
+            await update.message.reply_text(f"Information of Ticker {ticker} is not found.")
             return
 
         # 2. AI Summary
@@ -136,9 +134,7 @@ async def run_esti_analysis(update: Update, ticker: str):
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Get stock information using Legacy MoneyDJ + AI."""
     if not context.args:
-        await update.message.reply_text(
-            "Please provide a ticker symbol (e.g., /info 2330)"
-        )
+        await update.message.reply_text("Please provide a ticker symbol (e.g., /info 2330)")
         return
     await run_info_analysis(update, context.args[0])
 
@@ -146,9 +142,7 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def esti_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Get estimation/valuation analysis."""
     if not context.args:
-        await update.message.reply_text(
-            "Please provide a ticker symbol (e.g., /esti 2330)"
-        )
+        await update.message.reply_text("Please provide a ticker symbol (e.g., /esti 2330)")
         return
     await run_esti_analysis(update, context.args[0])
 
@@ -164,7 +158,9 @@ async def chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ai = AIService()
     await update.message.reply_chat_action(ChatAction.TYPING)
     try:
-        resp = await ai.call(RequestType.TEXT, contents=user_msg, use_search=True, force_provider="gemini")
+        resp = await ai.call(
+            RequestType.TEXT, contents=user_msg, use_search=True, force_provider="gemini"
+        )
         await update.message.reply_text(resp)
     except Exception as e:
         await update.message.reply_text(f"AI Error: {e}")
@@ -191,6 +187,7 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_chat_action(ChatAction.TYPING)
     try:
         from ..services.price_fetcher import fetch_price
+
         text = await fetch_price(ticker)
         await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
@@ -238,7 +235,7 @@ async def chatid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """回傳目前 chat 的 ID，方便設定通知目標。"""
     chat = update.effective_chat
     lines = [f"Chat ID: {chat.id}"]
-    if getattr(update.message, 'message_thread_id', None):
+    if getattr(update.message, "message_thread_id", None):
         lines.append(f"Topic (thread) ID: {update.message.message_thread_id}")
     lines.append(f"Chat type: {chat.type}")
     if chat.title:
@@ -251,6 +248,7 @@ async def vix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📊 查詢 VIX 中...")
     try:
         from ..services.vix_fetcher import fetch_vix_snapshot, format_vix_message
+
         snap = await fetch_vix_snapshot()
         if snap is None:
             await update.message.reply_text("❌ 無法取得 VIX 資料，請稍後再試。")
@@ -294,12 +292,12 @@ async def spike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from ..config import get_settings
 
         if get_settings().SPIKE_NEWS_ENRICHMENT_ENABLED:
-            await update.message.reply_text(
-                "📰 正在擷取爆量第 1 檔的題材與產業消息（試跑）…"
-            )
+            await update.message.reply_text("📰 正在擷取爆量第 1 檔的題材與產業消息（試跑）…")
             try:
                 results = await scanner.enrich_with_news(
-                    results, top_n=1, max_news_per_stock=5,
+                    results,
+                    top_n=1,
+                    max_news_per_stock=5,
                 )
                 r = results[0]
                 if r.analysis and r.analysis != "近期無相關新聞":
@@ -334,7 +332,9 @@ async def chat_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ai = AIService()
     await update.message.reply_chat_action(ChatAction.TYPING)
     try:
-        resp = await ai.call(RequestType.TEXT, contents=user_msg, use_search=True, force_provider="gemini")
+        resp = await ai.call(
+            RequestType.TEXT, contents=user_msg, use_search=True, force_provider="gemini"
+        )
         await update.message.reply_text(resp)
         return ASK_CHAT
     except Exception as e:
@@ -344,9 +344,7 @@ async def chat_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Menu Flow Handlers ---
 async def menu_stock_info_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "請輸入股票代碼 (e.g. 2330) 或是輸入 'cancel' 取消："
-    )
+    await update.message.reply_text("請輸入股票代碼 (e.g. 2330) 或是輸入 'cancel' 取消：")
     return ASK_TICKER_INFO
 
 
@@ -390,15 +388,14 @@ async def menu_settings_handler(update: Update, context: ContextTypes.DEFAULT_TY
     chat_id = update.effective_chat.id
 
     # Check subscription status from DB
-    from ..database import engine
     from sqlmodel import Session, select
+
+    from ..database import engine
     from ..models.subscriber import Subscriber
 
     is_sub = False
     with Session(engine) as session:
-        sub = session.exec(
-            select(Subscriber).where(Subscriber.chat_id == chat_id)
-        ).first()
+        sub = session.exec(select(Subscriber).where(Subscriber.chat_id == chat_id)).first()
         if sub and sub.is_active:
             is_sub = True
 
@@ -437,9 +434,7 @@ async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton("財經M平方", callback_data="news_macromicro"),
-            InlineKeyboardButton(
-                "瑞星財經 (FinGuider)", callback_data="news_finguider"
-            ),
+            InlineKeyboardButton("瑞星財經 (FinGuider)", callback_data="news_finguider"),
         ],
         [
             InlineKeyboardButton("Fintastic", callback_data="news_fintastic"),
@@ -451,12 +446,8 @@ async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
         [InlineKeyboardButton("Fugle Report", callback_data="news_fugle")],
         [
-            InlineKeyboardButton(
-                "永豐｜3分鐘產業百科", callback_data="news_sinotrade_industry"
-            ),
-            InlineKeyboardButton(
-                "口袋學堂｜研究報告", callback_data="news_pocket_report"
-            ),
+            InlineKeyboardButton("永豐｜3分鐘產業百科", callback_data="news_sinotrade_industry"),
+            InlineKeyboardButton("口袋學堂｜研究報告", callback_data="news_pocket_report"),
         ],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -490,9 +481,7 @@ async def news_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             ],
             [
                 InlineKeyboardButton("財經M平方", callback_data="news_macromicro"),
-                InlineKeyboardButton(
-                    "瑞星財經 (FinGuider)", callback_data="news_finguider"
-                ),
+                InlineKeyboardButton("瑞星財經 (FinGuider)", callback_data="news_finguider"),
             ],
             [
                 InlineKeyboardButton("Fintastic", callback_data="news_fintastic"),
@@ -507,9 +496,7 @@ async def news_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 InlineKeyboardButton(
                     "永豐｜3分鐘產業百科", callback_data="news_sinotrade_industry"
                 ),
-                InlineKeyboardButton(
-                    "口袋學堂｜研究報告", callback_data="news_pocket_report"
-                ),
+                InlineKeyboardButton("口袋學堂｜研究報告", callback_data="news_pocket_report"),
             ],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -522,17 +509,11 @@ async def news_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             [InlineKeyboardButton("全部 (All)", callback_data="news_vocus_all")],
             [InlineKeyboardButton("ieObserve", callback_data="news_vocus_ieobserve")],
             [InlineKeyboardButton("Miula", callback_data="news_vocus_miula")],
-            [
-                InlineKeyboardButton(
-                    "黑洞資本 (Black Hole)", callback_data="news_vocus_blackhole"
-                )
-            ],
+            [InlineKeyboardButton("黑洞資本 (Black Hole)", callback_data="news_vocus_blackhole")],
             [InlineKeyboardButton("🔙 回新聞選單", callback_data="news_main_menu")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
-            "與 Vocus 相關的追蹤者：", reply_markup=reply_markup
-        )
+        await query.edit_message_text("與 Vocus 相關的追蹤者：", reply_markup=reply_markup)
         return
 
     # --- Fetching Logic ---
@@ -629,9 +610,7 @@ async def news_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Add Back Button
     # If in Vocus submenu, maybe back to Vocus menu? But simplier to Main Menu for consistent UX.
     # Or checking data startswith.
-    back_callback = (
-        "news_vocus_menu" if data.startswith("news_vocus") else "news_main_menu"
-    )
+    back_callback = "news_vocus_menu" if data.startswith("news_vocus") else "news_main_menu"
 
     keyboard = [[InlineKeyboardButton("🔙 回上一頁", callback_data=back_callback)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -655,9 +634,8 @@ async def google_news_handle(update: Update, context: ContextTypes.DEFAULT_TYPE)
     news_parser: NewsParser = context.bot_data.get("news_parser") or NewsParser()
 
     from urllib.parse import quote
-    url = (
-        f"https://news.google.com/rss/search?q={quote(keyword)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
-    )
+
+    url = f"https://news.google.com/rss/search?q={quote(keyword)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
     news_list = await news_parser.fetch_news_list(url)
 
     if not news_list:
@@ -706,9 +684,7 @@ async def research_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     from docx import Document
 
                     document = Document(bio)
-                    text_content = "\n".join(
-                        [para.text for para in document.paragraphs]
-                    )
+                    text_content = "\n".join([para.text for para in document.paragraphs])
                     materials.append(("text/plain", text_content))  # Treat as text
                     await update.message.reply_text(f"✅ 已接收 Word 檔案: {doc.file_name}")
                     context.user_data["research_materials"] = materials
@@ -739,16 +715,12 @@ async def research_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ 尚未提供任何資料，操作已取消。")
         return ConversationHandler.END
 
-    sent_msg = await update.message.reply_text(
-        "⌛ 正在為您生成研究報告，請稍候... 📊📄"
-    )
+    sent_msg = await update.message.reply_text("⌛ 正在為您生成研究報告，請稍候... 📊📄")
 
     ai = AIService()
     try:
         # Prompt
-        prompt = (
-            "根據提供的報告整理出常見投資問題、重點資訊與詳細回答，並用繁體中文回答"
-        )
+        prompt = "根據提供的報告整理出常見投資問題、重點資訊與詳細回答，並用繁體中文回答"
 
         # Combine materials
         contents = []
@@ -798,14 +770,13 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Subscribe ---
 async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    from ..database import engine
     from sqlmodel import Session, select
+
+    from ..database import engine
     from ..models.subscriber import Subscriber
 
     with Session(engine) as session:
-        sub = session.exec(
-            select(Subscriber).where(Subscriber.chat_id == chat_id)
-        ).first()
+        sub = session.exec(select(Subscriber).where(Subscriber.chat_id == chat_id)).first()
         if not sub:
             session.add(Subscriber(chat_id=chat_id))
             session.commit()
@@ -824,14 +795,13 @@ async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    from ..database import engine
     from sqlmodel import Session, select
+
+    from ..database import engine
     from ..models.subscriber import Subscriber
 
     with Session(engine) as session:
-        sub = session.exec(
-            select(Subscriber).where(Subscriber.chat_id == chat_id)
-        ).first()
+        sub = session.exec(select(Subscriber).where(Subscriber.chat_id == chat_id)).first()
         if sub:
             sub.is_active = False
             session.add(sub)
@@ -898,8 +868,9 @@ async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("無法取得使用者資訊，請稍後再試。")
         return
 
-    from ..database import engine
     from sqlmodel import Session, select
+
+    from ..database import engine
     from ..models.watchlist import WatchlistEntry
 
     if sub == "list":
@@ -935,24 +906,19 @@ async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Ticker 格式不正確")
         return
 
-    alias = (
-        " ".join([str(x) for x in context.args[2:]]).strip()
-        if len(context.args) > 2
-        else None
-    )
+    alias = " ".join([str(x) for x in context.args[2:]]).strip() if len(context.args) > 2 else None
     if alias:
         alias = alias[:MAX_ALIAS_LENGTH]
     else:
         # Best-effort auto name fetch if user didn't provide alias.
         try:
-            from ..database import engine
             from sqlmodel import Session, select
+
+            from ..database import engine
             from ..models.stock import StockData
 
             with Session(engine) as session:
-                stock = session.exec(
-                    select(StockData).where(StockData.ticker == ticker)
-                ).first()
+                stock = session.exec(select(StockData).where(StockData.ticker == ticker)).first()
                 if stock and stock.name:
                     alias = str(stock.name)[:MAX_ALIAS_LENGTH]
         except Exception:
@@ -962,11 +928,7 @@ async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not alias and ticker.isdigit():
             try:
                 data, _ = await StockService.get_or_analyze_stock(ticker)
-                if (
-                    isinstance(data, dict)
-                    and data.get("name")
-                    and data.get("name") != ticker
-                ):
+                if isinstance(data, dict) and data.get("name") and data.get("name") != ticker:
                     alias = str(data["name"])[:MAX_ALIAS_LENGTH]
             except Exception:
                 alias = None
@@ -984,9 +946,7 @@ async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"ℹ️ 已存在：{ticker}")
                 return
             session.add(
-                WatchlistEntry(
-                    chat_id=chat_id, user_id=user_id, ticker=ticker, alias=alias
-                )
+                WatchlistEntry(chat_id=chat_id, user_id=user_id, ticker=ticker, alias=alias)
             )
             session.commit()
             alias_suffix = f"（{alias}）" if alias else ""
@@ -1129,9 +1089,7 @@ async def threads_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ent.seen_post_ids = json.dumps(ids, ensure_ascii=False)
             session.add(ent)
             session.commit()
-        await update.message.reply_text(
-            f"✅ 已記錄 {len(ids)} 則現有貼文 id，之後只推播新貼文"
-        )
+        await update.message.reply_text(f"✅ 已記錄 {len(ids)} 則現有貼文 id，之後只推播新貼文")
         return
 
     if sub not in ("add", "remove"):

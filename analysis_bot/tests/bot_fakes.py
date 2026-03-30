@@ -1,25 +1,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
 class ReplyCall:
     text: str
-    kwargs: Dict[str, Any] = field(default_factory=dict)
+    kwargs: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class EditCall:
     text: str
-    kwargs: Dict[str, Any] = field(default_factory=dict)
+    kwargs: dict[str, Any] = field(default_factory=dict)
 
 
 class FakeMessage:
     def __init__(self, text: str = "") -> None:
         self.text = text
-        self.reply_text_calls: List[ReplyCall] = []
+        self.reply_text_calls: list[ReplyCall] = []
 
     async def reply_text(self, text: str, **kwargs: Any) -> None:
         self.reply_text_calls.append(ReplyCall(text=text, kwargs=kwargs))
@@ -29,7 +29,7 @@ class FakeCallbackQuery:
     def __init__(self, data: str) -> None:
         self.data = data
         self.answer_calls: int = 0
-        self.edit_message_text_calls: List[EditCall] = []
+        self.edit_message_text_calls: list[EditCall] = []
 
     async def answer(self, **_kwargs: Any) -> None:
         self.answer_calls += 1
@@ -53,8 +53,8 @@ class FakeUpdate:
     def __init__(
         self,
         *,
-        message: Optional[FakeMessage] = None,
-        callback_query: Optional[FakeCallbackQuery] = None,
+        message: FakeMessage | None = None,
+        callback_query: FakeCallbackQuery | None = None,
         chat_id: int = 123,
         user_id: int = 456,
         user_full_name: str = "",
@@ -69,11 +69,11 @@ class FakeContext:
     def __init__(
         self,
         *,
-        bot_data: Optional[Dict[str, Any]] = None,
-        args: Optional[List[str]] = None,
+        bot_data: dict[str, Any] | None = None,
+        args: list[str] | None = None,
     ) -> None:
-        self.bot_data: Dict[str, Any] = bot_data or {}
-        self.args: List[str] = args or []
+        self.bot_data: dict[str, Any] = bot_data or {}
+        self.args: list[str] = args or []
 
 
 class FakeNewsParser:
@@ -82,66 +82,66 @@ class FakeNewsParser:
     All methods return pre-configured results from `results_by_key`.
     """
 
-    def __init__(self, *, results_by_key: Optional[Dict[str, List[Dict[str, str]]]] = None) -> None:
+    def __init__(self, *, results_by_key: dict[str, list[dict[str, str]]] | None = None) -> None:
         self.results_by_key = results_by_key or {}
-        self.calls: List[Dict[str, Any]] = []
+        self.calls: list[dict[str, Any]] = []
 
-    def _get(self, key: str) -> List[Dict[str, str]]:
+    def _get(self, key: str) -> list[dict[str, str]]:
         return list(self.results_by_key.get(key, []))
 
-    async def fetch_news_list(self, url: str, news_number: int = 15) -> List[Dict[str, str]]:
+    async def fetch_news_list(self, url: str, news_number: int = 15) -> list[dict[str, str]]:
         self.calls.append({"method": "fetch_news_list", "url": url, "news_number": news_number})
         return self._get(url)
 
-    async def get_moneydj_report(self) -> List[Dict[str, str]]:
+    async def get_moneydj_report(self) -> list[dict[str, str]]:
         self.calls.append({"method": "get_moneydj_report"})
         return self._get("moneydj")
 
-    async def get_yahoo_tw_report(self) -> List[Dict[str, str]]:
+    async def get_yahoo_tw_report(self) -> list[dict[str, str]]:
         self.calls.append({"method": "get_yahoo_tw_report"})
         return self._get("yahoo_tw")
 
-    async def get_udn_report(self) -> List[Dict[str, str]]:
+    async def get_udn_report(self) -> list[dict[str, str]]:
         self.calls.append({"method": "get_udn_report"})
         return self._get("udn")
 
-    async def get_uanalyze_report(self) -> List[Dict[str, str]]:
+    async def get_uanalyze_report(self) -> list[dict[str, str]]:
         self.calls.append({"method": "get_uanalyze_report"})
         return self._get("uanalyze")
 
-    async def get_macromicro_report(self) -> List[Dict[str, str]]:
+    async def get_macromicro_report(self) -> list[dict[str, str]]:
         self.calls.append({"method": "get_macromicro_report"})
         return self._get("macromicro")
 
-    async def get_finguider_report(self) -> List[Dict[str, str]]:
+    async def get_finguider_report(self) -> list[dict[str, str]]:
         self.calls.append({"method": "get_finguider_report"})
         return self._get("finguider")
 
-    async def get_fintastic_report(self) -> List[Dict[str, str]]:
+    async def get_fintastic_report(self) -> list[dict[str, str]]:
         self.calls.append({"method": "get_fintastic_report"})
         return self._get("fintastic")
 
-    async def get_forecastock_report(self) -> List[Dict[str, str]]:
+    async def get_forecastock_report(self) -> list[dict[str, str]]:
         self.calls.append({"method": "get_forecastock_report"})
         return self._get("forecastock")
 
-    async def get_news_digest_ai_report(self) -> List[Dict[str, str]]:
+    async def get_news_digest_ai_report(self) -> list[dict[str, str]]:
         self.calls.append({"method": "get_news_digest_ai_report"})
         return self._get("ndai")
 
-    async def get_fugle_report(self, url: str) -> List[Dict[str, str]]:
+    async def get_fugle_report(self, url: str) -> list[dict[str, str]]:
         self.calls.append({"method": "get_fugle_report", "url": url})
         return self._get("fugle")
 
-    async def get_sinotrade_industry_report(self, limit: int = 20) -> List[Dict[str, str]]:
+    async def get_sinotrade_industry_report(self, limit: int = 20) -> list[dict[str, str]]:
         self.calls.append({"method": "get_sinotrade_industry_report", "limit": limit})
         return self._get("sinotrade_industry")
 
-    async def get_pocket_school_report(self, limit: int = 20) -> List[Dict[str, str]]:
+    async def get_pocket_school_report(self, limit: int = 20) -> list[dict[str, str]]:
         self.calls.append({"method": "get_pocket_school_report", "limit": limit})
         return self._get("pocket_report")
 
-    async def get_vocus_articles(self, v_user: str) -> List[Dict[str, str]]:
+    async def get_vocus_articles(self, v_user: str) -> list[dict[str, str]]:
         self.calls.append({"method": "get_vocus_articles", "v_user": v_user})
         return self._get(f"vocus:{v_user}")
 
@@ -155,4 +155,3 @@ class FakeNewsParser:
 
     async def close(self) -> None:
         pass
-

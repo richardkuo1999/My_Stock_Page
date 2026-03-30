@@ -1,20 +1,12 @@
 """
 Tests for VolumeSpikeScanner and MarketDataFetcher.
 """
-import pytest
+
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
-
-from analysis_bot.services.volume_spike_scanner import (
-    VolumeSpikeScanner,
-    VolumeSpikeResult,
-    _build_data_date_caption,
-    _build_spike_scan_caption,
-    _metrics_from_daily_frame,
-    is_yahoo_daily_bar_taipei_today,
-)
+import pytest
 from analysis_bot.services.market_data_fetcher import MarketDataFetcher, parse_roc_minguo_date
 from analysis_bot.services.spike_pager import build_spike_telegram_html_messages
 from analysis_bot.services.volume_spike_formatter import (
@@ -28,20 +20,62 @@ from analysis_bot.services.volume_spike_formatter import (
     get_table_header,
     pad_stock_name,
 )
-
+from analysis_bot.services.volume_spike_scanner import (
+    VolumeSpikeResult,
+    _build_data_date_caption,
+    _build_spike_scan_caption,
+    _metrics_from_daily_frame,
+    is_yahoo_daily_bar_taipei_today,
+)
 
 # --- Test data ---
 
 MOCK_TWSE_DATA = [
-    {"Date": "1150325", "Code": "2330", "Name": "台積電", "ClosingPrice": "600.00", "TradeVolume": "50000000"},
-    {"Date": "1150325", "Code": "2317", "Name": "鴻海", "ClosingPrice": "100.00", "TradeVolume": "30000000"},
-    {"Date": "1150325", "Code": "9999", "Name": "低量股", "ClosingPrice": "10.00", "TradeVolume": "500000"},
-    {"Date": "1150325", "Code": "00878", "Name": "國泰永續高股息", "ClosingPrice": "20.00", "TradeVolume": "100000000"},
+    {
+        "Date": "1150325",
+        "Code": "2330",
+        "Name": "台積電",
+        "ClosingPrice": "600.00",
+        "TradeVolume": "50000000",
+    },
+    {
+        "Date": "1150325",
+        "Code": "2317",
+        "Name": "鴻海",
+        "ClosingPrice": "100.00",
+        "TradeVolume": "30000000",
+    },
+    {
+        "Date": "1150325",
+        "Code": "9999",
+        "Name": "低量股",
+        "ClosingPrice": "10.00",
+        "TradeVolume": "500000",
+    },
+    {
+        "Date": "1150325",
+        "Code": "00878",
+        "Name": "國泰永續高股息",
+        "ClosingPrice": "20.00",
+        "TradeVolume": "100000000",
+    },
 ]
 
 MOCK_TPEX_DATA = [
-    {"Date": "1150325", "SecuritiesCompanyCode": "6510", "CompanyName": "精測", "Close": "500.00", "TradingShares": "2000000"},
-    {"Date": "1150325", "SecuritiesCompanyCode": "ABCD", "CompanyName": "非數字", "Close": "10.00", "TradingShares": "1000000"},
+    {
+        "Date": "1150325",
+        "SecuritiesCompanyCode": "6510",
+        "CompanyName": "精測",
+        "Close": "500.00",
+        "TradingShares": "2000000",
+    },
+    {
+        "Date": "1150325",
+        "SecuritiesCompanyCode": "ABCD",
+        "CompanyName": "非數字",
+        "Close": "10.00",
+        "TradingShares": "1000000",
+    },
 ]
 
 
@@ -152,9 +186,13 @@ class TestVolumeSpikeScanner:
     def test_spike_ratio_calculation(self):
         """Spike ratio = today_volume / ma20_volume."""
         r = VolumeSpikeResult(
-            ticker="2330", name="台積電", close=600.0,
-            today_volume=50_000_000, ma20_volume=25_000_000,
-            spike_ratio=2.0, market="TWSE",
+            ticker="2330",
+            name="台積電",
+            close=600.0,
+            today_volume=50_000_000,
+            ma20_volume=25_000_000,
+            spike_ratio=2.0,
+            market="TWSE",
         )
         assert r.spike_ratio == pytest.approx(2.0)
         assert r.today_volume / r.ma20_volume == pytest.approx(2.0)

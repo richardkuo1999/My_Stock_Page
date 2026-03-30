@@ -5,6 +5,7 @@
 台股：{name} {ticker} 股票
 美股：{name} {ticker} stock
 """
+
 import asyncio
 import logging
 from datetime import datetime
@@ -50,10 +51,7 @@ async def fetch_stock_news(
     """
     keyword = f"{name} {ticker} 股票" if is_tw else f"{name} {ticker} stock"
     query = quote(keyword)
-    url = (
-        f"https://news.google.com/rss/search"
-        f"?q={query}+when:30d&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
-    )
+    url = f"https://news.google.com/rss/search?q={query}+when:30d&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
 
     try:
         feed = await asyncio.to_thread(feedparser.parse, url)

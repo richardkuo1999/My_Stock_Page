@@ -10,7 +10,6 @@ VIX Fetcher — 抓取 VIX 恐慌指數並產生警報訊息
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +18,10 @@ VIX_MEAN = 19.46
 VIX_STD = 7.77
 VIX_DAILY_PCT_STD = 7.13  # 單日漲跌標準差 %
 
-VIX_WARN    = VIX_MEAN + 1 * VIX_STD   # 27.23 — 注意
-VIX_FEAR    = VIX_MEAN + 2 * VIX_STD   # 35.00 — 恐慌
-VIX_EXTREME = VIX_MEAN + 3 * VIX_STD   # 42.76 — 極端事件
-VIX_CALM    = VIX_MEAN - 1 * VIX_STD   # 11.69 — 過度樂觀
+VIX_WARN = VIX_MEAN + 1 * VIX_STD  # 27.23 — 注意
+VIX_FEAR = VIX_MEAN + 2 * VIX_STD  # 35.00 — 恐慌
+VIX_EXTREME = VIX_MEAN + 3 * VIX_STD  # 42.76 — 極端事件
+VIX_CALM = VIX_MEAN - 1 * VIX_STD  # 11.69 — 過度樂觀
 
 DAILY_SPIKE_UP_THRESHOLD = 2 * VIX_DAILY_PCT_STD  # 14.27% — 急漲警報（只偵測上漲）
 
@@ -64,8 +63,8 @@ class VixSnapshot:
     current: float
     prev_close: float
     daily_change_pct: float
-    level: str          # "calm" | "normal" | "warn" | "fear" | "extreme"
-    alert: bool         # 需要推播
+    level: str  # "calm" | "normal" | "warn" | "fear" | "extreme"
+    alert: bool  # 需要推播
 
 
 def _classify(vix: float) -> str:
@@ -80,7 +79,7 @@ def _classify(vix: float) -> str:
     return "normal"
 
 
-async def fetch_vix_snapshot() -> Optional[VixSnapshot]:
+async def fetch_vix_snapshot() -> VixSnapshot | None:
     """抓取 VIX 最新值與昨日收盤，計算漲跌幅。"""
     try:
         import yfinance as yf
@@ -121,17 +120,17 @@ async def fetch_vix_snapshot() -> Optional[VixSnapshot]:
 def format_vix_message(snap: VixSnapshot) -> str:
     """產生 Telegram 推播訊息。"""
     level_emoji = {
-        "calm":    "🟢",
-        "normal":  "🔵",
-        "warn":    "🟡",
-        "fear":    "🔴",
+        "calm": "🟢",
+        "normal": "🔵",
+        "warn": "🟡",
+        "fear": "🔴",
         "extreme": "🚨",
     }
     level_label = {
-        "calm":    "過度樂觀（<+1SD，需警戒）",
-        "normal":  "正常",
-        "warn":    "偏高（>+1SD）",
-        "fear":    "恐慌（>+2SD）",
+        "calm": "過度樂觀（<+1SD，需警戒）",
+        "normal": "正常",
+        "warn": "偏高（>+1SD）",
+        "fear": "恐慌（>+2SD）",
         "extreme": "極端事件（>+3SD）",
     }
 
@@ -152,6 +151,13 @@ def format_vix_message(snap: VixSnapshot) -> str:
 
     narrative = _narrative_block(snap.current)
     if narrative:
-        lines.extend(["", *narrative, "", "（上述勝率／報酬為歷史區間統計，不構成投資建議，亦不保證未來表現。）"])
+        lines.extend(
+            [
+                "",
+                *narrative,
+                "",
+                "（上述勝率／報酬為歷史區間統計，不構成投資建議，亦不保證未來表現。）",
+            ]
+        )
 
     return "\n".join(lines)

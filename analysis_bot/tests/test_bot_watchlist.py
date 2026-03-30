@@ -1,22 +1,18 @@
 from __future__ import annotations
 
 import pytest
-from sqlmodel import SQLModel, create_engine
-
 from analysis_bot.bot import handlers
 from analysis_bot.tests.bot_fakes import FakeContext, FakeMessage, FakeUpdate
+from sqlmodel import SQLModel, create_engine
 
 
 @pytest.fixture()
 def watchlist_engine(tmp_path, monkeypatch: pytest.MonkeyPatch):
     db_path = tmp_path / "watchlist_test.sqlite"
     engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
-    
+
     # Import all models to ensure they are registered
-    from analysis_bot.models.watchlist import WatchlistEntry
-    from analysis_bot.models.subscriber import Subscriber
-    from analysis_bot.models.stock import StockData
-    
+
     SQLModel.metadata.create_all(engine)
 
     import analysis_bot.database as database
@@ -103,12 +99,16 @@ async def test_watch_ticker_validation(watchlist_engine) -> None:
 async def test_watch_is_per_chat(watchlist_engine) -> None:
     # add to chat 1
     msg1 = FakeMessage()
-    await handlers.watch_command(FakeUpdate(message=msg1, chat_id=1, user_id=10), FakeContext(args=["add", "TSLA"]))
+    await handlers.watch_command(
+        FakeUpdate(message=msg1, chat_id=1, user_id=10), FakeContext(args=["add", "TSLA"])
+    )
     assert msg1.reply_text_calls[-1].text == "✅ 已加入：TSLA"
 
     # list in chat 2 is empty
     msg2 = FakeMessage()
-    await handlers.watch_command(FakeUpdate(message=msg2, chat_id=2, user_id=10), FakeContext(args=["list"]))
+    await handlers.watch_command(
+        FakeUpdate(message=msg2, chat_id=2, user_id=10), FakeContext(args=["list"])
+    )
     assert msg2.reply_text_calls[-1].text == "目前沒有自選股"
 
 
@@ -116,17 +116,23 @@ async def test_watch_is_per_chat(watchlist_engine) -> None:
 async def test_watch_is_per_user_in_same_chat(watchlist_engine) -> None:
     # user 10 adds
     msg1 = FakeMessage()
-    await handlers.watch_command(FakeUpdate(message=msg1, chat_id=1, user_id=10), FakeContext(args=["add", "TSLA"]))
+    await handlers.watch_command(
+        FakeUpdate(message=msg1, chat_id=1, user_id=10), FakeContext(args=["add", "TSLA"])
+    )
     assert msg1.reply_text_calls[-1].text == "✅ 已加入：TSLA"
 
     # user 20 lists empty
     msg2 = FakeMessage()
-    await handlers.watch_command(FakeUpdate(message=msg2, chat_id=1, user_id=20), FakeContext(args=["list"]))
+    await handlers.watch_command(
+        FakeUpdate(message=msg2, chat_id=1, user_id=20), FakeContext(args=["list"])
+    )
     assert msg2.reply_text_calls[-1].text == "目前沒有自選股"
 
 
 @pytest.mark.asyncio
-async def test_watch_add_auto_alias_from_stock_service(watchlist_engine, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_watch_add_auto_alias_from_stock_service(
+    watchlist_engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def fake_get_or_analyze_stock(ticker: str, force_update: bool = False):
         return {"name": "台積電"}, False
 
@@ -146,4 +152,3 @@ async def test_watch_add_auto_alias_from_stock_service(watchlist_engine, monkeyp
         FakeContext(args=["list"]),
     )
     assert "2330（台積電）" in msg2.reply_text_calls[-1].text
-

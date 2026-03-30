@@ -1,9 +1,9 @@
 import logging
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Any
 
 import aiohttp
-from sqlmodel import Session, select, col
+from sqlmodel import Session, col, select
 
 from ..database import engine
 from ..models.eps_estimate import EpsEstimate
@@ -21,9 +21,7 @@ class EpsMomentumService:
     def __init__(self):
         self.anue = AnueScraper()
 
-    async def collect_and_analyze(
-        self, ticker: str, stock_name: str
-    ) -> Dict[str, Any]:
+    async def collect_and_analyze(self, ticker: str, stock_name: str) -> dict[str, Any]:
         """
         1. Fetch all available FactSet articles from 鉅亨網
         2. Store new snapshots into EpsEstimate table (deduplicate by source_url)
@@ -32,9 +30,7 @@ class EpsMomentumService:
         """
         # --- Step 1: Fetch & Store ---
         async with aiohttp.ClientSession() as session:
-            all_estimates = await self.anue.fetch_all_estimates(
-                session, ticker, stock_name
-            )
+            all_estimates = await self.anue.fetch_all_estimates(session, ticker, stock_name)
 
         if all_estimates:
             self._store_estimates(ticker, all_estimates)
@@ -52,14 +48,12 @@ class EpsMomentumService:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _store_estimates(self, ticker: str, estimates: List[Dict]) -> None:
+    def _store_estimates(self, ticker: str, estimates: list[dict]) -> None:
         """Deduplicate by source_url and insert new records."""
         with Session(engine) as session:
             existing_urls = set(
                 session.exec(
-                    select(EpsEstimate.source_url).where(
-                        EpsEstimate.ticker == ticker
-                    )
+                    select(EpsEstimate.source_url).where(EpsEstimate.ticker == ticker)
                 ).all()
             )
 
@@ -95,11 +89,9 @@ class EpsMomentumService:
 
             if new_count:
                 session.commit()
-                logger.info(
-                    f"EpsMomentum: stored {new_count} new estimate(s) for {ticker}"
-                )
+                logger.info(f"EpsMomentum: stored {new_count} new estimate(s) for {ticker}")
 
-    def _load_history(self, ticker: str) -> List[EpsEstimate]:
+    def _load_history(self, ticker: str) -> list[EpsEstimate]:
         """Load EPS estimates for a ticker within the last 1 year, ordered by source_date ASC."""
         from datetime import timedelta
 
@@ -114,7 +106,7 @@ class EpsMomentumService:
             return list(results)
 
     @staticmethod
-    def _calculate_momentum(history: List[EpsEstimate]) -> Dict[str, Any]:
+    def _calculate_momentum(history: list[EpsEstimate]) -> dict[str, Any]:
         """
         Calculate EPS revision momentum from historical snapshots.
         Returns dict with: history, eps_change_pct, eps_trend,

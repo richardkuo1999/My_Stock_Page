@@ -1,6 +1,6 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
-from typing import List, Optional
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -15,31 +15,29 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./stock_data.db"
 
     # Financial Data
-    FINMIND_TOKENS: List[str] = []  # Supports JSON list from .env
-    NEWS_API_KEY: Optional[str] = None
+    FINMIND_TOKENS: list[str] = []  # Supports JSON list from .env
+    NEWS_API_KEY: str | None = None
     # 富果行情 REST API：https://developer.fugle.tw/docs/data/http-api/getting-started/
-    FUGLE_API_KEY: Optional[str] = None
+    FUGLE_API_KEY: str | None = None
 
     # News Source Toggles
     ENABLE_UDN_NEWS: bool = False
     ENABLE_YAHOO_NEWS: bool = False
 
     # AI Keys
-    GEMINI_API_KEYS: List[str] = []
-    GROQ_API_KEY: Optional[str] = None
+    GEMINI_API_KEYS: list[str] = []
+    GROQ_API_KEY: str | None = None
 
     # AI Provider: "ollama" or "gemini"
     AI_PROVIDER: str = "ollama"  # Switch between "ollama" and "gemini"
 
     # Ollama
-    OLLAMA_BASE_URL: str = (
-        "https://ollama.com"  # Cloud mode; local: http://localhost:11434
-    )
+    OLLAMA_BASE_URL: str = "https://ollama.com"  # Cloud mode; local: http://localhost:11434
     OLLAMA_MODEL: str = "glm-5:cloud"
-    OLLAMA_API_KEY: Optional[str] = None  # Required for Ollama Cloud
+    OLLAMA_API_KEY: str | None = None  # Required for Ollama Cloud
 
     # Podcast
-    PODCAST_SOURCE_IDS: List[str] = [
+    PODCAST_SOURCE_IDS: list[str] = [
         "1500839292",
         "1546879892",
         "1488295306",
@@ -50,10 +48,10 @@ class Settings(BaseSettings):
     PODCAST_LOOKUP_URL: str = "https://itunes.apple.com/lookup?id="
 
     # Web API
-    WEB_API_KEY: Optional[str] = None
+    WEB_API_KEY: str | None = None
 
     # VIX 通知目標（不設定則用預設 TELEGRAM_CHAT_ID）
-    TELEGRAM_TOPIC_ID: Optional[int] = None      # Topic ID（Forum 群組用）
+    TELEGRAM_TOPIC_ID: int | None = None  # Topic ID（Forum 群組用）
 
     # Logging / Privacy
     # Optional salt for redacting Telegram IDs (chat_id/user_id) in logs.
@@ -72,9 +70,7 @@ class Settings(BaseSettings):
     ANALYSIS_PROGRESS_INTERVAL: int = 50  # Send progress update every N stocks
     ANALYSIS_BATCH_SIZE: int = 100  # Batch size for database writes
 
-    model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 
 @lru_cache
