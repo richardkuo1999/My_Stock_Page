@@ -1,4 +1,5 @@
 import logging
+import os
 import random
 from enum import Enum
 from pathlib import Path
@@ -6,9 +7,20 @@ from typing import Any
 
 from google.genai import Client as GeminiClient
 from google.genai import types
-from ollama import AsyncClient as OllamaAsyncClient
 
 from ..config import get_settings
+
+# Temporarily suppress proxy env vars to avoid ollama initialization issues with socks5h
+_proxy_vars = {}
+for var in ["ALL_PROXY", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
+    if var in os.environ:
+        _proxy_vars[var] = os.environ.pop(var)
+
+try:
+    from ollama import AsyncClient as OllamaAsyncClient
+finally:
+    # Restore proxy env vars after import
+    os.environ.update(_proxy_vars)
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -33,21 +45,31 @@ class AIService:
         self.gemini_clients = [self._create_gemini_client(key) for key in self.gemini_keys]
         self.gemini_model = "gemini-2.0-flash-exp"
 
-        # Initialize Ollama Client (Cloud or Local)
-        ollama_headers = {}
+        # Lazy-initialize Ollama Client to avoid proxy scheme issues at import time
+        self._ollama_client = None
+        self._ollama_headers = {}
         if settings.OLLAMA_API_KEY:
-            ollama_headers = {"Authorization": f"Bearer {settings.OLLAMA_API_KEY}"}
-
-        self.ollama_client = OllamaAsyncClient(
-            host=settings.OLLAMA_BASE_URL,
-            headers=ollama_headers,
-            timeout=120.0,  # Overall timeout for Ollama API calls
-        )
+            self._ollama_headers = {"Authorization": f"Bearer {settings.OLLAMA_API_KEY}"}
         self.ollama_model = settings.OLLAMA_MODEL
 
         # Provider: "ollama" or "gemini"
         self.provider = settings.AI_PROVIDER.lower()
         logger.info(f"AIService initialized with provider: {self.provider}")
+
+    @property
+    def ollama_client(self):
+        """Lazy-initialize Ollama client on first use."""
+        if self._ollama_client is None:
+            try:
+                self._ollama_client = OllamaAsyncClient(
+                    host=settings.OLLAMA_BASE_URL,
+                    headers=self._ollama_headers,
+                    timeout=120.0,
+                )
+            except ValueError as e:
+                logger.warning(f"Failed to initialize Ollama client: {e}. Falling back to Gemini.")
+                self._ollama_client = False  # Mark as failed
+        return self._ollama_client if self._ollama_client is not False else None
 
     def _create_gemini_client(self, key: str):
         return GeminiClient(api_key=key).aio
@@ -63,6 +85,11 @@ class AIService:
         """Call Ollama for text generation."""
         import asyncio
         import time
+
+        # Check if Ollama client is available
+        if not self.ollama_client:
+            logger.warning("Ollama client unavailable, falling back to Gemini")
+            return await self._call_gemini(RequestType.TEXT, contents, prompt, use_search)
 
         final_prompt = (
             prompt + "\n" + contents if prompt and isinstance(contents, str) else str(contents)
