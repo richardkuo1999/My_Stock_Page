@@ -5,6 +5,7 @@
 - Use Fugle API to get the anything about stock price(TW stock)
 - Use agent-browser cli for web search.
 - All API key is located in `.env` file.
+- **Git push 需要明確確認**: 可以自動 commit，但 push 需要用戶明確要求才執行。
 
 
 ## WHY
