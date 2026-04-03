@@ -76,9 +76,7 @@ async def run_info_analysis(update: Update, ticker: str):
 
         # Call AI
         await update.message.reply_chat_action(ChatAction.TYPING)
-        response = await ai.call(
-            RequestType.TEXT, contents=wiki_text, prompt=prompt, use_search=True
-        )
+        response = await ai.call(RequestType.TEXT, contents=wiki_text, prompt=prompt)
 
         if response:
             file_name = f"{ticker}{stock_name}_info.md"
@@ -159,7 +157,7 @@ async def chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_chat_action(ChatAction.TYPING)
     try:
         resp = await ai.call(
-            RequestType.TEXT, contents=user_msg, use_search=True, force_provider="gemini"
+            RequestType.TEXT, contents=user_msg, use_search=True
         )
         await update.message.reply_text(resp)
     except Exception as e:
@@ -333,7 +331,7 @@ async def chat_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_chat_action(ChatAction.TYPING)
     try:
         resp = await ai.call(
-            RequestType.TEXT, contents=user_msg, use_search=True, force_provider="gemini"
+            RequestType.TEXT, contents=user_msg, use_search=True
         )
         await update.message.reply_text(resp)
         return ASK_CHAT

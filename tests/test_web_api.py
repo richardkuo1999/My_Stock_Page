@@ -91,8 +91,13 @@ class TestSettingsAPI:
             mock_toggle.assert_called_once_with("favorite", True)
 
     def test_toggle_tag_no_auth(self, client):
-        response = client.post("/settings/tags/toggle", json={"tag": "favorite", "enable": True})
-        assert response.status_code in (401, 403, 503)
+        # API no longer requires authentication
+        with patch(
+            "analysis_bot.services.stock_service.StockService.toggle_daily_tag"
+        ) as mock_toggle:
+            response = client.post("/settings/tags/toggle", json={"tag": "favorite", "enable": True})
+            assert response.status_code == 200
+            mock_toggle.assert_called_once_with("favorite", True)
 
     def test_update_list(self, client, auth_headers):
         with patch(

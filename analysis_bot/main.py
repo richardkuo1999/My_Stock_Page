@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
     missing = []
     if not settings.TELEGRAM_TOKEN:
         missing.append("TELEGRAM_TOKEN")
-    if settings.AI_PROVIDER == "gemini" and not settings.GEMINI_API_KEYS:
+    if not settings.GEMINI_API_KEYS:
         missing.append("GEMINI_API_KEYS")
     if missing:
         logger.warning(

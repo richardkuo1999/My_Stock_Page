@@ -28,14 +28,6 @@ class Settings(BaseSettings):
     GEMINI_API_KEYS: list[str] = []
     GROQ_API_KEY: str | None = None
 
-    # AI Provider: "ollama" or "gemini"
-    AI_PROVIDER: str = "ollama"  # Switch between "ollama" and "gemini"
-
-    # Ollama
-    OLLAMA_BASE_URL: str = "https://ollama.com"  # Cloud mode; local: http://localhost:11434
-    OLLAMA_MODEL: str = "glm-5:cloud"
-    OLLAMA_API_KEY: str | None = None  # Required for Ollama Cloud
-
     # Podcast
     PODCAST_SOURCE_IDS: list[str] = [
         "1500839292",
@@ -52,7 +44,7 @@ class Settings(BaseSettings):
 
     # VIX 通知目標（不設定則 fallback 到 TELEGRAM_CHAT_ID）
     TELEGRAM_VIX_CHAT_ID: str = ""   # VIX 專用 chat_id（可填不同群組）
-    TELEGRAM_TOPIC_ID: int | None = None  # Topic ID（Forum 群組用）
+    TELEGRAM_VIX_TOPIC_ID: int | None = None  # VIX 通知的 Topic ID（Forum 群組用）
 
     # Logging / Privacy
     # Optional salt for redacting Telegram IDs (chat_id/user_id) in logs.

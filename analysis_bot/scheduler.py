@@ -751,8 +751,8 @@ async def vix_check_job():
 
     try:
         kwargs = {"chat_id": chat_id, "text": format_vix_message(snap)}
-        if settings.TELEGRAM_TOPIC_ID:
-            kwargs["message_thread_id"] = settings.TELEGRAM_TOPIC_ID
+        if settings.TELEGRAM_VIX_TOPIC_ID:
+            kwargs["message_thread_id"] = settings.TELEGRAM_VIX_TOPIC_ID
         await bot.send_message(**kwargs)
         await asyncio.to_thread(_save_vix_last_alert, snap.level, now.isoformat())
     except Exception as e:
@@ -770,8 +770,8 @@ def start_scheduler():
         daily_analysis_job, trigger=trigger, id="daily_analysis", replace_existing=True
     )
 
-    # Volume Spike Detection — runs at 14:30 Taipei time (after daily analysis)
-    spike_trigger = CronTrigger(hour=14, minute=30, timezone="Asia/Taipei")
+    # Volume Spike Detection — runs at 15:30 Taipei time (yfinance 日線約 15:00 後才更新)
+    spike_trigger = CronTrigger(hour=15, minute=30, timezone="Asia/Taipei")
     scheduler.add_job(
         daily_volume_spike_job,
         trigger=spike_trigger,

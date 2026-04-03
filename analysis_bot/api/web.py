@@ -150,7 +150,7 @@ async def settings_page(request: Request):
     return templates.TemplateResponse("settings.html", {"request": request})
 
 
-@router.post("/settings/run-daily", dependencies=[Depends(verify_api_key)])
+@router.post("/settings/run-daily")
 async def run_daily_analysis(background_tasks: BackgroundTasks):
     """Trigger daily analysis manually."""
     # Run in background
@@ -250,14 +250,14 @@ async def get_settings_config():
     }
 
 
-@router.post("/settings/tags/toggle", dependencies=[Depends(verify_api_key)])
+@router.post("/settings/tags/toggle")
 async def toggle_tag(payload: TagToggleRequest):
     """Toggle a daily tag."""
     StockService.toggle_daily_tag(payload.tag, payload.enable)
     return {"status": "ok"}
 
 
-@router.post("/settings/lists/update", dependencies=[Depends(verify_api_key)])
+@router.post("/settings/lists/update")
 async def update_list(payload: ListUpdateRequest):
     """Update content of a custom list."""
     StockService.set_system_config(payload.key, payload.value)

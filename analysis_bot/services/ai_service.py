@@ -1,5 +1,4 @@
 import logging
-import os
 import random
 from enum import Enum
 from pathlib import Path
@@ -9,18 +8,6 @@ from google.genai import Client as GeminiClient
 from google.genai import types
 
 from ..config import get_settings
-
-# Temporarily suppress proxy env vars to avoid ollama initialization issues with socks5h
-_proxy_vars = {}
-for var in ["ALL_PROXY", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]:
-    if var in os.environ:
-        _proxy_vars[var] = os.environ.pop(var)
-
-try:
-    from ollama import AsyncClient as OllamaAsyncClient
-finally:
-    # Restore proxy env vars after import
-    os.environ.update(_proxy_vars)
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -35,7 +22,7 @@ class RequestType(Enum):
 
 
 class AIService:
-    """Service for AI interactions with switchable provider (Ollama / Gemini)."""
+    """Service for AI interactions using Gemini."""
 
     def __init__(self):
         self.gemini_keys = settings.GEMINI_API_KEYS or []
@@ -43,33 +30,9 @@ class AIService:
 
         # Initialize Gemini Clients
         self.gemini_clients = [self._create_gemini_client(key) for key in self.gemini_keys]
-        self.gemini_model = "gemini-2.0-flash-exp"
+        self.gemini_model = "gemini-2.5-flash"
 
-        # Lazy-initialize Ollama Client to avoid proxy scheme issues at import time
-        self._ollama_client = None
-        self._ollama_headers = {}
-        if settings.OLLAMA_API_KEY:
-            self._ollama_headers = {"Authorization": f"Bearer {settings.OLLAMA_API_KEY}"}
-        self.ollama_model = settings.OLLAMA_MODEL
-
-        # Provider: "ollama" or "gemini"
-        self.provider = settings.AI_PROVIDER.lower()
-        logger.info(f"AIService initialized with provider: {self.provider}")
-
-    @property
-    def ollama_client(self):
-        """Lazy-initialize Ollama client on first use."""
-        if self._ollama_client is None:
-            try:
-                self._ollama_client = OllamaAsyncClient(
-                    host=settings.OLLAMA_BASE_URL,
-                    headers=self._ollama_headers,
-                    timeout=120.0,
-                )
-            except ValueError as e:
-                logger.warning(f"Failed to initialize Ollama client: {e}. Falling back to Gemini.")
-                self._ollama_client = False  # Mark as failed
-        return self._ollama_client if self._ollama_client is not False else None
+        logger.info("AIService initialized with provider: gemini")
 
     def _create_gemini_client(self, key: str):
         return GeminiClient(api_key=key).aio
@@ -77,63 +40,6 @@ class AIService:
     async def generate_content(self, prompt: str) -> str:
         """Simple text generation (legacy support)"""
         return await self.call(RequestType.TEXT, contents=prompt)
-
-    # ========== Ollama ==========
-    async def _call_ollama(
-        self, contents: str, prompt: str = None, use_search: bool = False
-    ) -> str:
-        """Call Ollama for text generation."""
-        import asyncio
-        import time
-
-        # Check if Ollama client is available
-        if not self.ollama_client:
-            logger.warning("Ollama client unavailable, falling back to Gemini")
-            return await self._call_gemini(RequestType.TEXT, contents, prompt, use_search)
-
-        final_prompt = (
-            prompt + "\n" + contents if prompt and isinstance(contents, str) else str(contents)
-        )
-
-        # Web search (Ollama Cloud only) — 15s hard timeout, skip if slow
-        if use_search and settings.OLLAMA_API_KEY:
-            try:
-                logger.info(f"Ollama web_search: {final_prompt[:80]}...")
-                t0 = time.time()
-                search_res = await asyncio.wait_for(
-                    self.ollama_client.web_search(final_prompt, max_results=10),
-                    timeout=15.0,
-                )
-                elapsed = time.time() - t0
-                if search_res:
-                    # Log search result titles & URLs
-                    if hasattr(search_res, "results") and search_res.results:
-                        for i, r in enumerate(search_res.results, 1):
-                            logger.info(
-                                f"  [{i}] {getattr(r, 'title', 'N/A')} - {getattr(r, 'url', '')}"
-                            )
-                    final_prompt = (
-                        f"Background Information:\n{search_res}\n\nUser Request:\n{final_prompt}"
-                    )
-                logger.info(
-                    f"Ollama web_search completed in {elapsed:.2f}s ({len(getattr(search_res, 'results', []))} results)"
-                )
-            except TimeoutError:
-                logger.warning("Ollama web_search timed out (>15s). Skipping search.")
-            except Exception as e:
-                logger.warning(f"Ollama web_search failed: {e}. Proceeding without search.")
-
-        t1 = time.time()
-        response = await self.ollama_client.chat(
-            model=self.ollama_model,
-            messages=[{"role": "user", "content": final_prompt}],
-        )
-        chat_elapsed = time.time() - t1
-        logger.info(f"Ollama chat completed in {chat_elapsed:.2f}s")
-
-        if response and hasattr(response, "message") and response.message:
-            return response.message.content
-        raise ValueError(f"Invalid Ollama response: {response}")
 
     # ========== Gemini ==========
     async def _call_gemini(
@@ -148,9 +54,9 @@ class AIService:
             raise RuntimeError("No Gemini keys configured.")
 
         models_to_try = [
-            "gemini-2.0-flash-exp",
+            "gemini-2.5-flash",
+            "gemini-2.0-flash",
             "gemini-1.5-flash",
-            "gemini-1.5-pro",
         ]
         max_total_attempts = 10
         attempt = 0
@@ -242,42 +148,10 @@ class AIService:
         contents: str | list[Any] | Path,
         prompt: str = None,
         use_search: bool = False,
-        force_provider: str = None,
     ) -> str:
-        """
-        Unified AI dispatch:
-        - TEXT requests: use AI_PROVIDER setting, fallback to the other on failure.
-        - FILE/IMAGE/AUDIO: always use Gemini (multimodal).
-        """
-        # Multimodal → always Gemini
-        if req_type != RequestType.TEXT:
-            try:
-                return await self._call_gemini(req_type, contents, prompt, use_search)
-            except Exception as e:
-                logger.error(f"Gemini multimodal failed: {e}")
-                return f"Error: Multimodal analysis failed - {e}"
-
-        # TEXT → use configured provider, fallback to other
-        primary = force_provider or self.provider  # "ollama" or "gemini"
-        fallback = "gemini" if primary == "ollama" else "ollama"
-
-        # Try primary
+        """Unified AI dispatch — always uses Gemini."""
         try:
-            if primary == "ollama":
-                return await self._call_ollama(contents, prompt, use_search)
-            else:
-                return await self._call_gemini(req_type, contents, prompt, use_search)
+            return await self._call_gemini(req_type, contents, prompt, use_search)
         except Exception as e:
-            logger.warning(
-                f"Primary provider [{primary}] failed: {type(e).__name__} - {e}. Trying fallback [{fallback}]."
-            )
-
-        # Try fallback
-        try:
-            if fallback == "ollama":
-                return await self._call_ollama(contents, prompt, use_search)
-            else:
-                return await self._call_gemini(req_type, contents, prompt, use_search)
-        except Exception as e:
-            logger.error(f"Fallback provider [{fallback}] also failed: {type(e).__name__} - {e}")
-            return "Error: All AI providers failed. Service unavailable."
+            logger.error(f"Gemini failed: {type(e).__name__} - {e}")
+            return f"Error: AI service unavailable - {e}"
