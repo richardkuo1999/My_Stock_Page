@@ -26,6 +26,3 @@ reports/
 *.db-shm
 *.db-wal
 *.mp3
-
-!analysis_bot/MIGRATION_PROGRESS.md
-!README.md
