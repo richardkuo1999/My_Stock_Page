@@ -10,6 +10,8 @@ import logging
 import re
 from datetime import date
 
+import ssl
+
 import aiohttp
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,10 @@ TPEX_DAILY_URL = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_
 _ORDINARY_STOCK_RE = re.compile(r"^\d{4}$")
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; StockBot/1.0)"}
 _TIMEOUT = aiohttp.ClientTimeout(total=30)
+# TWSE 憑證有問題，使用寬鬆的 SSL context
+_SSL_CONTEXT = ssl.create_default_context()
+_SSL_CONTEXT.check_hostname = False
+_SSL_CONTEXT.verify_mode = ssl.CERT_NONE
 
 
 class MarketDataFetcher:
@@ -55,7 +61,8 @@ class MarketDataFetcher:
         """Fetch all TWSE-listed stocks' daily closing data."""
         close_after = False
         if session is None:
-            session = aiohttp.ClientSession()
+            connector = aiohttp.TCPConnector(ssl=_SSL_CONTEXT)
+            session = aiohttp.ClientSession(trust_env=True, connector=connector)
             close_after = True
 
         try:
@@ -109,7 +116,7 @@ class MarketDataFetcher:
         """Fetch all TPEx (OTC) stocks' daily closing data."""
         close_after = False
         if session is None:
-            session = aiohttp.ClientSession()
+            session = aiohttp.ClientSession(trust_env=True)
             close_after = True
 
         try:
@@ -176,7 +183,8 @@ class MarketDataFetcher:
         """Fetch combined TWSE + TPEx daily data."""
         close_after = False
         if session is None:
-            session = aiohttp.ClientSession()
+            connector = aiohttp.TCPConnector(ssl=_SSL_CONTEXT)
+            session = aiohttp.ClientSession(trust_env=True, connector=connector)
             close_after = True
 
         try:
