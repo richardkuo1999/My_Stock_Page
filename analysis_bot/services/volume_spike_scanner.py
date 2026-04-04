@@ -268,23 +268,36 @@ class VolumeSpikeScanner:
 
         logger.info("Batch downloading %d tickers from yfinance...", len(yf_tickers))
 
-        def _download():
+        # 分批下載避免 DNS/連線問題（每批 100 檔，threads=False）
+        BATCH_SIZE = 100
+
+        def _download_batch(tickers: list[str]) -> pd.DataFrame:
             return yf.download(
-                yf_tickers,
+                tickers,
                 period="3mo",
                 group_by="ticker",
-                threads=True,
+                threads=False,  # 關閉多執行緒避免 DNS 耗盡
                 progress=False,
             )
 
-        hist = await asyncio.to_thread(_download)
-        for yf_t in yf_tickers:
+        results: list[VolumeSpikeResult] = []
+        for i in range(0, len(yf_tickers), BATCH_SIZE):
+            batch = yf_tickers[i : i + BATCH_SIZE]
+            logger.info("Downloading batch %d-%d/%d...", i + 1, min(i + BATCH_SIZE, len(yf_tickers)), len(yf_tickers))
             try:
-                ohlcv = _extract_ohlcv(hist, yf_t, yf_tickers)
-                m = _metrics_from_daily_frame(ohlcv, ma_days, min_shares)
-                _try_append(yf_t, m)
+                hist = await asyncio.to_thread(_download_batch, batch)
             except Exception as e:
-                logger.debug("Skip %s: %s", yf_t, e)
+                logger.warning("Batch %d-%d download failed: %s", i + 1, len(batch), e)
+                continue
+
+            # 處理這批下載結果
+            for yf_t in batch:
+                try:
+                    ohlcv = _extract_ohlcv(hist, yf_t, batch)
+                    m = _metrics_from_daily_frame(ohlcv, ma_days, min_shares)
+                    _try_append(yf_t, m)
+                except Exception as e:
+                    logger.debug("Skip %s: %s", yf_t, e)
 
         results.sort(key=lambda r: r.spike_ratio, reverse=True)
         n_bar_today = sum(1 for r in results if r.yahoo_bar_is_taipei_today)
