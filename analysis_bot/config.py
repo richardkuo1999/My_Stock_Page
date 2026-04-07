@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     # 爆量偵測：定時任務預設排序方式
     SPIKE_DEFAULT_SORT: str = "ratio"  # ratio | change
 
+    # 盤中爆量偵測設定
+    INTRADAY_SPIKE_ENABLED: bool = True
+    INTRADAY_SPIKE_MIN_LOTS: int = 200           # 最低成交量門檻（張），高於收盤掃描避免誤報
+    INTRADAY_SPIKE_BASE_RATIO: float = 1.5       # 基礎爆量閾值（依時段動態調整）
+    INTRADAY_SPIKE_CHAT_ID: str = ""             # 推播 chat_id，空值 fallback 到 TELEGRAM_CHAT_ID
+
     # Parallel Analysis Settings
     MAX_CONCURRENT_ANALYSIS: int = 10  # Maximum concurrent stock analyses
     ANALYSIS_PROGRESS_INTERVAL: int = 50  # Send progress update every N stocks

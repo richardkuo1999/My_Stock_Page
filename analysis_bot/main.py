@@ -81,6 +81,7 @@ async def lifespan(app: FastAPI):
                     BotCommand("hold981", "00981A持股變化"),
                     BotCommand("hold888", "00981A & 大額權證買超"),
                     BotCommand("spike", "爆量偵測 Volume Spike"),
+                    BotCommand("ispike", "盤中爆量 Intraday Spike"),
                     BotCommand("research", "AI 研究 Research"),
                     BotCommand("google_news", "Google 新聞"),
                     BotCommand("chat", "AI 聊天 Chat"),

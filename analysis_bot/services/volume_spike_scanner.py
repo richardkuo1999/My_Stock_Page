@@ -68,6 +68,8 @@ class VolumeSpikeScan:
 
     results: list[VolumeSpikeResult]
     data_date_caption: str
+    # 全市場 MA20 快照（ticker -> {ma20_lots, name, market}），供盤中偵測使用
+    ma20_snapshot: dict[str, dict] = field(default_factory=dict)
 
 
 def _today_tw() -> date:
@@ -181,7 +183,7 @@ def _build_data_date_caption(stocks: list[dict]) -> str:
     return "、".join(parts)
 
 
-def _sort_results(results: list[VolumeSpikeResult], sort_by: SpikeSortBy) -> list[VolumeSpikeResult]:
+def sort_results(results: list[VolumeSpikeResult], sort_by: SpikeSortBy) -> list[VolumeSpikeResult]:
     """根據指定方式排序爆量結果並回傳新列表。
 
     Args:
@@ -283,6 +285,7 @@ class VolumeSpikeScanner:
             stock_map[yf_t] = s
 
         results: list[VolumeSpikeResult] = []
+        ma20_snapshot: dict[str, dict] = {}
 
         def _try_append(yf_t: str, m: dict | None) -> None:
             if m is None:
@@ -290,9 +293,15 @@ class VolumeSpikeScanner:
             if _is_stale_bar(m["bar_date"]):
                 logger.debug("Skip stale bar %s date=%s", yf_t, m["bar_date"])
                 return
+            s = stock_map[yf_t]
+            # 無論是否爆量，都記錄 MA20 快照（供盤中偵測使用，單位：張）
+            ma20_snapshot[s["ticker"]] = {
+                "name": s["name"],
+                "market": s["market"],
+                "ma20_lots": round(m["ma_vol"] / 1000, 4),
+            }
             if m["ratio"] < spike_ratio:
                 return
-            s = stock_map[yf_t]
             results.append(
                 VolumeSpikeResult(
                     ticker=s["ticker"],
@@ -344,7 +353,7 @@ class VolumeSpikeScanner:
                 except Exception as e:
                     logger.debug("Skip %s: %s", yf_t, e)
 
-        results = _sort_results(results, sort_by)
+        results = sort_results(results, sort_by)
         n_bar_today = sum(1 for r in results if r.yahoo_bar_is_taipei_today)
         logger.info(
             "爆量結果：%d 檔（倍數≥%.1fx、最少 %d 張、MA%d 含當日）；最後一根日線＝今日曆日：%d 檔",
@@ -355,7 +364,8 @@ class VolumeSpikeScanner:
             n_bar_today,
         )
         caption = _build_spike_scan_caption(results, all_stocks)
-        return VolumeSpikeScan(results, caption)
+        logger.info("MA20 snapshot collected: %d stocks", len(ma20_snapshot))
+        return VolumeSpikeScan(results, caption, ma20_snapshot)
 
     async def enrich_with_news(
         self,

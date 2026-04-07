@@ -370,6 +370,96 @@ async def spike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ 爆量偵測失敗：{str(e)[:200]}")
 
 
+async def intraday_spike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    手動觸發盤中爆量偵測，使用前日 MA20 快照比對當前成交量。
+
+    用法：
+        /ispike          # 用現有快照掃描
+        /ispike change   # 按漲幅排序
+    """
+    from ..models.intraday_ma import IntradayMA20Snapshot
+    from ..services.intraday_spike_scanner import IntradaySpikeScanner
+    from ..services.volume_spike_scanner import SpikeSortBy
+    from ..database import engine
+    from sqlmodel import Session, select as sql_select
+
+    # 解析排序參數
+    sort_arg = (context.args[0] if context.args else SpikeSortBy.RATIO.value)
+    try:
+        sort_by = SpikeSortBy(sort_arg)
+    except ValueError:
+        await update.message.reply_text(
+            "❌ 無效的排序選項。可用選項：\n"
+            "• ratio - 按爆量倍數降序（預設）\n"
+            "• change - 按漲幅降序"
+        )
+        return
+
+    # 載入 MA20 快照
+    def _load():
+        with Session(engine) as session:
+            rows = session.exec(sql_select(IntradayMA20Snapshot)).all()
+            return {r.ticker: {"name": r.name, "market": r.market, "ma20_lots": r.ma20_lots}
+                    for r in rows}
+
+    import asyncio
+    ma20_snapshot = await asyncio.to_thread(_load)
+
+    if not ma20_snapshot:
+        await update.message.reply_text(
+            "⚠️ MA20 快照尚未建立。\n"
+            "請先等待每日 15:30 的收盤爆量掃描完成後再使用，\n"
+            "或執行 /spike 手動觸發收盤掃描。"
+        )
+        return
+
+    await update.message.reply_text(
+        f"🔥 盤中爆量掃描中（排序：{sort_by.display_name}）...（約 5-15 秒）"
+    )
+    await update.message.reply_chat_action(ChatAction.TYPING)
+
+    try:
+        from ..config import get_settings
+        settings = get_settings()
+
+        scanner = IntradaySpikeScanner()
+        results = await scanner.scan_intraday(
+            ma20_snapshot=ma20_snapshot,
+            base_spike_ratio=settings.INTRADAY_SPIKE_BASE_RATIO,
+            min_lots=settings.INTRADAY_SPIKE_MIN_LOTS,
+            sort_by=sort_by,
+        )
+
+        if not results:
+            from zoneinfo import ZoneInfo
+            from datetime import datetime
+            now = datetime.now(ZoneInfo("Asia/Taipei"))
+            elapsed = scanner.get_elapsed_minutes()
+            if elapsed < 30:
+                msg = f"⏳ 開盤尚未滿 30 分鐘（{elapsed} 分鐘），等待訊號穩定"
+            else:
+                msg = f"📊 無盤中爆量股（快照 {len(ma20_snapshot)} 支，目前未達閾值）"
+            await update.message.reply_text(msg)
+            return
+
+        from ..services.spike_pager import (
+            build_spike_markdown_header,
+            build_spike_telegram_html_messages,
+        )
+
+        header = "[盤中] " + build_spike_markdown_header(len(results), sort_by=sort_by)
+        spike_msgs = build_spike_telegram_html_messages(results, header)
+        for i, msg in enumerate(spike_msgs):
+            if i > 0:
+                await asyncio.sleep(0.5)
+            await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+    except Exception as e:
+        logger.error(f"Intraday spike command error: {e}")
+        await update.message.reply_text(f"❌ 盤中爆量偵測失敗：{str(e)[:200]}")
+
+
 async def chat_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Enter persistent chat mode."""
     await update.message.reply_text(

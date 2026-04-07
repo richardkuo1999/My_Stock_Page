@@ -229,7 +229,7 @@ class TestVolumeSpikeScanner:
 
     def test_sort_by_ratio(self):
         """按倍數降序排序（預設行為）"""
-        from analysis_bot.services.volume_spike_scanner import _sort_results, SpikeSortBy
+        from analysis_bot.services.volume_spike_scanner import sort_results as _sort_results, SpikeSortBy
 
         results = [
             VolumeSpikeResult("A", "A", 10, 100, 50, 2.0, "TWSE", change_pct=5.0),
@@ -245,7 +245,7 @@ class TestVolumeSpikeScanner:
 
     def test_sort_by_change(self):
         """按漲幅降序排序"""
-        from analysis_bot.services.volume_spike_scanner import _sort_results, SpikeSortBy
+        from analysis_bot.services.volume_spike_scanner import sort_results as _sort_results, SpikeSortBy
 
         results = [
             VolumeSpikeResult("A", "A", 10, 100, 50, 2.0, "TWSE", change_pct=5.0),
@@ -261,7 +261,7 @@ class TestVolumeSpikeScanner:
 
     def test_sort_by_change_handles_none(self):
         """按漲幅排序時，None 值應排在最後"""
-        from analysis_bot.services.volume_spike_scanner import _sort_results, SpikeSortBy
+        from analysis_bot.services.volume_spike_scanner import sort_results as _sort_results, SpikeSortBy
 
         results = [
             VolumeSpikeResult("A", "A", 10, 100, 50, 3.0, "TWSE", change_pct=None),
@@ -278,7 +278,7 @@ class TestVolumeSpikeScanner:
 
     def test_sort_by_change_with_negative(self):
         """負漲幅（下跌）應正確排序"""
-        from analysis_bot.services.volume_spike_scanner import _sort_results, SpikeSortBy
+        from analysis_bot.services.volume_spike_scanner import sort_results as _sort_results, SpikeSortBy
 
         results = [
             VolumeSpikeResult("A", "A", 10, 100, 50, 2.0, "TWSE", change_pct=5.0),

@@ -571,6 +571,11 @@ async def daily_volume_spike_job():
         # 1. Scan
         spike_scan = await scanner.scan(sort_by=sort_by)
         results = spike_scan.results
+
+        # 順帶儲存 MA20 快照（供隔日盤中爆量偵測使用）
+        if spike_scan.ma20_snapshot:
+            await _save_ma20_snapshot(spike_scan.ma20_snapshot)
+
         if not results:
             if chat_id:
                 await bot.send_message(
@@ -661,6 +666,183 @@ async def daily_volume_spike_job():
                 pass
 
     logger.info("Daily volume spike job completed.")
+
+
+# --- 盤中爆量：去重工具函數 ---
+
+_INTRADAY_NOTIFIED_KEY_PREFIX = "intraday_spike_notified_"
+
+
+def _intraday_notified_key() -> str:
+    from zoneinfo import ZoneInfo
+    date_str = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y%m%d")
+    return f"{_INTRADAY_NOTIFIED_KEY_PREFIX}{date_str}"
+
+
+def _load_intraday_notified() -> set[str]:
+    """讀取今日已通知的盤中爆量股票清單（去重用）。"""
+    from .models.config import SystemConfig
+    key = _intraday_notified_key()
+    try:
+        with Session(engine) as session:
+            row = session.exec(
+                select(SystemConfig).where(SystemConfig.key == key)
+            ).first()
+            if row:
+                return set(json.loads(row.value))
+    except Exception as e:
+        logger.warning(f"Intraday notified load failed: {e}")
+    return set()
+
+
+def _save_intraday_notified(tickers: set[str]) -> None:
+    """寫入今日已通知的盤中爆量股票清單。"""
+    from .models.config import SystemConfig
+    key = _intraday_notified_key()
+    try:
+        with Session(engine) as session:
+            row = session.exec(
+                select(SystemConfig).where(SystemConfig.key == key)
+            ).first()
+            value = json.dumps(sorted(tickers))
+            if row:
+                row.value = value
+                session.add(row)
+            else:
+                session.add(SystemConfig(key=key, value=value))
+            session.commit()
+    except Exception as e:
+        logger.warning(f"Intraday notified save failed: {e}")
+
+
+async def _save_ma20_snapshot(ma20_snapshot: dict[str, dict]) -> None:
+    """將 MA20 快照存入 IntradayMA20Snapshot 表（每日收盤掃描後呼叫）。"""
+    if not ma20_snapshot:
+        return
+
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from .models.intraday_ma import IntradayMA20Snapshot
+
+    today_str = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d")
+    now = datetime.now()
+
+    def _upsert():
+        with Session(engine) as session:
+            for ticker, snap in ma20_snapshot.items():
+                row = session.get(IntradayMA20Snapshot, ticker)
+                if row:
+                    row.market = snap["market"]
+                    row.name = snap["name"]
+                    row.ma20_lots = snap["ma20_lots"]
+                    row.snapshot_date = today_str
+                    row.updated_at = now
+                    session.add(row)
+                else:
+                    session.add(IntradayMA20Snapshot(
+                        ticker=ticker,
+                        market=snap["market"],
+                        name=snap["name"],
+                        ma20_lots=snap["ma20_lots"],
+                        snapshot_date=today_str,
+                        updated_at=now,
+                    ))
+            session.commit()
+
+    await asyncio.to_thread(_upsert)
+    logger.info("MA20 snapshot saved: %d stocks (date=%s)", len(ma20_snapshot), today_str)
+
+
+async def intraday_spike_scan_job():
+    """盤中爆量掃描：從 SQLite 讀取前日 MA20，呼叫 IntradaySpikeScanner，推播新爆量股。"""
+    from .config import get_settings
+    from .models.intraday_ma import IntradayMA20Snapshot
+    from .services.intraday_spike_scanner import IntradaySpikeScanner
+    from .services.volume_spike_scanner import SpikeSortBy
+
+    settings = get_settings()
+    if not settings.INTRADAY_SPIKE_ENABLED:
+        return
+
+    chat_id = settings.INTRADAY_SPIKE_CHAT_ID or settings.TELEGRAM_CHAT_ID
+    if not chat_id:
+        return
+
+    from . import main as _main_mod
+    if getattr(_main_mod, "bot_app", None) and _main_mod.bot_app.bot:
+        bot = _main_mod.bot_app.bot
+    else:
+        from telegram import Bot
+        bot = Bot(token=settings.TELEGRAM_TOKEN)
+
+    try:
+        # 1. 載入前日 MA20 快照
+        def _load_snapshot() -> dict[str, dict]:
+            with Session(engine) as session:
+                rows = session.exec(select(IntradayMA20Snapshot)).all()
+                return {r.ticker: {"name": r.name, "market": r.market, "ma20_lots": r.ma20_lots}
+                        for r in rows}
+
+        ma20_snapshot = await asyncio.to_thread(_load_snapshot)
+        if not ma20_snapshot:
+            logger.info("盤中爆量：MA20 快照為空，跳過（請等待 15:30 收盤掃描後才有資料）")
+            return
+
+        # 2. 掃描
+        try:
+            sort_by = SpikeSortBy(settings.SPIKE_DEFAULT_SORT)
+        except ValueError:
+            sort_by = SpikeSortBy.RATIO
+
+        scanner = IntradaySpikeScanner()
+        results = await scanner.scan_intraday(
+            ma20_snapshot=ma20_snapshot,
+            base_spike_ratio=settings.INTRADAY_SPIKE_BASE_RATIO,
+            min_lots=settings.INTRADAY_SPIKE_MIN_LOTS,
+            sort_by=sort_by,
+        )
+
+        if not results:
+            logger.info("盤中爆量：本次無新爆量股")
+            return
+
+        # 3. 去重過濾
+        notified = _load_intraday_notified()
+        new_results = [r for r in results if r.ticker not in notified]
+        if not new_results:
+            logger.info("盤中爆量：所有爆量股已通知過，跳過")
+            return
+
+        # 4. 格式化推播（複用收盤版格式，標題加 [盤中] 標記）
+        from .services.spike_pager import (
+            build_spike_markdown_header,
+            build_spike_telegram_html_messages,
+        )
+
+        header = "[盤中] " + build_spike_markdown_header(len(new_results), sort_by=sort_by)
+        msgs = build_spike_telegram_html_messages(new_results, header)
+
+        try:
+            for m in msgs:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=m,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+                await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.error(f"盤中爆量推播失敗: {e}")
+            return
+
+        # 5. 更新去重清單
+        notified.update(r.ticker for r in new_results)
+        _save_intraday_notified(notified)
+        logger.info("盤中爆量推播完成：%d 支新爆量股", len(new_results))
+
+    except Exception as e:
+        logger.error(f"Intraday spike job failed: {e}")
 
 
 _VIX_COOLDOWN_HOURS = 4  # 同等級 4 小時內不重複推播
@@ -799,6 +981,21 @@ def start_scheduler():
     #     replace_existing=True,
     #     # next_run_time=datetime.now()  # 若要啟動後立刻跑，再打開這行
     # )
+
+    # 盤中爆量偵測：09:35~13:20 每 20 分鐘
+    intraday_times = [
+        (9, 35), (10, 0), (10, 20), (10, 40),
+        (11, 0), (11, 20), (11, 40),
+        (12, 0), (12, 20), (12, 40),
+        (13, 0), (13, 20),
+    ]
+    for h, m in intraday_times:
+        scheduler.add_job(
+            intraday_spike_scan_job,
+            trigger=CronTrigger(hour=h, minute=m, timezone="Asia/Taipei"),
+            id=f"intraday_spike_{h:02d}{m:02d}",
+            replace_existing=True,
+        )
 
     # VIX 定時檢查：台股盤前 08:30、台股收盤後 13:35、美股開盤後 22:30
     for vix_hour, vix_minute in [(8, 30), (13, 35), (22, 30)]:

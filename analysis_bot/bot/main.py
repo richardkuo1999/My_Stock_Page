@@ -34,6 +34,7 @@ from .handlers import (
     hold888_command,
     hold981_command,
     info_command,
+    intraday_spike_command,
     menu_settings_handler,
     menu_stock_esti_start,
     menu_stock_info_start,
@@ -107,6 +108,7 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("hold981", hold981_command, filters=f))
     application.add_handler(CommandHandler("hold888", hold888_command, filters=f))
     application.add_handler(CommandHandler("spike", spike_command, filters=f))
+    application.add_handler(CommandHandler("ispike", intraday_spike_command, filters=f))
     application.add_handler(CommandHandler("vix", vix_command, filters=f))
     application.add_handler(CommandHandler("chatid", chatid_command, filters=f))
 

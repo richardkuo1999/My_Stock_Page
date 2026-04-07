@@ -22,6 +22,7 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
 
 def create_db_and_tables():
     # Helper to import all models so SQLModel metadata is populated
+    from .models import intraday_ma  # noqa: F401 — ensures IntradayMA20Snapshot is registered
 
     SQLModel.metadata.create_all(engine)
 
