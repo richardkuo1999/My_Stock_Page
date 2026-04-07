@@ -303,7 +303,7 @@ async def spike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from ..services.volume_spike_scanner import SpikeSortBy
 
     # 解析排序參數
-    sort_arg = context.args[0] if context.args else "ratio"
+    sort_arg = context.args[0] if context.args else SpikeSortBy.RATIO.value
     try:
         sort_by = SpikeSortBy(sort_arg)
     except ValueError:
@@ -314,13 +314,8 @@ async def spike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    sort_desc = {
-        SpikeSortBy.RATIO: "爆量倍數",
-        SpikeSortBy.CHANGE: "漲幅",
-    }
-
     await update.message.reply_text(
-        f"🔥 正在掃描爆量股（排序：{sort_desc[sort_by]}）...（約 1–2 分鐘）"
+        f"🔥 正在掃描爆量股（排序：{sort_by.display_name}）...（約 1–2 分鐘）"
     )
     await update.message.reply_chat_action(ChatAction.TYPING)
 

@@ -18,12 +18,7 @@ from .volume_spike_scanner import VolumeSpikeResult, SpikeSortBy
 
 def build_spike_markdown_header(total: int, sort_by=None) -> str:
     """表格上方條件說明＋排序方式。"""
-    sort_desc = ""
-    if sort_by == SpikeSortBy.CHANGE:
-        sort_desc = " | 按漲幅排序"
-    elif sort_by == SpikeSortBy.RATIO:
-        sort_desc = " | 按倍數排序"
-
+    sort_desc = f" | 按{sort_by.display_name}排序" if sort_by else ""
     return f"共 {total} 檔 (≥1.5x){sort_desc}\n\n"
 
 

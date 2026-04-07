@@ -237,7 +237,7 @@ class TestVolumeSpikeScanner:
             VolumeSpikeResult("C", "C", 30, 300, 200, 1.5, "TWSE", change_pct=10.0),
         ]
 
-        _sort_results(results, SpikeSortBy.RATIO)
+        results = _sort_results(results, SpikeSortBy.RATIO)
 
         assert results[0].ticker == "B"  # 倍數 5.0
         assert results[1].ticker == "A"  # 倍數 2.0
@@ -253,7 +253,7 @@ class TestVolumeSpikeScanner:
             VolumeSpikeResult("C", "C", 30, 300, 200, 1.5, "TWSE", change_pct=10.0),
         ]
 
-        _sort_results(results, SpikeSortBy.CHANGE)
+        results = _sort_results(results, SpikeSortBy.CHANGE)
 
         assert results[0].ticker == "C"  # 漲幅 10.0%
         assert results[1].ticker == "A"  # 漲幅 5.0%
@@ -269,7 +269,7 @@ class TestVolumeSpikeScanner:
             VolumeSpikeResult("C", "C", 30, 300, 200, 2.0, "TWSE", change_pct=None),
         ]
 
-        _sort_results(results, SpikeSortBy.CHANGE)
+        results = _sort_results(results, SpikeSortBy.CHANGE)
 
         assert results[0].ticker == "B"  # 漲幅 5.0%
         # None 值排最後（順序可能是 A 或 C）
@@ -286,7 +286,7 @@ class TestVolumeSpikeScanner:
             VolumeSpikeResult("C", "C", 30, 300, 200, 1.5, "TWSE", change_pct=-10.0),
         ]
 
-        _sort_results(results, SpikeSortBy.CHANGE)
+        results = _sort_results(results, SpikeSortBy.CHANGE)
 
         assert results[0].ticker == "A"  # +5.0%
         assert results[1].ticker == "B"  # -3.0%

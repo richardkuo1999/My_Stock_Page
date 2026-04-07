@@ -38,6 +38,11 @@ class SpikeSortBy(Enum):
     RATIO = "ratio"      # 按爆量倍數降序（預設，向後兼容）
     CHANGE = "change"    # 按漲幅降序
 
+    @property
+    def display_name(self) -> str:
+        """取得用於顯示的中文名稱"""
+        return {"ratio": "爆量倍數", "change": "漲幅"}[self.value]
+
 
 @dataclass
 class VolumeSpikeResult:
@@ -176,22 +181,27 @@ def _build_data_date_caption(stocks: list[dict]) -> str:
     return "、".join(parts)
 
 
-def _sort_results(results: list[VolumeSpikeResult], sort_by: SpikeSortBy) -> None:
-    """根據指定方式排序爆量結果（in-place）。
+def _sort_results(results: list[VolumeSpikeResult], sort_by: SpikeSortBy) -> list[VolumeSpikeResult]:
+    """根據指定方式排序爆量結果並回傳新列表。
 
     Args:
         results: 爆量結果列表
         sort_by: 排序方式枚舉
+
+    Returns:
+        排序後的新列表
     """
     if sort_by == SpikeSortBy.RATIO:
         # 按倍數降序（原邏輯）
-        results.sort(key=lambda r: r.spike_ratio, reverse=True)
+        return sorted(results, key=lambda r: r.spike_ratio, reverse=True)
     elif sort_by == SpikeSortBy.CHANGE:
         # 按漲幅降序：None 值使用 -inf 確保排在最後
-        results.sort(
+        return sorted(
+            results,
             key=lambda r: (r.change_pct is not None, r.change_pct if r.change_pct is not None else float('-inf')),
             reverse=True
         )
+    return results
 
 
 def _build_spike_scan_caption(
@@ -334,7 +344,7 @@ class VolumeSpikeScanner:
                 except Exception as e:
                     logger.debug("Skip %s: %s", yf_t, e)
 
-        _sort_results(results, sort_by)
+        results = _sort_results(results, sort_by)
         n_bar_today = sum(1 for r in results if r.yahoo_bar_is_taipei_today)
         logger.info(
             "爆量結果：%d 檔（倍數≥%.1fx、最少 %d 張、MA%d 含當日）；最後一根日線＝今日曆日：%d 檔",
