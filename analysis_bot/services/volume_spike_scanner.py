@@ -9,6 +9,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from enum import Enum
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -30,6 +31,12 @@ MAX_BAR_AGE_CALENDAR_DAYS = 7
 DEFAULT_NEWS_ENRICH_TOP_N = 1
 
 _TW = ZoneInfo("Asia/Taipei")
+
+
+class SpikeSortBy(Enum):
+    """爆量結果排序方式"""
+    RATIO = "ratio"      # 按爆量倍數降序（預設，向後兼容）
+    CHANGE = "change"    # 按漲幅降序
 
 
 @dataclass
@@ -169,6 +176,24 @@ def _build_data_date_caption(stocks: list[dict]) -> str:
     return "、".join(parts)
 
 
+def _sort_results(results: list[VolumeSpikeResult], sort_by: SpikeSortBy) -> None:
+    """根據指定方式排序爆量結果（in-place）。
+
+    Args:
+        results: 爆量結果列表
+        sort_by: 排序方式枚舉
+    """
+    if sort_by == SpikeSortBy.RATIO:
+        # 按倍數降序（原邏輯）
+        results.sort(key=lambda r: r.spike_ratio, reverse=True)
+    elif sort_by == SpikeSortBy.CHANGE:
+        # 按漲幅降序：None 值使用 -inf 確保排在最後
+        results.sort(
+            key=lambda r: (r.change_pct is not None, r.change_pct if r.change_pct is not None else float('-inf')),
+            reverse=True
+        )
+
+
 def _build_spike_scan_caption(
     results: list[VolumeSpikeResult],
     all_stocks: list[dict],
@@ -203,11 +228,21 @@ class VolumeSpikeScanner:
         min_volume_lots: int = DEFAULT_MIN_VOLUME_LOTS,
         spike_ratio: float = DEFAULT_SPIKE_RATIO,
         ma_days: int = DEFAULT_MA_DAYS,
+        sort_by: SpikeSortBy = SpikeSortBy.RATIO,
     ) -> VolumeSpikeScan:
         """
         Main scan: fetch today's market → filter → yfinance 日線 OHLCV → compute spike ratio.
         倍數 = 當日量 ÷ 最近 ma_days 日均量（**含當日**，與常見 SMA 一致）。
         日線僅使用 Yahoo Finance（yfinance），不呼叫富果 API。
+
+        Args:
+            min_volume_lots: 預過濾最小成交量（張）
+            spike_ratio: 爆量倍數閾值（≥ 此值才列入結果）
+            ma_days: 均量窗口（日）
+            sort_by: 排序方式（預設按倍數降序，保持向後兼容）
+
+        Returns:
+            VolumeSpikeScan: 掃描結果與資料日期說明
         """
         # 1. Fetch all market daily data
         all_stocks = await MarketDataFetcher.fetch_all_market_daily()
@@ -299,7 +334,7 @@ class VolumeSpikeScanner:
                 except Exception as e:
                     logger.debug("Skip %s: %s", yf_t, e)
 
-        results.sort(key=lambda r: r.spike_ratio, reverse=True)
+        _sort_results(results, sort_by)
         n_bar_today = sum(1 for r in results if r.yahoo_bar_is_taipei_today)
         logger.info(
             "爆量結果：%d 檔（倍數≥%.1fx、最少 %d 張、MA%d 含當日）；最後一根日線＝今日曆日：%d 檔",

@@ -13,12 +13,18 @@ from .volume_spike_formatter import (
     format_spike_row,
     get_table_header,
 )
-from .volume_spike_scanner import VolumeSpikeResult
+from .volume_spike_scanner import VolumeSpikeResult, SpikeSortBy
 
 
-def build_spike_markdown_header(total: int) -> str:
-    """表格上方僅一行條件說明。"""
-    return f"共 {total} 檔 (≥1.5x)\n\n"
+def build_spike_markdown_header(total: int, sort_by=None) -> str:
+    """表格上方條件說明＋排序方式。"""
+    sort_desc = ""
+    if sort_by == SpikeSortBy.CHANGE:
+        sort_desc = " | 按漲幅排序"
+    elif sort_by == SpikeSortBy.RATIO:
+        sort_desc = " | 按倍數排序"
+
+    return f"共 {total} 檔 (≥1.5x){sort_desc}\n\n"
 
 
 def build_spike_telegram_html_messages(

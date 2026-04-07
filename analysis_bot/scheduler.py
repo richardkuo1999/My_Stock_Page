@@ -537,9 +537,18 @@ async def daily_volume_spike_job():
 
     from .config import get_settings
     from .models.subscriber import Subscriber
-    from .services.volume_spike_scanner import VolumeSpikeScanner
+    from .services.volume_spike_scanner import VolumeSpikeScanner, SpikeSortBy
 
     settings = get_settings()
+
+    # 從設定檔讀取排序方式
+    try:
+        sort_by = SpikeSortBy(settings.SPIKE_DEFAULT_SORT)
+    except ValueError:
+        logger.warning(
+            f"Invalid SPIKE_DEFAULT_SORT: {settings.SPIKE_DEFAULT_SORT}, fallback to RATIO"
+        )
+        sort_by = SpikeSortBy.RATIO
 
     # Reuse running bot instance
     from . import main as _main_mod
@@ -560,7 +569,7 @@ async def daily_volume_spike_job():
         scanner = VolumeSpikeScanner()
 
         # 1. Scan
-        spike_scan = await scanner.scan()
+        spike_scan = await scanner.scan(sort_by=sort_by)
         results = spike_scan.results
         if not results:
             if chat_id:
@@ -587,7 +596,7 @@ async def daily_volume_spike_job():
             build_spike_telegram_html_messages,
         )
 
-        _spike_header = build_spike_markdown_header(len(results))
+        _spike_header = build_spike_markdown_header(len(results), sort_by=sort_by)
         spike_msgs = build_spike_telegram_html_messages(results, _spike_header)
 
         async def send_to(target_id):

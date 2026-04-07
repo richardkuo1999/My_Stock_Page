@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     # 爆量偵測：是否擷取前 N 檔題材／新聞＋ AI（預設關閉，程式仍保留）
     SPIKE_NEWS_ENRICHMENT_ENABLED: bool = False
 
+    # 爆量偵測：定時任務預設排序方式
+    SPIKE_DEFAULT_SORT: str = "ratio"  # ratio | change
+
     # Parallel Analysis Settings
     MAX_CONCURRENT_ANALYSIS: int = 10  # Maximum concurrent stock analyses
     ANALYSIS_PROGRESS_INTERVAL: int = 50  # Send progress update every N stocks

@@ -53,7 +53,43 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await start_command(update, context)
+    """Display detailed help message with all available commands."""
+    help_text = """
+🤖 *Stock Analysis Bot - 幫助*
+
+*主要命令：*
+• `/start` - 顯示主菜單
+• `/help` - 顯示此幫助訊息
+
+*爆量偵測：*
+• `🔥 爆量偵測` - 按爆量倍數排序（預設）
+• `/spike` - 按爆量倍數排序
+• `/spike change` - 按漲幅排序
+• `/spike ratio` - 明確按倍數排序
+
+*估值分析：*
+• `📈 估值報告` - 獲取樂活五線譜估值
+• `/esti <股票代碼>` - 查詢個股估值
+• 例：`/esti 2330` - 查詢台積電估值
+
+*資訊查詢：*
+• `/info <股票代碼>` - 公司介紹與基本資訊
+• `/news <股票代碼>` - 該股最新新聞
+• `/google <股票代碼>` - Google 新聞搜尋
+
+*其他功能：*
+• `/chat <問題>` - AI 聊天助理
+• `/research <股票代碼>` - 完整投資研究報告
+
+*訂閱管理：*
+• `/subscribe` - 訂閱每日爆量通知
+• `/unsubscribe` - 取消訂閱
+
+💡 *提示：*
+輸入無效參數時會收到具體的使用說明。
+所有命令都可透過菜單按鈕快速執行。
+"""
+    await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
 
 
 # --- Core Logic Functions (Reusable) ---
@@ -257,15 +293,42 @@ async def vix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def spike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """手動觸發爆量偵測：掃描台灣上市櫃股票，找出成交量異常放大的個股。"""
-    await update.message.reply_text("🔥 正在掃描爆量股...（約 1–2 分鐘）")
+    """
+    手動觸發爆量偵測：掃描台灣上市櫃股票，找出成交量異常放大的個股。
+
+    用法：
+        /spike          # 預設按倍數排序
+        /spike change   # 按漲幅排序
+    """
+    from ..services.volume_spike_scanner import SpikeSortBy
+
+    # 解析排序參數
+    sort_arg = context.args[0] if context.args else "ratio"
+    try:
+        sort_by = SpikeSortBy(sort_arg)
+    except ValueError:
+        await update.message.reply_text(
+            "❌ 無效的排序選項。可用選項：\n"
+            "• ratio - 按爆量倍數降序（預設）\n"
+            "• change - 按漲幅降序"
+        )
+        return
+
+    sort_desc = {
+        SpikeSortBy.RATIO: "爆量倍數",
+        SpikeSortBy.CHANGE: "漲幅",
+    }
+
+    await update.message.reply_text(
+        f"🔥 正在掃描爆量股（排序：{sort_desc[sort_by]}）...（約 1–2 分鐘）"
+    )
     await update.message.reply_chat_action(ChatAction.TYPING)
 
     try:
         from ..services.volume_spike_scanner import VolumeSpikeScanner
 
         scanner = VolumeSpikeScanner()
-        spike_scan = await scanner.scan()
+        spike_scan = await scanner.scan(sort_by=sort_by)
         results = spike_scan.results
 
         if not results:
@@ -280,7 +343,7 @@ async def spike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             build_spike_telegram_html_messages,
         )
 
-        header = build_spike_markdown_header(len(results))
+        header = build_spike_markdown_header(len(results), sort_by=sort_by)
         spike_msgs = build_spike_telegram_html_messages(results, header)
         for i, msg in enumerate(spike_msgs):
             if i > 0:

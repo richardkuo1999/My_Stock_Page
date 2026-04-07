@@ -3,9 +3,11 @@
 手動執行爆量偵測（不透過排程）
 
 使用方式:
-    python scripts/run_volume_spike.py              # 掃描並輸出到終端
-    python scripts/run_volume_spike.py --send       # 掃描並推送到 Telegram
-    python scripts/run_volume_spike.py --send --news  # 需 SPIKE_NEWS_ENRICHMENT_ENABLED=true
+    python scripts/run_volume_spike.py              # 預設按倍數排序
+    python scripts/run_volume_spike.py change       # 按漲幅排序
+    python scripts/run_volume_spike.py --send       # 推送到 Telegram
+    python scripts/run_volume_spike.py --send change  # 按漲幅排序並推送
+    python scripts/run_volume_spike.py --send --news  # 含新聞分析
 """
 import asyncio
 import sys
@@ -16,14 +18,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 async def main():
-    from analysis_bot.services.volume_spike_scanner import VolumeSpikeScanner
+    from analysis_bot.services.volume_spike_scanner import VolumeSpikeScanner, SpikeSortBy
     from analysis_bot.config import get_settings
 
     send_to_telegram = "--send" in sys.argv or "-s" in sys.argv
     with_news = "--news" in sys.argv or "-n" in sys.argv
 
+    # 解析排序參數（非 -- 開頭的參數）
+    sort_arg = None
+    for arg in sys.argv[1:]:
+        if not arg.startswith("-") and arg in ("ratio", "change"):
+            sort_arg = arg
+            break
+
+    sort_by = SpikeSortBy(sort_arg) if sort_arg else SpikeSortBy.RATIO
+
     scanner = VolumeSpikeScanner()
-    spike_scan = await scanner.scan()
+    spike_scan = await scanner.scan(sort_by=sort_by)
     results = spike_scan.results
 
     if not results:
@@ -99,7 +110,7 @@ async def main():
         bot = Bot(token=settings.TELEGRAM_TOKEN)
         chat_id = settings.TELEGRAM_CHAT_ID
 
-        hdr = build_spike_markdown_header(len(results))
+        hdr = build_spike_markdown_header(len(results), sort_by=sort_by)
         spike_msgs = build_spike_telegram_html_messages(results, hdr)
         for i, m in enumerate(spike_msgs):
             if i > 0:

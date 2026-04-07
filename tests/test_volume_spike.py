@@ -215,7 +215,7 @@ class TestVolumeSpikeScanner:
         assert "9999" not in tickers
 
     def test_sort_order(self):
-        """Results should be sorted by spike_ratio descending."""
+        """Results should be sorted by spike_ratio descending (default behavior)."""
         results = [
             VolumeSpikeResult("A", "A", 10, 100, 50, 2.0, "TWSE"),
             VolumeSpikeResult("B", "B", 20, 200, 40, 5.0, "TWSE"),
@@ -226,6 +226,71 @@ class TestVolumeSpikeScanner:
         assert results[0].ticker == "B"
         assert results[1].ticker == "A"
         assert results[2].ticker == "C"
+
+    def test_sort_by_ratio(self):
+        """按倍數降序排序（預設行為）"""
+        from analysis_bot.services.volume_spike_scanner import _sort_results, SpikeSortBy
+
+        results = [
+            VolumeSpikeResult("A", "A", 10, 100, 50, 2.0, "TWSE", change_pct=5.0),
+            VolumeSpikeResult("B", "B", 20, 200, 40, 5.0, "TWSE", change_pct=1.0),
+            VolumeSpikeResult("C", "C", 30, 300, 200, 1.5, "TWSE", change_pct=10.0),
+        ]
+
+        _sort_results(results, SpikeSortBy.RATIO)
+
+        assert results[0].ticker == "B"  # 倍數 5.0
+        assert results[1].ticker == "A"  # 倍數 2.0
+        assert results[2].ticker == "C"  # 倍數 1.5
+
+    def test_sort_by_change(self):
+        """按漲幅降序排序"""
+        from analysis_bot.services.volume_spike_scanner import _sort_results, SpikeSortBy
+
+        results = [
+            VolumeSpikeResult("A", "A", 10, 100, 50, 2.0, "TWSE", change_pct=5.0),
+            VolumeSpikeResult("B", "B", 20, 200, 40, 5.0, "TWSE", change_pct=1.0),
+            VolumeSpikeResult("C", "C", 30, 300, 200, 1.5, "TWSE", change_pct=10.0),
+        ]
+
+        _sort_results(results, SpikeSortBy.CHANGE)
+
+        assert results[0].ticker == "C"  # 漲幅 10.0%
+        assert results[1].ticker == "A"  # 漲幅 5.0%
+        assert results[2].ticker == "B"  # 漲幅 1.0%
+
+    def test_sort_by_change_handles_none(self):
+        """按漲幅排序時，None 值應排在最後"""
+        from analysis_bot.services.volume_spike_scanner import _sort_results, SpikeSortBy
+
+        results = [
+            VolumeSpikeResult("A", "A", 10, 100, 50, 3.0, "TWSE", change_pct=None),
+            VolumeSpikeResult("B", "B", 20, 200, 40, 5.0, "TWSE", change_pct=5.0),
+            VolumeSpikeResult("C", "C", 30, 300, 200, 2.0, "TWSE", change_pct=None),
+        ]
+
+        _sort_results(results, SpikeSortBy.CHANGE)
+
+        assert results[0].ticker == "B"  # 漲幅 5.0%
+        # None 值排最後（順序可能是 A 或 C）
+        assert results[1].ticker in ("A", "C")
+        assert results[2].ticker in ("A", "C")
+
+    def test_sort_by_change_with_negative(self):
+        """負漲幅（下跌）應正確排序"""
+        from analysis_bot.services.volume_spike_scanner import _sort_results, SpikeSortBy
+
+        results = [
+            VolumeSpikeResult("A", "A", 10, 100, 50, 2.0, "TWSE", change_pct=5.0),
+            VolumeSpikeResult("B", "B", 20, 200, 40, 5.0, "TWSE", change_pct=-3.0),
+            VolumeSpikeResult("C", "C", 30, 300, 200, 1.5, "TWSE", change_pct=-10.0),
+        ]
+
+        _sort_results(results, SpikeSortBy.CHANGE)
+
+        assert results[0].ticker == "A"  # +5.0%
+        assert results[1].ticker == "B"  # -3.0%
+        assert results[2].ticker == "C"  # -10.0%
 
     def test_dataclass_defaults(self):
         """VolumeSpikeResult defaults."""
