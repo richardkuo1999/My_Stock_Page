@@ -29,13 +29,18 @@ def create_db_and_tables():
     # Migration: add News.content if missing (SQLite)
     if "sqlite" in settings.DATABASE_URL:
         with engine.connect() as conn:
-            try:
-                conn.execute(text("ALTER TABLE news ADD COLUMN content TEXT"))
-                conn.commit()
-            except Exception as e:
-                err = str(e).lower()
-                if "duplicate column" not in err and "already exists" not in err:
-                    raise
+            for ddl in [
+                "ALTER TABLE news ADD COLUMN content TEXT",
+                "ALTER TABLE intraday_ma20_snapshot ADD COLUMN vol_19d_sum_lots REAL",
+                "ALTER TABLE subscriber ADD COLUMN ispike_enabled INTEGER NOT NULL DEFAULT 0",
+            ]:
+                try:
+                    conn.execute(text(ddl))
+                    conn.commit()
+                except Exception as e:
+                    err = str(e).lower()
+                    if "duplicate column" not in err and "already exists" not in err:
+                        raise
 
 
 def get_session():

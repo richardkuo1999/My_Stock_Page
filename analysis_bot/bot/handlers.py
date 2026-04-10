@@ -63,9 +63,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 *爆量偵測：*
 • `🔥 爆量偵測` - 按爆量倍數排序（預設）
-• `/spike` - 按爆量倍數排序
-• `/spike change` - 按漲幅排序
-• `/spike ratio` - 明確按倍數排序
+• `/spike` - 收盤爆量，按倍數排序
+• `/spike change` - 收盤爆量，按漲幅排序
+• `/ispike` - 盤中爆量（即時），按倍數排序
+• `/ispike change` - 盤中爆量，按漲幅排序
+• `/sub_ispike` - 訂閱盤中爆量自動通知
+• `/unsub_ispike` - 取消訂閱盤中爆量通知
 
 *估值分析：*
 • `📈 估值報告` - 獲取樂活五線譜估值
@@ -400,11 +403,16 @@ async def intraday_spike_command(update: Update, context: ContextTypes.DEFAULT_T
     def _load():
         with Session(engine) as session:
             rows = session.exec(sql_select(IntradayMA20Snapshot)).all()
-            return {r.ticker: {"name": r.name, "market": r.market, "ma20_lots": r.ma20_lots}
+            return {r.ticker: {"name": r.name, "market": r.market, "ma20_lots": r.ma20_lots, "vol_19d_sum_lots": r.vol_19d_sum_lots}
                     for r in rows}
 
     import asyncio
-    ma20_snapshot = await asyncio.to_thread(_load)
+    try:
+        ma20_snapshot = await asyncio.to_thread(_load)
+    except Exception as e:
+        logger.error("ispike _load snapshot failed: %s", e)
+        await update.message.reply_text(f"❌ 讀取快照失敗：{str(e)[:200]}")
+        return
 
     if not ma20_snapshot:
         await update.message.reply_text(
@@ -955,6 +963,42 @@ async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.reply_text("❌ 已取消訂閱。")
         else:
             await update.message.reply_text("您尚未訂閱。")
+
+
+async def sub_ispike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """訂閱盤中爆量自動通知。"""
+    chat_id = update.effective_chat.id
+    from sqlmodel import Session, select
+    from ..database import engine
+    from ..models.subscriber import Subscriber
+
+    with Session(engine) as session:
+        sub = session.exec(select(Subscriber).where(Subscriber.chat_id == chat_id)).first()
+        if not sub:
+            sub = Subscriber(chat_id=chat_id)
+        sub.is_active = True
+        sub.ispike_enabled = True
+        session.add(sub)
+        session.commit()
+    await update.message.reply_text("✅ 已訂閱盤中爆量通知！\n交易時段每 5 分鐘自動掃描，有爆量股立即推播。")
+
+
+async def unsub_ispike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """取消訂閱盤中爆量自動通知。"""
+    chat_id = update.effective_chat.id
+    from sqlmodel import Session, select
+    from ..database import engine
+    from ..models.subscriber import Subscriber
+
+    with Session(engine) as session:
+        sub = session.exec(select(Subscriber).where(Subscriber.chat_id == chat_id)).first()
+        if sub and sub.ispike_enabled:
+            sub.ispike_enabled = False
+            session.add(sub)
+            session.commit()
+            await update.message.reply_text("❌ 已取消盤中爆量通知訂閱。")
+        else:
+            await update.message.reply_text("您尚未訂閱盤中爆量通知。")
 
 
 # --- Watchlist ---

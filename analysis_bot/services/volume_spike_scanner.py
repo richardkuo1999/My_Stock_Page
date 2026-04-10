@@ -197,10 +197,10 @@ def sort_results(results: list[VolumeSpikeResult], sort_by: SpikeSortBy) -> list
         # 按倍數降序（原邏輯）
         return sorted(results, key=lambda r: r.spike_ratio, reverse=True)
     elif sort_by == SpikeSortBy.CHANGE:
-        # 按漲幅降序：None 值使用 -inf 確保排在最後
+        # 按漲幅降序，同漲幅再按倍數降序；None 值排最後
         return sorted(
             results,
-            key=lambda r: (r.change_pct is not None, r.change_pct if r.change_pct is not None else float('-inf')),
+            key=lambda r: (r.change_pct is not None, r.change_pct if r.change_pct is not None else float('-inf'), r.spike_ratio),
             reverse=True
         )
     return results

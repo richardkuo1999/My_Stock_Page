@@ -5,6 +5,7 @@ from datetime import datetime
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from sqlmodel import Session, select
 
 from .database import engine
@@ -715,6 +716,132 @@ def _save_intraday_notified(tickers: set[str]) -> None:
         logger.warning(f"Intraday notified save failed: {e}")
 
 
+async def premarket_vol19_job() -> None:
+    """
+    盤前排程（08:00）：yfinance 抓全市場過去 19 日成交量加總，存入 IntradayMA20Snapshot。
+    盤中爆量偵測 MA20 公式：(今日即時量 + vol_19d_sum) / 20
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    import yfinance as yf
+
+    from .models.intraday_ma import IntradayMA20Snapshot
+    from .services.market_data_fetcher import MarketDataFetcher
+
+    logger.info("盤前 vol19 掃描開始")
+
+    # 1. 取得全市場股票清單
+    try:
+        all_stocks = await MarketDataFetcher.fetch_all_market_daily()
+    except Exception as e:
+        logger.error("盤前 vol19：取得市場清單失敗 %s", e)
+        return
+
+    # 過濾 4 碼一般股，排除極度冷門股（< 100 張）
+    stocks = [
+        s for s in all_stocks
+        if s.get("ticker") and s.get("volume_shares", 0) >= 100_000  # 100 張 = 100,000 股
+    ]
+    if not stocks:
+        logger.warning("盤前 vol19：無有效股票")
+        return
+
+    logger.info("盤前 vol19：%d 支股票待下載", len(stocks))
+
+    # 2. 轉換 yfinance ticker
+    stock_map: dict[str, dict] = {}
+    yf_tickers: list[str] = []
+    for s in stocks:
+        suffix = ".TW" if s["market"] == "TWSE" else ".TWO"
+        yf_t = f"{s['ticker']}{suffix}"
+        yf_tickers.append(yf_t)
+        stock_map[yf_t] = s
+
+    # 3. 批次下載（每批 100 支），取過去 19 個交易日成交量
+    BATCH_SIZE = 100
+    vol19_map: dict[str, float] = {}  # ticker → 19 日量加總（張）
+
+    def _download(tickers: list[str]):
+        return yf.download(
+            tickers,
+            period="30d",      # 30 天含約 21 個交易日，足以取得 19 個交易日資料
+            group_by="ticker",
+            threads=False,
+            progress=False,
+        )
+
+    for i in range(0, len(yf_tickers), BATCH_SIZE):
+        batch = yf_tickers[i: i + BATCH_SIZE]
+        logger.info("盤前 vol19 下載 %d-%d/%d", i + 1, min(i + BATCH_SIZE, len(yf_tickers)), len(yf_tickers))
+        try:
+            hist = await asyncio.to_thread(_download, batch)
+        except Exception as e:
+            logger.warning("盤前 vol19 批次下載失敗: %s", e)
+            continue
+
+        for yf_t in batch:
+            ticker = yf_t.rsplit(".", 1)[0]
+            try:
+                if len(batch) == 1:
+                    df = hist
+                else:
+                    if yf_t not in hist.columns.get_level_values(0):
+                        continue
+                    df = hist[yf_t]
+
+                vol = df["Volume"].dropna().astype(float)
+                if len(vol) < 19:
+                    continue
+                # 取最近 19 個交易日（排除今日，今日尚未收盤）
+                vol_19d_sum_shares = float(vol.iloc[-19:].sum())
+                vol19_map[ticker] = round(vol_19d_sum_shares / 1000, 4)  # 轉換為張
+            except Exception as e:
+                logger.debug("盤前 vol19 跳過 %s: %s", yf_t, e)
+
+    if not vol19_map:
+        logger.warning("盤前 vol19：無有效資料，跳過寫入")
+        return
+
+    # 4. 寫入 DB
+    today_str = datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y-%m-%d")
+    now = datetime.now()
+
+    def _upsert():
+        tickers_to_update = list(vol19_map.keys())
+        with Session(engine) as session:
+            existing = {
+                r.ticker: r
+                for r in session.exec(
+                    select(IntradayMA20Snapshot).where(
+                        IntradayMA20Snapshot.ticker.in_(tickers_to_update)
+                    )
+                ).all()
+            }
+            for ticker, vol19 in vol19_map.items():
+                s = stock_map.get(f"{ticker}.TW") or stock_map.get(f"{ticker}.TWO")
+                if not s:
+                    continue
+                row = existing.get(ticker)
+                if row:
+                    row.vol_19d_sum_lots = vol19
+                    row.snapshot_date = today_str
+                    row.updated_at = now
+                else:
+                    session.add(IntradayMA20Snapshot(
+                        ticker=ticker,
+                        market=s["market"],
+                        name=s["name"],
+                        vol_19d_sum_lots=vol19,
+                        snapshot_date=today_str,
+                        updated_at=now,
+                    ))
+            session.commit()
+
+    await asyncio.to_thread(_upsert)
+    logger.info("盤前 vol19 完成：%d 支股票 (date=%s)", len(vol19_map), today_str)
+
+
 async def _save_ma20_snapshot(ma20_snapshot: dict[str, dict]) -> None:
     """將 MA20 快照存入 IntradayMA20Snapshot 表（每日收盤掃描後呼叫）。"""
     if not ma20_snapshot:
@@ -729,16 +856,24 @@ async def _save_ma20_snapshot(ma20_snapshot: dict[str, dict]) -> None:
     now = datetime.now()
 
     def _upsert():
+        tickers_to_update = list(ma20_snapshot.keys())
         with Session(engine) as session:
+            existing = {
+                r.ticker: r
+                for r in session.exec(
+                    select(IntradayMA20Snapshot).where(
+                        IntradayMA20Snapshot.ticker.in_(tickers_to_update)
+                    )
+                ).all()
+            }
             for ticker, snap in ma20_snapshot.items():
-                row = session.get(IntradayMA20Snapshot, ticker)
+                row = existing.get(ticker)
                 if row:
                     row.market = snap["market"]
                     row.name = snap["name"]
                     row.ma20_lots = snap["ma20_lots"]
                     row.snapshot_date = today_str
                     row.updated_at = now
-                    session.add(row)
                 else:
                     session.add(IntradayMA20Snapshot(
                         ticker=ticker,
@@ -756,6 +891,11 @@ async def _save_ma20_snapshot(ma20_snapshot: dict[str, dict]) -> None:
 
 async def intraday_spike_scan_job():
     """盤中爆量掃描：從 SQLite 讀取前日 MA20，呼叫 IntradaySpikeScanner，推播新爆量股。"""
+    from zoneinfo import ZoneInfo
+    now_tw = datetime.now(ZoneInfo("Asia/Taipei"))
+    if not ((9, 35) <= (now_tw.hour, now_tw.minute) <= (13, 30)):
+        return
+
     from .config import get_settings
     from .models.intraday_ma import IntradayMA20Snapshot
     from .services.intraday_spike_scanner import IntradaySpikeScanner
@@ -763,10 +903,6 @@ async def intraday_spike_scan_job():
 
     settings = get_settings()
     if not settings.INTRADAY_SPIKE_ENABLED:
-        return
-
-    chat_id = settings.INTRADAY_SPIKE_CHAT_ID or settings.TELEGRAM_CHAT_ID
-    if not chat_id:
         return
 
     from . import main as _main_mod
@@ -781,7 +917,7 @@ async def intraday_spike_scan_job():
         def _load_snapshot() -> dict[str, dict]:
             with Session(engine) as session:
                 rows = session.exec(select(IntradayMA20Snapshot)).all()
-                return {r.ticker: {"name": r.name, "market": r.market, "ma20_lots": r.ma20_lots}
+                return {r.ticker: {"name": r.name, "market": r.market, "ma20_lots": r.ma20_lots, "vol_19d_sum_lots": r.vol_19d_sum_lots}
                         for r in rows}
 
         ma20_snapshot = await asyncio.to_thread(_load_snapshot)
@@ -814,7 +950,7 @@ async def intraday_spike_scan_job():
             logger.info("盤中爆量：所有爆量股已通知過，跳過")
             return
 
-        # 4. 格式化推播（複用收盤版格式，標題加 [盤中] 標記）
+        # 4. 格式化訊息
         from .services.spike_pager import (
             build_spike_markdown_header,
             build_spike_telegram_html_messages,
@@ -823,20 +959,48 @@ async def intraday_spike_scan_job():
         header = "[盤中] " + build_spike_markdown_header(len(new_results), sort_by=sort_by)
         msgs = build_spike_telegram_html_messages(new_results, header)
 
-        try:
-            for m in msgs:
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text=m,
-                    parse_mode="HTML",
-                    disable_web_page_preview=True,
-                )
-                await asyncio.sleep(0.5)
-        except Exception as e:
-            logger.error(f"盤中爆量推播失敗: {e}")
+        # 5. 收集推播對象：訂閱者 + INTRADAY_SPIKE_CHAT_ID / TELEGRAM_CHAT_ID
+        from .models.subscriber import Subscriber
+
+        def _load_ispike_subscribers() -> list[int]:
+            with Session(engine) as session:
+                subs = session.exec(
+                    select(Subscriber).where(
+                        Subscriber.ispike_enabled == True,
+                    )
+                ).all()
+                return [s.chat_id for s in subs]
+
+        chat_ids_set: set[int] = set(await asyncio.to_thread(_load_ispike_subscribers))
+        fallback_id = settings.INTRADAY_SPIKE_CHAT_ID or settings.TELEGRAM_CHAT_ID
+        if fallback_id:
+            chat_ids_set.add(int(fallback_id))
+        chat_ids = list(chat_ids_set)
+
+        if not chat_ids:
+            logger.info("盤中爆量：無推播對象（無訂閱者且未設定 INTRADAY_SPIKE_CHAT_ID）")
             return
 
-        # 5. 更新去重清單
+        # 6. 推播給所有對象
+        failed = 0
+        for cid in chat_ids:
+            try:
+                for m in msgs:
+                    await bot.send_message(
+                        chat_id=cid,
+                        text=m,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                await asyncio.sleep(0.3)
+            except Exception as e:
+                logger.error(f"盤中爆量推播失敗 chat_id={cid}: {e}")
+                failed += 1
+
+        if failed:
+            logger.warning("盤中爆量：%d/%d 推播失敗", failed, len(chat_ids))
+
+        # 更新去重清單（即使部分推播失敗仍記錄，避免重複推播）
         notified.update(r.ticker for r in new_results)
         _save_intraday_notified(notified)
         logger.info("盤中爆量推播完成：%d 支新爆量股", len(new_results))
@@ -982,20 +1146,21 @@ def start_scheduler():
     #     # next_run_time=datetime.now()  # 若要啟動後立刻跑，再打開這行
     # )
 
-    # 盤中爆量偵測：09:35~13:20 每 20 分鐘
-    intraday_times = [
-        (9, 35), (10, 0), (10, 20), (10, 40),
-        (11, 0), (11, 20), (11, 40),
-        (12, 0), (12, 20), (12, 40),
-        (13, 0), (13, 20),
-    ]
-    for h, m in intraday_times:
-        scheduler.add_job(
-            intraday_spike_scan_job,
-            trigger=CronTrigger(hour=h, minute=m, timezone="Asia/Taipei"),
-            id=f"intraday_spike_{h:02d}{m:02d}",
-            replace_existing=True,
-        )
+    # 盤前 vol19 掃描：08:00（抓過去 19 日量，供盤中 MA20 計算）
+    scheduler.add_job(
+        premarket_vol19_job,
+        trigger=CronTrigger(hour=8, minute=0, timezone="Asia/Taipei"),
+        id="premarket_vol19",
+        replace_existing=True,
+    )
+
+    # 盤中爆量偵測：每 5 分鐘觸發，job 內部檢查是否在 09:35~13:30 交易時段
+    scheduler.add_job(
+        intraday_spike_scan_job,
+        trigger=IntervalTrigger(minutes=5),
+        id="intraday_spike",
+        replace_existing=True,
+    )
 
     # VIX 定時檢查：台股盤前 08:30、台股收盤後 13:35、美股開盤後 22:30
     for vix_hour, vix_minute in [(8, 30), (13, 35), (22, 30)]:

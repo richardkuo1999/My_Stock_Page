@@ -33,6 +33,19 @@ _TW = ZoneInfo("Asia/Taipei")
 
 # --- 常數 ---
 MIS_BASE_URL = "https://mis.twse.com.tw/stock/api/getStockInfo.jsp"
+
+
+def _parse_price(raw: str | None) -> float | None:
+    """解析 MIS API 價格字串；"-" / 空值 / 0 皆回傳 None。"""
+    if not raw or raw.strip() in ("-", "--", "---"):
+        return None
+    try:
+        v = float(raw.replace(",", ""))
+        return v if v > 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
 MIS_BATCH_SIZE = 100          # 每批最多 100 支（URL 安全長度上限）
 MIS_CONCURRENT = 10           # 最大並發批次數
 MIS_TIMEOUT = aiohttp.ClientTimeout(total=10)
@@ -117,25 +130,29 @@ class IntradaySpikeScanner:
                     data = await resp.json(content_type=None)
                     for item in data.get("msgArray", []):
                         ticker = item.get("c", "")
+                        if not ticker:
+                            continue
                         vol_str = item.get("v", "0") or "0"  # 累積成交量（張）
-                        close_str = item.get("z", "-") or "-"  # 現價（"-" 表示未成交）
-                        prev_str = item.get("y", "0") or "0"   # 昨收
 
                         try:
                             lots = int(float(vol_str))
                         except (ValueError, TypeError):
                             lots = 0
 
-                        try:
-                            close = float(close_str) if close_str != "-" else None
-                        except (ValueError, TypeError):
-                            close = None
+                        # 昨收（計算漲跌幅基準）
+                        prev = _parse_price(item.get("y")) or 0.0
 
-                        try:
-                            prev = float(prev_str)
-                            change_pct = ((close - prev) / prev * 100) if close and prev else None
-                        except (ValueError, TypeError):
-                            change_pct = None
+                        # 現價 fallback 鏈：最新成交 z → 昨收 y → 開盤 o → (最高+最低)/2
+                        _h = _parse_price(item.get("h")) or 0
+                        _l = _parse_price(item.get("l")) or 0
+                        close = (
+                            _parse_price(item.get("z"))
+                            or _parse_price(item.get("y"))
+                            or _parse_price(item.get("o"))
+                            or ((_h + _l) / 2 if _h or _l else None)
+                        )
+
+                        change_pct = ((close - prev) / prev * 100) if close and prev else None
 
                         result[ticker] = {
                             "lots": lots,
@@ -220,12 +237,19 @@ class IntradaySpikeScanner:
             if current_lots <= 0 or current_lots < min_lots:
                 continue
 
-            ma20_lots = snap.get("ma20_lots", 0.0)
+            # MA20 計算：優先使用盤前 vol_19d_sum，fallback 舊版 ma20_lots
+            vol_19d_sum = snap.get("vol_19d_sum_lots")
+            if vol_19d_sum and vol_19d_sum > 0:
+                # 新版：(今日即時量 + 過去 19 日加總) / 20
+                ma20_lots = (current_lots + vol_19d_sum) / 20
+            else:
+                # 舊版 fallback（收盤掃描存的均量）
+                ma20_lots = snap.get("ma20_lots", 0.0)
+
             if ma20_lots <= 0:
                 continue
 
-            projected_lots = current_lots / time_progress
-            ratio = projected_lots / ma20_lots
+            ratio = current_lots / ma20_lots
 
             if ratio < threshold:
                 continue
@@ -235,8 +259,8 @@ class IntradaySpikeScanner:
                     ticker=ticker,
                     name=snap["name"],
                     close=row["close"],
-                    today_volume=int(round(projected_lots * 1000)),  # 預估全日量（股）
-                    ma20_volume=ma20_lots * 1000,                    # MA20（股）
+                    today_volume=int(current_lots * 1000),   # 今日即時量（股）
+                    ma20_volume=ma20_lots * 1000,             # MA20（股）
                     spike_ratio=ratio,
                     market=snap["market"],
                     change_pct=row["change_pct"],

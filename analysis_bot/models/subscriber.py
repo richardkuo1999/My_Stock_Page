@@ -10,3 +10,4 @@ class Subscriber(SQLModel, table=True):
     chat_id: int = Field(index=True, unique=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     is_active: bool = Field(default=True)
+    ispike_enabled: bool = Field(default=False)  # 訂閱盤中爆量通知

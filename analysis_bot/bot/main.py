@@ -47,8 +47,10 @@ from .handlers import (
     research_start,
     spike_command,
     start_command,
+    sub_ispike_command,
     subscribe_command,
     threads_command,
+    unsub_ispike_command,
     unsubscribe_command,
     vix_command,
     watch_command,
@@ -109,6 +111,8 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("hold888", hold888_command, filters=f))
     application.add_handler(CommandHandler("spike", spike_command, filters=f))
     application.add_handler(CommandHandler("ispike", intraday_spike_command, filters=f))
+    application.add_handler(CommandHandler("sub_ispike", sub_ispike_command, filters=f))
+    application.add_handler(CommandHandler("unsub_ispike", unsub_ispike_command, filters=f))
     application.add_handler(CommandHandler("vix", vix_command, filters=f))
     application.add_handler(CommandHandler("chatid", chatid_command, filters=f))
 

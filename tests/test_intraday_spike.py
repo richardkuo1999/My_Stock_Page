@@ -91,36 +91,56 @@ class TestScanIntraday:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_spike_detected(self):
+    async def test_spike_detected_fallback_ma20(self):
+        """vol_19d_sum_lots 不存在時，fallback 用 ma20_lots，ratio = current / ma20。"""
         scanner = IntradaySpikeScanner()
-        ma20 = {"2330": {"name": "台積電", "market": "TWSE", "ma20_lots": 1000.0}}
+        ma20 = {"2330": {"name": "台積電", "market": "TWSE", "ma20_lots": 500.0}}
 
-        # 11:15（135分鐘，進度 50%），mock 成交量 600 張
-        # projected_vol = 600 / 0.5 = 1200 張
-        # ratio = 1200 / 1000 = 1.2x → 未達 1.3x 的 mid-session 閾值
+        # 11:15（135 分鐘，超過 120 min），閾值 = base_ratio = 1.0
+        # ratio = 1200 / 500 = 2.4x > 1.0 → 偵測到
         with patch.object(scanner, "fetch_intraday_data", return_value={
-            "2330": {"lots": 600, "close": 800.0, "change_pct": 1.5}
+            "2330": {"lots": 1200, "close": 800.0, "change_pct": 1.5}
         }):
             results = await scanner.scan_intraday(
                 ma20_snapshot=ma20,
-                base_spike_ratio=1.0,  # 設低閾值確保偵測到
+                base_spike_ratio=1.0,
                 min_lots=100,
                 now_tw=_tw_time(11, 15),
             )
         assert len(results) == 1
         assert results[0].ticker == "2330"
-        assert results[0].spike_ratio > 1.0
+        assert abs(results[0].spike_ratio - 2.4) < 0.01
         assert results[0].close == 800.0
         assert results[0].change_pct == 1.5
+
+    @pytest.mark.asyncio
+    async def test_spike_detected_vol19d_formula(self):
+        """vol_19d_sum_lots 存在時，MA20 = (今日量 + 19日加總) / 20。"""
+        scanner = IntradaySpikeScanner()
+        # 過去 19 日加總 = 9500 張（平均 500 張/日）
+        ma20 = {"2330": {"name": "台積電", "market": "TWSE", "ma20_lots": 500.0, "vol_19d_sum_lots": 9500.0}}
+
+        # 今日量 2000 張 → MA20 = (2000 + 9500) / 20 = 575 → ratio = 2000 / 575 ≈ 3.48x
+        with patch.object(scanner, "fetch_intraday_data", return_value={
+            "2330": {"lots": 2000, "close": 800.0, "change_pct": 2.0}
+        }):
+            results = await scanner.scan_intraday(
+                ma20_snapshot=ma20,
+                base_spike_ratio=1.5,
+                min_lots=100,
+                now_tw=_tw_time(11, 15),
+            )
+        assert len(results) == 1
+        expected_ma20 = (2000 + 9500) / 20
+        expected_ratio = 2000 / expected_ma20
+        assert abs(results[0].spike_ratio - expected_ratio) < 0.01
 
     @pytest.mark.asyncio
     async def test_below_threshold_not_included(self):
         scanner = IntradaySpikeScanner()
         ma20 = {"2330": {"name": "台積電", "market": "TWSE", "ma20_lots": 1000.0}}
 
-        # 12:00（180分鐘，進度 66.7%），mock 成交量 100 張
-        # projected_vol = 100 / 0.667 ≈ 150 張
-        # ratio = 150 / 1000 = 0.15x → 遠低於閾值
+        # ratio = 100 / 1000 = 0.1x → 遠低於閾值 1.5x
         with patch.object(scanner, "fetch_intraday_data", return_value={
             "2330": {"lots": 100, "close": 800.0, "change_pct": 0.5}
         }):
@@ -180,3 +200,58 @@ class TestScanIntraday:
         assert len(results) == 2
         assert results[0].ticker == "2454"  # 漲幅 5.0%
         assert results[1].ticker == "2330"  # 漲幅 1.0%
+
+    @pytest.mark.asyncio
+    async def test_sort_by_change_tiebreak_by_ratio(self):
+        """漲幅相同時，按爆量倍數降序。"""
+        from analysis_bot.services.volume_spike_scanner import SpikeSortBy
+
+        scanner = IntradaySpikeScanner()
+        ma20 = {
+            "2330": {"name": "台積電", "market": "TWSE", "ma20_lots": 100.0},
+            "2454": {"name": "聯發科", "market": "TWSE", "ma20_lots": 50.0},
+        }
+
+        # 同漲幅 3.0%，2330: ratio=300/100=3x，2454: ratio=300/50=6x → 2454 先
+        with patch.object(scanner, "fetch_intraday_data", return_value={
+            "2330": {"lots": 300, "close": 800.0, "change_pct": 3.0},
+            "2454": {"lots": 300, "close": 1800.0, "change_pct": 3.0},
+        }):
+            results = await scanner.scan_intraday(
+                ma20_snapshot=ma20,
+                base_spike_ratio=1.0,
+                min_lots=100,
+                sort_by=SpikeSortBy.CHANGE,
+                now_tw=_tw_time(11, 0),
+            )
+
+        assert len(results) == 2
+        assert results[0].ticker == "2454"  # 同漲幅，倍數 6x 優先
+        assert results[1].ticker == "2330"  # 倍數 3x
+
+
+class TestParsePrice:
+    def test_valid_price(self):
+        from analysis_bot.services.intraday_spike_scanner import _parse_price
+        assert _parse_price("1955.0000") == 1955.0
+        assert _parse_price("200.5000") == 200.5
+
+    def test_dash_returns_none(self):
+        from analysis_bot.services.intraday_spike_scanner import _parse_price
+        assert _parse_price("-") is None
+        assert _parse_price("--") is None
+        assert _parse_price("---") is None
+
+    def test_empty_returns_none(self):
+        from analysis_bot.services.intraday_spike_scanner import _parse_price
+        assert _parse_price(None) is None
+        assert _parse_price("") is None
+
+    def test_zero_returns_none(self):
+        from analysis_bot.services.intraday_spike_scanner import _parse_price
+        assert _parse_price("0") is None
+        assert _parse_price("0.0000") is None
+
+    def test_comma_separated(self):
+        from analysis_bot.services.intraday_spike_scanner import _parse_price
+        assert _parse_price("1,955.00") == 1955.0
