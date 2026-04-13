@@ -77,7 +77,7 @@ def _render(
         if append_ts > close.index[-1]:
             close.loc[append_ts] = float(live_price)
             close = close.sort_index()
-    last = float(close.iloc[-1])
+    last = float(live_price) if live_price and live_price > 0 else float(close.iloc[-1])
     baseline = prev_close if prev_close and prev_close > 0 else float(close.iloc[0])
     change = last - baseline
     pct = (change / baseline * 100) if baseline else 0.0

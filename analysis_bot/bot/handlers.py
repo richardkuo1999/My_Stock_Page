@@ -63,8 +63,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 *爆量偵測：*
 • `🔥 爆量偵測` - 按爆量倍數排序（預設）
-• `/spike` - 收盤爆量，按倍數排序
+• `/spike` - 收盤爆量，按 MA20 倍數排序
 • `/spike change` - 收盤爆量，按漲幅排序
+• `/spike t1` - 收盤爆量，按前日倍數排序
 • `/ispike` - 盤中爆量（即時），按倍數排序
 • `/ispike change` - 盤中爆量，按漲幅排序
 • `/sub_ispike` - 訂閱盤中爆量自動通知
@@ -76,6 +77,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • 例：`/esti 2330` - 查詢台積電估值
 
 *資訊查詢：*
+• `/p <股票代碼>` - 即時股價 + 盤中走勢圖（台股 09:00–13:30）
 • `/info <股票代碼>` - 公司介紹與基本資訊
 • `/news <股票代碼>` - 該股最新新聞
 • `/google <股票代碼>` - Google 新聞搜尋
@@ -330,7 +332,8 @@ async def spike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "❌ 無效的排序選項。可用選項：\n"
             "• ratio - 按爆量倍數降序（預設）\n"
-            "• change - 按漲幅降序"
+            "• change - 按漲幅降序\n"
+            "• t1 - 按前日倍數降序"
         )
         return
 
@@ -412,7 +415,8 @@ async def intraday_spike_command(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(
             "❌ 無效的排序選項。可用選項：\n"
             "• ratio - 按爆量倍數降序（預設）\n"
-            "• change - 按漲幅降序"
+            "• change - 按漲幅降序\n"
+            "• t1 - 按前日倍數降序"
         )
         return
 

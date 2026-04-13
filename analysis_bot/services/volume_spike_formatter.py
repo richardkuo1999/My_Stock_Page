@@ -22,6 +22,8 @@ NAME_W = 8
 PRICE_CHG_W = 18
 # 「 1234.5x」欄寬；與上一欄之間僅 1 空白
 RATIO_FIELD_W = 8
+# 前日倍數欄寬
+RATIO_T1_FIELD_W = 8
 
 # 第一上市櫃等後綴；截斷時須整段保留，避免「-K」後僅剩 1 寬度而吃掉尾端 y
 _STOCK_NAME_SUFFIXES: tuple[str, ...] = ("-KY", "-DR")
@@ -103,11 +105,16 @@ def pad_price_chg_cell(
 def format_spike_row(r: VolumeSpikeResult) -> str:
     """單筆爆量股的表格列。"""
     ratio_s = f"{r.spike_ratio:>6.1f}x".rjust(RATIO_FIELD_W)
+    if r.spike_ratio_t1 is not None:
+        t1_s = f"{r.spike_ratio_t1:>6.1f}x".rjust(RATIO_T1_FIELD_W)
+    else:
+        t1_s = " " * RATIO_T1_FIELD_W
     return (
         f"{pad_visual(str(r.ticker), TICKER_W)}"
         f"{pad_stock_name(r.name)}"
         f"{pad_price_chg_cell(r)}"
-        f" {ratio_s}\n"
+        f" {ratio_s}"
+        f" {t1_s}\n"
     )
 
 
@@ -117,9 +124,10 @@ def get_table_header() -> str:
         f"{pad_visual('代碼', TICKER_W)}"
         f"{pad_visual('名稱', NAME_W)}"
         f"{pad_visual('股價(漲幅)', PRICE_CHG_W)}"
-        f" {pad_visual('倍數', RATIO_FIELD_W)}\n"
+        f" {pad_visual('倍數', RATIO_FIELD_W)}"
+        f" {pad_visual('前日', RATIO_T1_FIELD_W)}\n"
     )
-    dash_len = TICKER_W + NAME_W + PRICE_CHG_W + 1 + RATIO_FIELD_W
+    dash_len = TICKER_W + NAME_W + PRICE_CHG_W + 1 + RATIO_FIELD_W + 1 + RATIO_T1_FIELD_W
     return f"```\n{line}{'-' * dash_len}\n"
 
 

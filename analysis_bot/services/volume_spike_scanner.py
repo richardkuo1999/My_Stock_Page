@@ -37,11 +37,12 @@ class SpikeSortBy(Enum):
     """爆量結果排序方式"""
     RATIO = "ratio"      # 按爆量倍數降序（預設，向後兼容）
     CHANGE = "change"    # 按漲幅降序
+    T1 = "t1"            # 按前日倍數降序
 
     @property
     def display_name(self) -> str:
         """取得用於顯示的中文名稱"""
-        return {"ratio": "爆量倍數", "change": "漲幅"}[self.value]
+        return {"ratio": "爆量倍數", "change": "漲幅", "t1": "前日倍數"}[self.value]
 
 
 @dataclass
@@ -56,6 +57,8 @@ class VolumeSpikeResult:
     spike_ratio: float
     market: str  # "TWSE" or "TPEx"
     change_pct: float | None = None  # 當日漲跌幅 %
+    prev_day_volume: int | None = None  # 前一交易日成交量（股數）
+    spike_ratio_t1: float | None = None  # 今日量 / 昨日量
     trade_date: date | None = None  # Yahoo 日線最後一根日期（yfinance）
     yahoo_bar_is_taipei_today: bool = False  # 最後一根日線是否等於台北曆日「今天」
     news_titles: list[str] = field(default_factory=list)
@@ -140,6 +143,8 @@ def _metrics_from_daily_frame(
     if ma_vol <= 0:
         return None
     ratio = last_vol / ma_vol
+    prev_vol = float(vol.iloc[-2]) if len(vol) >= 2 else None
+    ratio_t1 = (last_vol / prev_vol) if (prev_vol and prev_vol > 0) else None
     last_close = float(close.iloc[-1])
     prev_close = float(close.iloc[-2])
     chg = ((last_close - prev_close) / prev_close * 100) if prev_close else None
@@ -153,6 +158,8 @@ def _metrics_from_daily_frame(
         "volume": int(round(last_vol)),
         "ma_vol": ma_vol,
         "ratio": ratio,
+        "prev_volume": int(round(prev_vol)) if prev_vol is not None else None,
+        "ratio_t1": ratio_t1,
         "close": last_close,
         "change_pct": chg,
         "bar_date": bar_date,
@@ -201,6 +208,13 @@ def sort_results(results: list[VolumeSpikeResult], sort_by: SpikeSortBy) -> list
         return sorted(
             results,
             key=lambda r: (r.change_pct is not None, r.change_pct if r.change_pct is not None else float('-inf'), r.spike_ratio),
+            reverse=True
+        )
+    elif sort_by == SpikeSortBy.T1:
+        # 按前日倍數降序，同值再按 MA20 倍數降序；None 值排最後
+        return sorted(
+            results,
+            key=lambda r: (r.spike_ratio_t1 is not None, r.spike_ratio_t1 if r.spike_ratio_t1 is not None else float('-inf'), r.spike_ratio),
             reverse=True
         )
     return results
@@ -312,6 +326,8 @@ class VolumeSpikeScanner:
                     spike_ratio=m["ratio"],
                     market=s["market"],
                     change_pct=m["change_pct"],
+                    prev_day_volume=m.get("prev_volume"),
+                    spike_ratio_t1=m.get("ratio_t1"),
                     trade_date=m["bar_date"],
                     yahoo_bar_is_taipei_today=m.get(
                         "bar_is_calendar_today",
