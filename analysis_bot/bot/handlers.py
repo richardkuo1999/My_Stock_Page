@@ -78,6 +78,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 *資訊查詢：*
 • `/p <股票代碼>` - 即時股價 + 盤中走勢圖（台股 09:00–13:30）
+• `/k <股票代碼>` - K 線圖（近 3 個月日線，含 MA5/20/60 與量）
 • `/info <股票代碼>` - 公司介紹與基本資訊
 • `/news <股票代碼>` - 該股最新新聞
 • `/google <股票代碼>` - Google 新聞搜尋
@@ -249,6 +250,34 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
     except Exception as e:
         logger.debug("intraday chart send failed: %s", e)
+
+
+async def kline_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """日 K 線圖（近 3 個月，含 MA5/20/60 與量）。用法：/k 2330"""
+    logger.info("kline_command received: args=%s", context.args)
+    ticker = context.args[0].strip() if context.args and context.args[0] else None
+    if not ticker:
+        await update.message.reply_text("❌ 用法：/k 2330")
+        return
+    await update.message.reply_chat_action(ChatAction.TYPING)
+    try:
+        from ..services.candlestick_chart import render_candlestick_chart
+
+        chart_path = await render_candlestick_chart(ticker)
+        if not chart_path:
+            await update.message.reply_text(f"❌ 找不到 {ticker} 的 K 線資料")
+            return
+        with open(chart_path, "rb") as f:
+            await update.message.reply_photo(photo=f)
+        try:
+            import os
+
+            os.remove(chart_path)
+        except OSError:
+            pass
+    except Exception as e:
+        logger.exception("kline command error")
+        await update.message.reply_text(f"❌ K 線產生失敗：{str(e)[:150]}")
 
 
 async def hold981_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

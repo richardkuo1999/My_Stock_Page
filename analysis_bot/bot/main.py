@@ -35,6 +35,7 @@ from .handlers import (
     hold981_command,
     info_command,
     intraday_spike_command,
+    kline_command,
     menu_settings_handler,
     menu_stock_esti_start,
     menu_stock_info_start,
@@ -107,6 +108,7 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("threads", threads_command, filters=f))
     application.add_handler(CommandHandler("name", name_command, filters=f))
     application.add_handler(CommandHandler("p", price_command, filters=f))
+    application.add_handler(CommandHandler("k", kline_command, filters=f))
     application.add_handler(CommandHandler("hold981", hold981_command, filters=f))
     application.add_handler(CommandHandler("hold888", hold888_command, filters=f))
     application.add_handler(CommandHandler("spike", spike_command, filters=f))
