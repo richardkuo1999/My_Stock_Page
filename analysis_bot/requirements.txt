@@ -27,4 +27,5 @@ pytest-mock==3.14.0
 pytest-cov==5.0.0
 ollama==0.6.1
 playwright>=1.40.0
+matplotlib
 

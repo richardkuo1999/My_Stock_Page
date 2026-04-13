@@ -230,6 +230,23 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.exception("Price command error")
         await update.message.reply_text(f"❌ 查詢失敗：{str(e)[:150]}")
+        return
+
+    try:
+        from ..services.intraday_chart import render_intraday_chart
+
+        chart_path = await render_intraday_chart(ticker)
+        if chart_path:
+            with open(chart_path, "rb") as f:
+                await update.message.reply_photo(photo=f)
+            try:
+                import os
+
+                os.remove(chart_path)
+            except OSError:
+                pass
+    except Exception as e:
+        logger.debug("intraday chart send failed: %s", e)
 
 
 async def hold981_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
