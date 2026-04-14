@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = "sqlite:///./stock_data.db"
+    YYU_DB_PATH: str = ""  # Optional: Path to yyu_project/data/stock_data.db for kline data
 
     # Financial Data
     FINMIND_TOKENS: list[str] = []  # Supports JSON list from .env

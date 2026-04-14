@@ -1,14 +1,17 @@
 """日 K 線圖（TradingView lightweight-charts + Playwright headless 截圖）。
 
-yfinance 抓日線 → 組 HTML → Chromium 渲染 → 截圖 PNG。
+優先從 yyu_project DB 讀取 → 備用 yfinance 抓日線 → 組 HTML → Chromium 渲染 → 截圖 PNG。
 """
 
 import asyncio
 import json
 import logging
 import os
+import sqlite3
 import tempfile
+from datetime import datetime, timedelta
 
+import pandas as pd
 import yfinance as yf
 from playwright.async_api import async_playwright
 
@@ -17,6 +20,62 @@ from ..utils.ticker_utils import get_tw_search_tickers, is_taiwan_ticker
 logger = logging.getLogger(__name__)
 
 _LOOKBACK_DAYS = 90
+
+
+def _fetch_from_db(ticker: str, db_path: str) -> tuple[str | None, pd.DataFrame | None]:
+    """從 yyu_project 的 stock_data.db 讀取 K 線數據。
+
+    Args:
+        ticker: 股票代碼（例："2330" 或 "2330.TW"）
+        db_path: stock_data.db 的絕對路徑
+
+    Returns:
+        (symbol, dataframe) 或 (None, None)
+    """
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            # 支援有無 .TW/.TWO 後綴，取純數字部分
+            clean_ticker = ticker.split(".")[0].strip()
+
+            # 查 stocks 表
+            row = conn.execute(
+                "SELECT stock_id, ticker, name FROM stocks WHERE ticker = ?",
+                (clean_ticker,),
+            ).fetchone()
+            if not row:
+                return None, None
+
+            stock_id, sym, name = row
+
+            # 取最近 8 個月的 candles（245 天 ≈ 8 個月）
+            cutoff = (datetime.now() - timedelta(days=245)).strftime("%Y-%m-%d")
+            df_rows = conn.execute(
+                "SELECT date, open, high, low, close, volume FROM candles "
+                "WHERE stock_id = ? AND date >= ? ORDER BY date",
+                (stock_id, cutoff),
+            ).fetchall()
+
+            if not df_rows:
+                return None, None
+
+            # 轉換成 pandas DataFrame，格式與 yfinance 相同
+            df = pd.DataFrame(
+                df_rows,
+                columns=["date", "Open", "High", "Low", "Close", "Volume"]
+            )
+            df.index = pd.to_datetime(df["date"])
+            df.index = df.index.tz_localize("Asia/Taipei")
+            df = df.drop(columns=["date"])
+
+            logger.debug("kline from local DB: %s (%d rows)", sym, len(df))
+            return sym, df
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.debug("db fetch failed: %s", e)
+        return None, None
+
 
 _HTML_TEMPLATE = """<!doctype html>
 <html><head><meta charset="utf-8"/>
@@ -73,6 +132,18 @@ window.__ready__ = true;
 
 
 def _fetch_daily(ticker: str):
+    # 優先嘗試從 yyu_project DB 讀取
+    try:
+        from ..config import settings
+        db_path = settings.YYU_DB_PATH
+        if db_path and os.path.exists(db_path):
+            sym, df = _fetch_from_db(ticker, db_path)
+            if df is not None and not df.empty:
+                return sym, df
+    except Exception as e:
+        logger.debug("db source skipped: %s", e)
+
+    # 備用方案：yfinance
     search = get_tw_search_tickers(ticker) if is_taiwan_ticker(ticker) else [ticker]
     for sym in search:
         try:
