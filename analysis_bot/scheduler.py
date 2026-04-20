@@ -1146,21 +1146,21 @@ def start_scheduler():
     #     # next_run_time=datetime.now()  # 若要啟動後立刻跑，再打開這行
     # )
 
-    # 盤前 vol19 掃描：08:00（抓過去 19 日量，供盤中 MA20 計算）
-    scheduler.add_job(
-        premarket_vol19_job,
-        trigger=CronTrigger(hour=8, minute=0, timezone="Asia/Taipei"),
-        id="premarket_vol19",
-        replace_existing=True,
-    )
+    # NOTE: 盤前 vol19 掃描暫停（盤中爆量偵測已關閉，vol19 不需要跑）
+    # scheduler.add_job(
+    #     premarket_vol19_job,
+    #     trigger=CronTrigger(hour=8, minute=0, timezone="Asia/Taipei"),
+    #     id="premarket_vol19",
+    #     replace_existing=True,
+    # )
 
-    # 盤中爆量偵測：每 5 分鐘觸發，job 內部檢查是否在 09:35~13:30 交易時段
-    scheduler.add_job(
-        intraday_spike_scan_job,
-        trigger=IntervalTrigger(minutes=5),
-        id="intraday_spike",
-        replace_existing=True,
-    )
+    # NOTE: 盤中爆量偵測暫停。需要再啟用時，把下面區塊取消註解即可。
+    # scheduler.add_job(
+    #     intraday_spike_scan_job,
+    #     trigger=IntervalTrigger(minutes=5),
+    #     id="intraday_spike",
+    #     replace_existing=True,
+    # )
 
     # VIX 定時檢查：台股盤前 08:30、台股收盤後 13:35、美股開盤後 22:30
     for vix_hour, vix_minute in [(8, 30), (13, 35), (22, 30)]:
