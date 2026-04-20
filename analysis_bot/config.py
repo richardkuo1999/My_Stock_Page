@@ -67,6 +67,25 @@ class Settings(BaseSettings):
     INTRADAY_SPIKE_BASE_RATIO: float = 1.5       # 基礎爆量閾值（依時段動態調整）
     INTRADAY_SPIKE_CHAT_ID: str = ""             # 推播 chat_id，空值 fallback 到 TELEGRAM_CHAT_ID
 
+    # Vocus 追蹤帳號
+    VOCUS_USERS: list[str] = ["@ieobserve", "@miula", "65ab564cfd897800018a88cc"]
+
+    # Blake Finance CHIPS URL
+    BLAKE_CHIPS_URL_981: str = "https://blake-finance-notes.org/chips_blake_finance/code_php/00981A.php"
+    BLAKE_CHIPS_URL_888: str = "https://blake-finance-notes.org/chips_blake_finance/code_php/00981A_match_888.php"
+
+    # UAnalyze
+    UANALYZE_AI_URL_TEMPLATE: str = ""
+    UANALYZE_API_URL: str = ""
+    UANALYZE_KEYWORDS: str = ""  # comma-separated
+
+    # UAnalyze Monitor → Telegram
+    TELEGRAM_AI_NEWS_CHAT_ID: str = ""
+    TELEGRAM_AI_NEWS_TOPIC_ID: int = 0
+
+    # MEGA
+    MEGA_PUBLIC_URL: str = ""
+
     # Parallel Analysis Settings
     MAX_CONCURRENT_ANALYSIS: int = 10  # Maximum concurrent stock analyses
     ANALYSIS_PROGRESS_INTERVAL: int = 50  # Send progress update every N stocks
