@@ -28,9 +28,13 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import asyncio as _aio
+    from concurrent.futures import ThreadPoolExecutor
 
     global bot_app, _bot_app_lock
     _bot_app_lock = _aio.Lock()
+
+    # Increase default thread pool so yfinance batch downloads don't starve other tasks
+    _aio.get_event_loop().set_default_executor(ThreadPoolExecutor(max_workers=32))
 
     # Startup
     setup_logging()
@@ -73,26 +77,33 @@ async def lifespan(app: FastAPI):
                 from telegram import BotCommand
 
                 commands = [
-                    BotCommand("start", "主選單 Menu"),
-                    BotCommand("news", "財經新聞 News"),
-                    BotCommand("info", "個股分析 Analysis"),
-                    BotCommand("esti", "估值報告 Valuation"),
-                    BotCommand("p", "即時股價"),
-                    BotCommand("hold981", "00981A持股變化"),
-                    BotCommand("hold888", "00981A & 大額權證買超"),
-                    BotCommand("spike", "爆量偵測 Volume Spike"),
-                    BotCommand("ispike", "盤中爆量 Intraday Spike"),
-                    BotCommand("sub_ispike", "訂閱盤中爆量通知"),
-                    BotCommand("unsub_ispike", "取消盤中爆量通知"),
-                    BotCommand("vix", "VIX 恐慌指數"),
-                    BotCommand("research", "AI 研究 Research"),
-                    BotCommand("google_news", "Google 新聞"),
-                    BotCommand("chat", "AI 聊天 Chat"),
-                    BotCommand("subscribe", "訂閱每日分析"),
-                    BotCommand("unsubscribe", "取消訂閱"),
-                    BotCommand("watch", "自選股 Watchlist"),
-                    BotCommand("threads", "Threads 新貼文"),
-                    BotCommand("help", "幫助 Help"),
+                    BotCommand("menu", "📋 互動選單"),
+                    BotCommand("help", "📖 完整指令"),
+                    BotCommand("p", "💹 即時股價"),
+                    BotCommand("k", "📈 K 線圖"),
+                    BotCommand("info", "🏢 個股分析"),
+                    BotCommand("esti", "🎯 估值報告"),
+                    BotCommand("name", "🏷 公司名稱"),
+                    BotCommand("spike", "🔥 收盤爆量"),
+                    BotCommand("ispike", "⚡ 盤中爆量"),
+                    BotCommand("sub_ispike", "🔔 訂閱盤中爆量"),
+                    BotCommand("unsub_ispike", "🔕 取消盤中爆量"),
+                    BotCommand("news", "📰 新聞選單"),
+                    BotCommand("google", "🔍 Google 新聞"),
+                    BotCommand("chat", "💬 AI 聊天"),
+                    BotCommand("research", "📚 上傳研究"),
+                    BotCommand("vix", "😱 VIX"),
+                    BotCommand("ua", "🔬 UAnalyze 分析"),
+                    BotCommand("uask", "💡 UAnalyze 問答"),
+                    BotCommand("umon", "🔍 UAnalyze 監控"),
+                    BotCommand("mega", "📥 MEGA 下載"),
+                    BotCommand("watch", "⭐ 自選股"),
+                    BotCommand("threads", "🧵 Threads 追蹤"),
+                    BotCommand("hold981", "🏦 00981A 持股"),
+                    BotCommand("hold888", "🏦 大額權證"),
+                    BotCommand("subscribe", "📬 訂閱推播"),
+                    BotCommand("unsubscribe", "🔕 取消訂閱"),
+                    BotCommand("chatid", "🆔 Chat ID"),
                 ]
                 await bot_app.bot.set_my_commands(commands)
 
