@@ -2,24 +2,48 @@ import asyncio
 import io
 import json
 import logging
+import os
 import re
+from contextlib import suppress
 from datetime import datetime
+from urllib.parse import quote
+from zoneinfo import ZoneInfo
+
+from docx import Document as DocxDocument
+from sqlmodel import Session, select
 
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InputFile,
-    ReplyKeyboardMarkup,
     Update,
 )
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 
+from ..config import get_settings
+from ..database import engine
+from ..models.intraday_ma import IntradayMA20Snapshot
+from ..models.subscriber import Subscriber
+from ..models.stock import StockData
+from ..models.threads_watch import ThreadsWatchEntry
+from ..models.watchlist import WatchlistEntry
 from ..services.ai_service import AIService, RequestType
+from ..services.blake_chips_scraper import fetch_chips_data, fetch_chips_data_888
+from ..services.intraday_chart import render_intraday_chart
+from ..services.intraday_spike_scanner import IntradaySpikeScanner
 from ..services.legacy_scraper import LegacyMoneyDJ
 from ..services.news_parser import NewsParser
+from ..services.price_fetcher import fetch_price
 from ..services.report_generator import ReportGenerator
+from ..services.spike_pager import (
+    build_spike_markdown_header,
+    build_spike_telegram_html_messages,
+)
 from ..services.stock_service import StockService
+from ..services.vix_fetcher import fetch_vix_snapshot, format_vix_message
+from ..services.volume_spike_scanner import SpikeSortBy, VolumeSpikeScanner
+from .jobs import process_threads_watch_entry
 
 logger = logging.getLogger(__name__)
 
@@ -29,78 +53,324 @@ _THREADS_USERNAME_RE = re.compile(r"^[A-Za-z0-9._]+$")
 
 # Conversation states
 ASK_RESEARCH = 1
-ASK_GOOGLE_NEWS = 2
-ASK_TICKER_INFO = 3
-ASK_TICKER_ESTI = 4
-
 ASK_CHAT = 5
+
+
+def _build_news_main_keyboard():
+    """共用的新聞來源選單 InlineKeyboard。"""
+    return [
+        [
+            InlineKeyboardButton("鉅亨網 (CNYES)", callback_data="news_cnyes"),
+            InlineKeyboardButton("Google News (TW)", callback_data="news_google"),
+        ],
+        [
+            InlineKeyboardButton("Moneydj", callback_data="news_moneydj"),
+            InlineKeyboardButton("Yahoo 股市", callback_data="news_yahoo"),
+        ],
+        [
+            InlineKeyboardButton("聯合新聞網 (UDN)", callback_data="news_udn"),
+            InlineKeyboardButton("UAnalyze", callback_data="news_uanalyze"),
+        ],
+        [
+            InlineKeyboardButton("財經M平方", callback_data="news_macromicro"),
+            InlineKeyboardButton("瑞星財經 (FinGuider)", callback_data="news_finguider"),
+        ],
+        [
+            InlineKeyboardButton("Fintastic", callback_data="news_fintastic"),
+            InlineKeyboardButton("Forecastock", callback_data="news_forecastock"),
+        ],
+        [
+            InlineKeyboardButton("方格子 (Vocus)", callback_data="news_vocus_menu"),
+            InlineKeyboardButton("NewsDigest AI", callback_data="news_ndai"),
+        ],
+        [InlineKeyboardButton("Fugle Report", callback_data="news_fugle")],
+        [
+            InlineKeyboardButton("永豐｜3分鐘產業百科", callback_data="news_sinotrade_industry"),
+            InlineKeyboardButton("口袋學堂｜研究報告", callback_data="news_pocket_report"),
+        ],
+    ]
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a message when the command /start is issued."""
-    # Main Menu Keyboard
-    keyboard = [
-        ["📰 最新新聞", "📊 公司介紹/分析"],
-        ["📈 估值報告", "🔥 爆量偵測", "🔎 檔案 Summary"],
-        ["🔍 Google 新聞", "💬 AI 聊天"],
-        ["⚙️ 設定/訂閱"],
-    ]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-
     await update.message.reply_text(
-        "Stock Analysis Bot Ready! 請選擇功能：", reply_markup=reply_markup
+        "Stock Analysis Bot Ready!\n輸入 /help 查看所有指令"
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Display detailed help message with all available commands."""
-    help_text = """
-🤖 *Stock Analysis Bot - 幫助*
-
-*主要命令：*
-• `/start` - 顯示主菜單
-• `/help` - 顯示此幫助訊息
-
-*爆量偵測：*
-• `🔥 爆量偵測` - 按爆量倍數排序（預設）
-• `/spike` - 收盤爆量，按 MA20 倍數排序
-• `/spike change` - 收盤爆量，按漲幅排序
-• `/spike t1` - 收盤爆量，按前日倍數排序
-• `/ispike` - 盤中爆量（即時），按倍數排序
-• `/ispike change` - 盤中爆量，按漲幅排序
-• `/sub_ispike` - 訂閱盤中爆量自動通知
-• `/unsub_ispike` - 取消訂閱盤中爆量通知
-
-*估值分析：*
-• `📈 估值報告` - 獲取樂活五線譜估值
-• `/esti <股票代碼>` - 查詢個股估值
-• 例：`/esti 2330` - 查詢台積電估值
-
-*資訊查詢：*
-• `/p <股票代碼>` - 即時股價 + 盤中走勢圖（台股 09:00–13:30）
-• `/k <股票代碼>` - K 線圖（近 3 個月日線，含 MA5/20/60 與量）
-• `/info <股票代碼>` - 公司介紹與基本資訊
-• `/news <股票代碼>` - 該股最新新聞
-• `/google <股票代碼>` - Google 新聞搜尋
-
-*其他功能：*
-• `/chat <問題>` - AI 聊天助理
-• `/research <股票代碼>` - 完整投資研究報告
-
-*訂閱管理：*
-• `/subscribe` - 訂閱每日爆量通知
-• `/unsubscribe` - 取消訂閱
-
-💡 *提示：*
-輸入無效參數時會收到具體的使用說明。
-所有命令都可透過菜單按鈕快速執行。
-"""
+    help_text = (
+        "🤖 *Stock Analysis Bot — 完整指令*\n\n"
+        "🏠 *基本*\n"
+        "• `/start` — 啟動機器人\n"
+        "• `/help` — 顯示此幫助訊息\n"
+        "• `/menu` — 開啟互動選單\n\n"
+        "📊 *資訊查詢*\n"
+        "• `/p <股號>` — 💹 即時股價 + 盤中走勢圖\n"
+        "  例：`/p 2330`\n"
+        "• `/k <股號>` — 📈 K 線圖（近 3 個月，含 MA5/20/60）\n"
+        "  例：`/k 2330`\n"
+        "• `/info <股號>` — 🏢 公司介紹與基本面 AI 報告\n"
+        "  例：`/info 2330`\n"
+        "• `/esti <股號>` — 🎯 樂活五線譜估值分析\n"
+        "  例：`/esti 2330`\n"
+        "• `/name <股號>` — 🏷 查詢公司名稱\n"
+        "• `/vix` — 😱 VIX 恐慌指數現值\n\n"
+        "🔥 *爆量偵測*\n"
+        "• `/spike` — 收盤爆量（預設按倍數排序）\n"
+        "• `/spike change` — 按漲幅排序\n"
+        "• `/spike t1` — 按前日倍數排序\n"
+        "• `/ispike` — ⚡ 盤中爆量（即時）\n"
+        "• `/ispike change` — 盤中爆量，按漲幅排序\n"
+        "• `/sub_ispike` — 🔔 訂閱盤中爆量自動通知\n"
+        "• `/unsub_ispike` — 🔕 取消訂閱盤中爆量通知\n\n"
+        "📰 *新聞與搜尋*\n"
+        "• `/news` — 開啟新聞來源選單\n"
+        "• `/google <關鍵字>` — 🔍 Google 新聞搜尋\n"
+        "  例：`/google 台積電`\n\n"
+        "🤖 *AI 工具*\n"
+        "• `/chat <問題>` — 💬 AI 單次回答\n"
+        "  例：`/chat 台股明天怎麼看`\n"
+        "• `/chat` — 進入 AI 對話模式（輸入 exit 離開）\n"
+        "• `/research` — 📚 上傳 PDF/DOCX 生成研究摘要\n"
+        "  上傳完畢後輸入 `/rq` 產生報告\n\n"
+        "⭐ *自選股 & 追蹤*\n"
+        "• `/watch add <股號>` — 加入自選股\n"
+        "• `/watch remove <股號>` — 移除自選股\n"
+        "• `/watch list` — 查看自選股清單\n"
+        "• `/threads add <帳號>` — 🧵 訂閱 Threads 帳號\n"
+        "• `/threads remove <帳號>` — 取消訂閱\n"
+        "• `/threads list` — 查看訂閱清單\n"
+        "• `/threads check` — 立即檢查新貼文\n"
+        "• `/threads bootstrap <帳號>` — 記錄現有貼文\n\n"
+        "🏦 *持股查詢*\n"
+        "• `/hold981` — 00981A 持股變化\n"
+        "• `/hold981 2026-03-18` — 指定日期\n"
+        "• `/hold888` — 大額權證買超\n\n"
+        "📬 *訂閱管理*\n"
+        "• `/subscribe` — 訂閱每日推播\n"
+        "• `/unsubscribe` — 取消訂閱\n\n"
+        "📊 *UAnalyze / MEGA*\n"
+        "• `/ua <股號>` — 🔬 AI 多題分析\n"
+        "  例：`/ua 2330 2317`\n"
+        "• `/uask <股號> <問題>` — 💡 自訂問題\n"
+        "  例：`/uask 2330 近期營收？`\n"
+        "• `/mega y|n <關鍵字>` — 📥 MEGA 搜尋下載\n"
+        "  例：`/mega y 企劃`\n\n"
+        "⚙️ *其他*\n"
+        "• `/chatid` — 查看目前 Chat ID\n"
+        "• `/menu` — 互動式指令選單"
+    )
     await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
+
+
+# --- Menu (InlineKeyboard) ---
+
+_MENU_CATEGORIES = [
+    ("📊 資訊查詢", "menu_cat_query"),
+    ("🔥 爆量偵測", "menu_cat_spike"),
+    ("📰 新聞與搜尋", "menu_cat_news"),
+    ("🤖 AI 工具", "menu_cat_ai"),
+    ("🔬 UAnalyze", "menu_cat_ua"),
+    ("⭐ 自選股 & 追蹤", "menu_cat_watch"),
+    ("🏦 持股查詢", "menu_cat_hold"),
+    ("📬 訂閱管理", "menu_cat_sub"),
+    ("⚙️ 其他", "menu_cat_misc"),
+]
+
+# Each category: (description_text, buttons)
+# Buttons: list of rows, each row is list of (label, action)
+# action: str starting with "/" → switch_inline_query_current_chat (insert to input)
+#          str starting with "!" → callback_data to execute directly
+_MENU_PAGES: dict[str, tuple[str, list[list[tuple[str, str]]]]] = {
+    "menu_cat_query": (
+        "📊 *資訊查詢*\n點擊按鈕將指令填入輸入框，補上股號後送出",
+        [
+            [("💹 股價 /p", "/p "), ("📈 K線 /k", "/k ")],
+            [("🏢 介紹 /info", "/info "), ("🎯 估值 /esti", "/esti ")],
+            [("🏷 名稱 /name", "/name "), ("😱 VIX", "!vix")],
+        ],
+    ),
+    "menu_cat_spike": (
+        "🔥 *爆量偵測*\n點擊直接執行",
+        [
+            [("🔥 收盤爆量", "!spike"), ("🔥 按漲幅", "!spike_change")],
+            [("⚡ 盤中爆量", "!ispike"), ("⚡ 按漲幅", "!ispike_change")],
+            [("🔔 訂閱通知", "!sub_ispike"), ("🔕 取消通知", "!unsub_ispike")],
+        ],
+    ),
+    "menu_cat_news": (
+        "📰 *新聞與搜尋*",
+        [
+            [("📰 新聞選單", "!news")],
+            [("🔍 Google 新聞", "/google ")],
+        ],
+    ),
+    "menu_cat_ai": (
+        "🤖 *AI 工具*",
+        [
+            [("💬 AI 聊天", "/chat "), ("💬 對話模式", "!chat_mode")],
+            [("📚 上傳研究", "!research")],
+        ],
+    ),
+    "menu_cat_ua": (
+        "🔬 *UAnalyze / MEGA*",
+        [
+            [("🔬 AI 分析 /ua", "/ua "), ("💡 自訂問題 /uask", "/uask ")],
+            [("📥 MEGA 拉取", "/mega y "), ("📥 MEGA 暫存", "/mega n ")],
+        ],
+    ),
+    "menu_cat_watch": (
+        "⭐ *自選股 & 追蹤*\n點擊按鈕將指令填入輸入框",
+        [
+            [("➕ 加入", "/watch add "), ("➖ 移除", "/watch remove ")],
+            [("📋 清單", "!watch_list")],
+            [("🧵 追蹤 Threads", "/threads add "), ("🧵 清單", "!threads_list")],
+        ],
+    ),
+    "menu_cat_hold": (
+        "🏦 *持股查詢*\n點擊直接執行（或填入日期）",
+        [
+            [("00981A 持股", "!hold981"), ("指定日期", "/hold981 ")],
+            [("大額權證", "!hold888")],
+        ],
+    ),
+    "menu_cat_sub": (
+        "📬 *訂閱管理*",
+        [
+            [("✅ 訂閱推播", "!subscribe"), ("❌ 取消訂閱", "!unsubscribe")],
+        ],
+    ),
+    "menu_cat_misc": (
+        "⚙️ *其他*",
+        [
+            [("🆔 Chat ID", "!chatid"), ("📖 完整指令", "!help")],
+        ],
+    ),
+}
+
+
+def _build_menu_main_keyboard():
+    rows = []
+    for i in range(0, len(_MENU_CATEGORIES), 2):
+        row = [InlineKeyboardButton(t, callback_data=d) for t, d in _MENU_CATEGORIES[i:i + 2]]
+        rows.append(row)
+    return InlineKeyboardMarkup(rows)
+
+
+def _build_category_keyboard(page_buttons: list[list[tuple[str, str]]]):
+    """Build keyboard for a category page. All buttons execute directly."""
+    rows = []
+    for row_def in page_buttons:
+        row = []
+        for label, action in row_def:
+            if action.startswith("/"):
+                # Convert "/" actions to "!" callback format
+                row.append(InlineKeyboardButton(label, callback_data=f"menu_exec!{action.strip()}"))
+            else:
+                row.append(InlineKeyboardButton(label, callback_data=f"menu_exec{action}"))
+        rows.append(row)
+    rows.append([InlineKeyboardButton("🔙 返回選單", callback_data="menu_back")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show interactive menu with inline keyboard."""
+    await update.message.reply_text(
+        "📋 *選擇分類：*", parse_mode=ParseMode.MARKDOWN,
+        reply_markup=_build_menu_main_keyboard(),
+    )
+
+
+async def menu_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle menu category and execution button presses."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "menu_back":
+        await query.edit_message_text(
+            "📋 *選擇分類：*", parse_mode=ParseMode.MARKDOWN,
+            reply_markup=_build_menu_main_keyboard(),
+        )
+        return
+
+    # Category page
+    if data in _MENU_PAGES:
+        text, buttons = _MENU_PAGES[data]
+        await query.edit_message_text(
+            text, parse_mode=ParseMode.MARKDOWN,
+            reply_markup=_build_category_keyboard(buttons),
+        )
+        return
+
+    # Direct execution: menu_exec!command
+    if data.startswith("menu_exec!"):
+        cmd = data[len("menu_exec!"):]
+
+        # Handle "/cmd " format (needs args) — reply with usage hint
+        if cmd.startswith("/"):
+            parts = cmd.strip().lstrip("/").split()
+            cmd_name = parts[0]
+            hint = f"請輸入：/{' '.join(parts)} <股號>"
+            await query.message.reply_text(hint)
+            return
+
+        # Map to handler functions
+        _CMD_MAP = {
+            "vix": vix_command,
+            "spike": spike_command,
+            "spike_change": lambda u, c: spike_command(u, _fake_context(c, ["change"])),
+            "ispike": intraday_spike_command,
+            "ispike_change": lambda u, c: intraday_spike_command(u, _fake_context(c, ["change"])),
+            "sub_ispike": sub_ispike_command,
+            "unsub_ispike": unsub_ispike_command,
+            "news": news_command,
+            "google": lambda u, c: query.message.reply_text("請輸入：/google <關鍵字>"),
+            "chat_mode": chat_start,
+            "research": research_start,
+            "watch_list": lambda u, c: watch_command(u, _fake_context(c, ["list"])),
+            "threads_list": lambda u, c: threads_command(u, _fake_context(c, ["list"])),
+            "hold981": hold981_command,
+            "hold888": hold888_command,
+            "subscribe": subscribe_command,
+            "unsubscribe": unsubscribe_command,
+            "chatid": chatid_command,
+            "help": help_command,
+            "ua": lambda u, c: query.message.reply_text("請輸入：/ua <股號>"),
+            "uask": lambda u, c: query.message.reply_text("請輸入：/uask <股號> <問題>"),
+            "mega_y": lambda u, c: query.message.reply_text("請輸入：/mega y <關鍵字>"),
+            "mega_n": lambda u, c: query.message.reply_text("請輸入：/mega n <關鍵字>"),
+            "umon": umon_command,
+        }
+        handler = _CMD_MAP.get(cmd)
+        if handler:
+            # Create a fake Update with message from callback_query
+            fake_update = Update(
+                update_id=update.update_id,
+                message=query.message,
+            )
+            # Patch effective_chat and effective_user
+            fake_update._effective_chat = update.effective_chat
+            fake_update._effective_user = update.effective_user
+            await handler(fake_update, context)
+
+
+class _fake_context:
+    """Minimal context wrapper to inject args into command handlers called from menu."""
+
+    def __init__(self, real_context, args):
+        self._ctx = real_context
+        self.args = args
+
+    def __getattr__(self, name):
+        return getattr(self._ctx, name)
 
 
 # --- Core Logic Functions (Reusable) ---
 async def run_info_analysis(update: Update, ticker: str):
-    await update.message.reply_text(f"✅ 你輸入的代碼是 {ticker}，幫你處理！📊")
+    await update.message.reply_text(f"✅ 你輸入的股號是 {ticker}，幫你處理！📊")
 
     # 1. Scrape MoneyDJ
     dj = LegacyMoneyDJ()
@@ -108,7 +378,7 @@ async def run_info_analysis(update: Update, ticker: str):
         stock_name, wiki_text = await dj.get_wiki_result(ticker)
 
         if not stock_name:
-            await update.message.reply_text(f"Information of Ticker {ticker} is not found.")
+            await update.message.reply_text(f"❌ 找不到 {ticker} 的相關資訊。")
             return
 
         # 2. AI Summary
@@ -133,11 +403,11 @@ async def run_info_analysis(update: Update, ticker: str):
 
     except Exception as e:
         logger.error(f"Error in info_analysis: {e}")
-        await update.message.reply_text("An error occurred during analysis.")
+        await update.message.reply_text("❌ 分析過程發生錯誤，請稍後再試。")
 
 
 async def run_esti_analysis(update: Update, ticker: str):
-    await update.message.reply_text(f"Estimate start: {ticker}")
+    await update.message.reply_text(f"⏳ 估值分析中：{ticker}")
     # StockAnalyzer not needed here, analysis goes through AIService
     try:
         await update.message.reply_chat_action(ChatAction.TYPING)
@@ -151,7 +421,7 @@ async def run_esti_analysis(update: Update, ticker: str):
 
         if not data or "error" in data:
             error_msg = data.get("error", "Unknown error") if data else "Unknown error"
-            await update.message.reply_text(f"Error: {error_msg}")
+            await update.message.reply_text(f"❌ 錯誤：{error_msg}")
             return
 
         # Use ReportGenerator with Telegram format
@@ -167,14 +437,14 @@ async def run_esti_analysis(update: Update, ticker: str):
 
     except Exception as e:
         logger.error(f"Error in esti_analysis: {e}")
-        await update.message.reply_text("An error occurred during valuation.")
+        await update.message.reply_text("❌ 估值分析過程發生錯誤，請稍後再試。")
 
 
 # --- Command Handlers ---
 async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Get stock information using Legacy MoneyDJ + AI."""
     if not context.args:
-        await update.message.reply_text("Please provide a ticker symbol (e.g., /info 2330)")
+        await update.message.reply_text("❌ 用法：/info <股票股號>\n例如：/info 2330")
         return
     await run_info_analysis(update, context.args[0])
 
@@ -182,17 +452,16 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def esti_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Get estimation/valuation analysis."""
     if not context.args:
-        await update.message.reply_text("Please provide a ticker symbol (e.g., /esti 2330)")
+        await update.message.reply_text("❌ 用法：/esti <股票股號>\n例如：/esti 2330")
         return
     await run_esti_analysis(update, context.args[0])
 
 
 # --- Chat ---
 async def chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """One-off chat command."""
+    """One-off chat or enter persistent chat mode when no args."""
     if not context.args:
-        await update.message.reply_text("Usage: /chat <message>")
-        return
+        return await chat_start(update, context)
 
     user_msg = " ".join(context.args)
     ai = AIService()
@@ -203,7 +472,7 @@ async def chat_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await update.message.reply_text(resp)
     except Exception as e:
-        await update.message.reply_text(f"AI Error: {e}")
+        await update.message.reply_text(f"❌ AI 回應失敗：{e}")
 
 
 def _parse_hold_date(context) -> str | None:
@@ -226,8 +495,6 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_chat_action(ChatAction.TYPING)
     try:
-        from ..services.price_fetcher import fetch_price
-
         text = await fetch_price(ticker)
         await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
@@ -236,18 +503,14 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        from ..services.intraday_chart import render_intraday_chart
-
         chart_path = await render_intraday_chart(ticker)
         if chart_path:
-            with open(chart_path, "rb") as f:
-                await update.message.reply_photo(photo=f)
             try:
-                import os
-
-                os.remove(chart_path)
-            except OSError:
-                pass
+                with open(chart_path, "rb") as f:
+                    await update.message.reply_photo(photo=f)
+            finally:
+                with suppress(OSError):
+                    os.remove(chart_path)
     except Exception as e:
         logger.debug("intraday chart send failed: %s", e)
 
@@ -261,20 +524,19 @@ async def kline_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_chat_action(ChatAction.TYPING)
     try:
+        # Lazy import: candlestick_chart depends on playwright
         from ..services.candlestick_chart import render_candlestick_chart
 
         chart_path = await render_candlestick_chart(ticker)
         if not chart_path:
             await update.message.reply_text(f"❌ 找不到 {ticker} 的 K 線資料")
             return
-        with open(chart_path, "rb") as f:
-            await update.message.reply_photo(photo=f)
         try:
-            import os
-
-            os.remove(chart_path)
-        except OSError:
-            pass
+            with open(chart_path, "rb") as f:
+                await update.message.reply_photo(photo=f)
+        finally:
+            with suppress(OSError):
+                os.remove(chart_path)
     except Exception as e:
         logger.exception("kline command error")
         await update.message.reply_text(f"❌ K 線產生失敗：{str(e)[:150]}")
@@ -289,8 +551,6 @@ async def hold981_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_chat_action(ChatAction.TYPING)
     try:
-        from ..services.blake_chips_scraper import fetch_chips_data
-
         text = await fetch_chips_data(date_str=date_str)
         await update.message.reply_text(text)
     except Exception as e:
@@ -307,8 +567,6 @@ async def hold888_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_chat_action(ChatAction.TYPING)
     try:
-        from ..services.blake_chips_scraper import fetch_chips_data_888
-
         text = await fetch_chips_data_888(date_str=date_str)
         await update.message.reply_text(text)
     except Exception as e:
@@ -332,8 +590,6 @@ async def vix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """手動查詢 VIX 恐慌指數現值。"""
     await update.message.reply_text("📊 查詢 VIX 中...")
     try:
-        from ..services.vix_fetcher import fetch_vix_snapshot, format_vix_message
-
         snap = await fetch_vix_snapshot()
         if snap is None:
             await update.message.reply_text("❌ 無法取得 VIX 資料，請稍後再試。")
@@ -351,8 +607,6 @@ async def spike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         /spike          # 預設按倍數排序
         /spike change   # 按漲幅排序
     """
-    from ..services.volume_spike_scanner import SpikeSortBy
-
     # 解析排序參數
     sort_arg = context.args[0] if context.args else SpikeSortBy.RATIO.value
     try:
@@ -372,8 +626,6 @@ async def spike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_chat_action(ChatAction.TYPING)
 
     try:
-        from ..services.volume_spike_scanner import VolumeSpikeScanner
-
         scanner = VolumeSpikeScanner()
         spike_scan = await scanner.scan(sort_by=sort_by)
         results = spike_scan.results
@@ -385,11 +637,6 @@ async def spike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        from ..services.spike_pager import (
-            build_spike_markdown_header,
-            build_spike_telegram_html_messages,
-        )
-
         header = build_spike_markdown_header(len(results), sort_by=sort_by)
         spike_msgs = build_spike_telegram_html_messages(results, header)
         for i, msg in enumerate(spike_msgs):
@@ -397,15 +644,12 @@ async def spike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await asyncio.sleep(0.5)
             await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
-        from ..config import get_settings
-
         if get_settings().SPIKE_NEWS_ENRICHMENT_ENABLED:
             await update.message.reply_text("📰 正在擷取爆量第 1 檔的題材與產業消息（試跑）…")
             try:
-                results = await scanner.enrich_with_news(
-                    results,
-                    top_n=1,
-                    max_news_per_stock=5,
+                results = await asyncio.wait_for(
+                    scanner.enrich_with_news(results, top_n=1, max_news_per_stock=5),
+                    timeout=60,
                 )
                 r = results[0]
                 if r.analysis and r.analysis != "近期無相關新聞":
@@ -413,6 +657,9 @@ async def spike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if r.news_titles:
                         detail += "\n\n_相關新聞：_ " + "；".join(r.news_titles[:3])
                     await update.message.reply_text(detail, parse_mode=ParseMode.MARKDOWN)
+            except asyncio.TimeoutError:
+                logger.warning("Spike news enrichment timed out (60s)")
+                await update.message.reply_text("⚠️ 題材分析逾時，請稍後再試。")
             except Exception as enrich_err:
                 logger.warning("Spike news enrichment failed: %s", enrich_err)
                 await update.message.reply_text("⚠️ 題材分析暫時無法使用，請稍後再試。")
@@ -430,12 +677,6 @@ async def intraday_spike_command(update: Update, context: ContextTypes.DEFAULT_T
         /ispike          # 用現有快照掃描
         /ispike change   # 按漲幅排序
     """
-    from ..models.intraday_ma import IntradayMA20Snapshot
-    from ..services.intraday_spike_scanner import IntradaySpikeScanner
-    from ..services.volume_spike_scanner import SpikeSortBy
-    from ..database import engine
-    from sqlmodel import Session, select as sql_select
-
     # 解析排序參數
     sort_arg = (context.args[0] if context.args else SpikeSortBy.RATIO.value)
     try:
@@ -452,11 +693,10 @@ async def intraday_spike_command(update: Update, context: ContextTypes.DEFAULT_T
     # 載入 MA20 快照
     def _load():
         with Session(engine) as session:
-            rows = session.exec(sql_select(IntradayMA20Snapshot)).all()
+            rows = session.exec(select(IntradayMA20Snapshot)).all()
             return {r.ticker: {"name": r.name, "market": r.market, "ma20_lots": r.ma20_lots, "vol_19d_sum_lots": r.vol_19d_sum_lots}
                     for r in rows}
 
-    import asyncio
     try:
         ma20_snapshot = await asyncio.to_thread(_load)
     except Exception as e:
@@ -478,7 +718,6 @@ async def intraday_spike_command(update: Update, context: ContextTypes.DEFAULT_T
     await update.message.reply_chat_action(ChatAction.TYPING)
 
     try:
-        from ..config import get_settings
         settings = get_settings()
 
         scanner = IntradaySpikeScanner()
@@ -490,8 +729,6 @@ async def intraday_spike_command(update: Update, context: ContextTypes.DEFAULT_T
         )
 
         if not results:
-            from zoneinfo import ZoneInfo
-            from datetime import datetime
             now = datetime.now(ZoneInfo("Asia/Taipei"))
             elapsed = scanner.get_elapsed_minutes()
             if elapsed < 30:
@@ -500,11 +737,6 @@ async def intraday_spike_command(update: Update, context: ContextTypes.DEFAULT_T
                 msg = f"📊 無盤中爆量股（快照 {len(ma20_snapshot)} 支，目前未達閾值）"
             await update.message.reply_text(msg)
             return
-
-        from ..services.spike_pager import (
-            build_spike_markdown_header,
-            build_spike_telegram_html_messages,
-        )
 
         header = "[盤中] " + build_spike_markdown_header(len(results), sort_by=sort_by)
         spike_msgs = build_spike_telegram_html_messages(results, header)
@@ -542,76 +774,11 @@ async def chat_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(resp)
         return ASK_CHAT
     except Exception as e:
-        await update.message.reply_text(f"AI Error: {e}")
+        await update.message.reply_text(f"❌ AI 回應失敗：{e}")
         return ASK_CHAT
 
 
-# --- Menu Flow Handlers ---
-async def menu_stock_info_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("請輸入股票代碼 (e.g. 2330) 或是輸入 'cancel' 取消：")
-    return ASK_TICKER_INFO
-
-
-async def menu_stock_esti_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("請輸入股票代碼 (e.g. 2330) 進行估值分析：")
-    return ASK_TICKER_ESTI
-
-
-async def handle_ticker_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    raw_ticker = update.message.text.strip()
-    ticker = _normalize_ticker(raw_ticker)
-    if not ticker:
-        await update.message.reply_text("❌ 請輸入有效的股票代碼 (例如: 2330)")
-        return ASK_TICKER_INFO
-    await run_info_analysis(update, ticker)
-    return ConversationHandler.END
-
-
-async def handle_ticker_esti(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    raw_ticker = update.message.text.strip()
-    ticker = _normalize_ticker(raw_ticker)
-    if not ticker:
-        await update.message.reply_text("❌ 請輸入有效的股票代碼 (例如: 2330)")
-        return ASK_TICKER_ESTI
-    await run_esti_analysis(update, ticker)
-    return ConversationHandler.END
-
-
-def _menu_breakout(handler):
-    """包裝主選單 handler，執行後結束當前對話，讓按鈕在對話中也能正確觸發。"""
-
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await handler(update, context)
-        return ConversationHandler.END
-
-    return wrapper
-
-
-async def menu_settings_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle settings menu button."""
-    chat_id = update.effective_chat.id
-
-    # Check subscription status from DB
-    from sqlmodel import Session, select
-
-    from ..database import engine
-    from ..models.subscriber import Subscriber
-
-    is_sub = False
-    with Session(engine) as session:
-        sub = session.exec(select(Subscriber).where(Subscriber.chat_id == chat_id)).first()
-        if sub and sub.is_active:
-            is_sub = True
-
-    msg = (
-        "⚙️ **設定與訂閱**\n\n"
-        "目前狀態：\n"
-        f"- 訂閱新聞：{'✅ 已訂閱' if is_sub else '❌ 未訂閱'}\n\n"
-        "指令：\n"
-        "/subscribe - 訂閱推播\n"
-        "/unsubscribe - 取消訂閱\n"
-    )
-    await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+# --- Menu Flow Handlers removed: use /info and /esti commands directly ---
 
 
 # --- News ---
@@ -623,38 +790,7 @@ async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         news_parser = NewsParser()
 
     # Expanded News Menu
-    keyboard = [
-        [
-            InlineKeyboardButton("鉅亨網 (CNYES)", callback_data="news_cnyes"),
-            InlineKeyboardButton("Google News (TW)", callback_data="news_google"),
-        ],
-        [
-            InlineKeyboardButton("Moneydj", callback_data="news_moneydj"),
-            InlineKeyboardButton("Yahoo 股市", callback_data="news_yahoo"),
-        ],
-        [
-            InlineKeyboardButton("聯合新聞網 (UDN)", callback_data="news_udn"),
-            InlineKeyboardButton("UAnalyze", callback_data="news_uanalyze"),
-        ],
-        [
-            InlineKeyboardButton("財經M平方", callback_data="news_macromicro"),
-            InlineKeyboardButton("瑞星財經 (FinGuider)", callback_data="news_finguider"),
-        ],
-        [
-            InlineKeyboardButton("Fintastic", callback_data="news_fintastic"),
-            InlineKeyboardButton("Forecastock", callback_data="news_forecastock"),
-        ],
-        [
-            InlineKeyboardButton("方格子 (Vocus)", callback_data="news_vocus_menu"),
-            InlineKeyboardButton("NewsDigest AI", callback_data="news_ndai"),
-        ],
-        [InlineKeyboardButton("Fugle Report", callback_data="news_fugle")],
-        [
-            InlineKeyboardButton("永豐｜3分鐘產業百科", callback_data="news_sinotrade_industry"),
-            InlineKeyboardButton("口袋學堂｜研究報告", callback_data="news_pocket_report"),
-        ],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = InlineKeyboardMarkup(_build_news_main_keyboard())
     await update.message.reply_text("請選擇新聞來源：", reply_markup=reply_markup)
 
 
@@ -670,40 +806,7 @@ async def news_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     # --- Menus ---
     if data == "news_main_menu":
         # Back to Main News Menu
-        keyboard = [
-            [
-                InlineKeyboardButton("鉅亨網 (CNYES)", callback_data="news_cnyes"),
-                InlineKeyboardButton("Google News (TW)", callback_data="news_google"),
-            ],
-            [
-                InlineKeyboardButton("Moneydj", callback_data="news_moneydj"),
-                InlineKeyboardButton("Yahoo 股市", callback_data="news_yahoo"),
-            ],
-            [
-                InlineKeyboardButton("聯合新聞網 (UDN)", callback_data="news_udn"),
-                InlineKeyboardButton("UAnalyze", callback_data="news_uanalyze"),
-            ],
-            [
-                InlineKeyboardButton("財經M平方", callback_data="news_macromicro"),
-                InlineKeyboardButton("瑞星財經 (FinGuider)", callback_data="news_finguider"),
-            ],
-            [
-                InlineKeyboardButton("Fintastic", callback_data="news_fintastic"),
-                InlineKeyboardButton("Forecastock", callback_data="news_forecastock"),
-            ],
-            [
-                InlineKeyboardButton("方格子 (Vocus)", callback_data="news_vocus_menu"),
-                InlineKeyboardButton("NewsDigest AI", callback_data="news_ndai"),
-            ],
-            [InlineKeyboardButton("Fugle Report", callback_data="news_fugle")],
-            [
-                InlineKeyboardButton(
-                    "永豐｜3分鐘產業百科", callback_data="news_sinotrade_industry"
-                ),
-                InlineKeyboardButton("口袋學堂｜研究報告", callback_data="news_pocket_report"),
-            ],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        reply_markup = InlineKeyboardMarkup(_build_news_main_keyboard())
         await query.edit_message_text("請選擇新聞來源：", reply_markup=reply_markup)
         return
 
@@ -774,20 +877,18 @@ async def news_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Vocus Handlers
     elif data.startswith("news_vocus"):
         source_title = "Vocus"
-        vocus_map = {
-            "ieobserve": "@ieobserve",
-            "miula": "@miula",
-            "blackhole": "65ab564cfd897800018a88cc",
-        }
+        vocus_users = get_settings().VOCUS_USERS
 
         target_users = []
         if data == "news_vocus_all":
-            target_users = list(vocus_map.values())
+            target_users = vocus_users
             source_title = "Vocus (All)"
         else:
             key = data.replace("news_vocus_", "")
-            if key in vocus_map:
-                target_users = [vocus_map[key]]
+            # Match by substring in user id
+            matched = [u for u in vocus_users if key in u.lower()]
+            if matched:
+                target_users = matched
                 source_title = f"Vocus ({key})"
 
         for v_user in target_users:
@@ -801,7 +902,7 @@ async def news_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             [[InlineKeyboardButton("🔙 回上一頁", callback_data="news_main_menu")]]
         )
         await query.edit_message_text(
-            "No news found or source not implemented yet.", reply_markup=back_markup
+            "❌ 找不到新聞或該來源尚未支援。", reply_markup=back_markup
         )
         return
 
@@ -827,33 +928,106 @@ async def news_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
-# --- Google News Specific ---
-async def google_news_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Enter keyword for Google News search:")
-    return ASK_GOOGLE_NEWS
+# --- Google News ---
+async def google_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Search Google News. Usage: /google <keyword>"""
+    if not context.args:
+        await update.message.reply_text("❌ 用法：/google <關鍵字>")
+        return
 
-
-async def google_news_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyword = update.message.text
+    keyword = " ".join(context.args)
     news_parser: NewsParser = context.bot_data.get("news_parser") or NewsParser()
-
-    from urllib.parse import quote
 
     url = f"https://news.google.com/rss/search?q={quote(keyword)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
     news_list = await news_parser.fetch_news_list(url)
 
     if not news_list:
-        await update.message.reply_text("No results found.")
-    else:
-        msg = f"🔍 Results for '{keyword}':\n\n"
-        for news in news_list[:8]:
-            title = news["title"].replace("[", "(").replace("]", ")")
-            msg += f"• [{title}]({news['url']})\n"
-        await update.message.reply_text(
-            msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True
-        )
+        await update.message.reply_text("❌ 找不到相關新聞。")
+        return
 
-    return ConversationHandler.END
+    msg = f"🔍 '{keyword}' 搜尋結果：\n\n"
+    for news in news_list[:8]:
+        title = news["title"].replace("[", "(").replace("]", ")")
+        msg += f"• [{title}]({news['url']})\n"
+    await update.message.reply_text(
+        msg, parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True
+    )
+
+
+# --- UAnalyze AI / MEGA ---
+
+async def ua_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/ua 2330 2317 — UAnalyze AI 多題分析"""
+    if not context.args:
+        await update.message.reply_text("❌ 用法：/ua <股號> [股號...]")
+        return
+    from ..services.uanalyze_ai import analyze_stock
+    stocks = context.args
+    await update.message.reply_text(f"⏳ 分析中：{', '.join(stocks)}")
+    for stock in stocks:
+        await update.message.reply_chat_action(ChatAction.TYPING)
+        try:
+            md = await analyze_stock(stock)
+            f = io.BytesIO(md.encode("utf-8"))
+            await update.message.reply_document(
+                document=InputFile(f, filename=f"UA_{stock}.md"),
+                caption=f"✅ {stock} 完成",
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ {stock} 失敗：{str(e)[:200]}")
+
+
+async def uask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/uask 2330 問題 — UAnalyze AI 自訂問題"""
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("❌ 用法：/uask <股號> <問題>")
+        return
+    from ..services.uanalyze_ai import analyze_stock
+    stock = context.args[0]
+    prompt = " ".join(context.args[1:])
+    await update.message.reply_chat_action(ChatAction.TYPING)
+    try:
+        md = await analyze_stock(stock, prompts=[prompt])
+        if len(md) > 4000:
+            f = io.BytesIO(md.encode("utf-8"))
+            await update.message.reply_document(
+                document=InputFile(f, filename=f"Ask_{stock}.md"), caption=f"✅ {stock}",
+            )
+        else:
+            await update.message.reply_text(md[:4096])
+    except Exception as e:
+        await update.message.reply_text(f"❌ 失敗：{str(e)[:200]}")
+
+
+async def mega_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/mega y 企劃 — MEGA 搜尋下載 (y=拉取 n=暫存)"""
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("❌ 用法：/mega y|n <關鍵字...>")
+        return
+    from ..services.mega_download import mega_search_and_download_async
+    should_fetch = context.args[0].lower() != "n"
+    keywords = context.args[1:]
+    await update.message.reply_text(f"🚀 MEGA {'拉取' if should_fetch else '暫存'}：{', '.join(keywords)}")
+    result = await mega_search_and_download_async(should_fetch, keywords)
+    await update.message.reply_text(result[-4096:])
+
+
+async def umon_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/umon — 手動觸發 UAnalyze 監控檢查"""
+    from ..services.uanalyze_monitor import check_new_reports
+
+    settings = get_settings()
+    if not settings.UANALYZE_API_URL:
+        await update.message.reply_text("❌ UANALYZE_API_URL 未設定")
+        return
+
+    await update.message.reply_text("🔍 檢查 UAnalyze 新報告中...")
+    bot = context.bot
+    count = await check_new_reports(bot=bot)
+    if count:
+        await update.message.reply_text(f"✅ 發現並推播 {count} 則新報告")
+    else:
+        await update.message.reply_text("📭 無新報告")
 
 
 # --- Research (Files) ---
@@ -885,9 +1059,7 @@ async def research_handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if file_name.endswith((".docx", ".doc")):
                 try:
-                    from docx import Document
-
-                    document = Document(bio)
+                    document = DocxDocument(bio)
                     text_content = "\n".join([para.text for para in document.paragraphs])
                     materials.append(("text/plain", text_content))  # Treat as text
                     await update.message.reply_text(f"✅ 已接收 Word 檔案: {doc.file_name}")
@@ -966,7 +1138,7 @@ async def research_finish(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Operation cancelled.")
+    await update.message.reply_text("已取消操作。")
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -974,81 +1146,87 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- Subscribe ---
 async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    from sqlmodel import Session, select
 
-    from ..database import engine
-    from ..models.subscriber import Subscriber
-
-    with Session(engine) as session:
-        sub = session.exec(select(Subscriber).where(Subscriber.chat_id == chat_id)).first()
-        if not sub:
-            session.add(Subscriber(chat_id=chat_id))
-            session.commit()
-            await update.message.reply_text(
-                "✅ 已成功訂閱！\n您將會收到：\n1. 每日個股分析報告\n2. 即時重大新聞推播\n3. Podcast 摘要"
-            )
-        else:
+    def _do():
+        with Session(engine) as session:
+            sub = session.exec(select(Subscriber).where(Subscriber.chat_id == chat_id)).first()
+            if not sub:
+                session.add(Subscriber(chat_id=chat_id))
+                session.commit()
+                return "new"
             if not sub.is_active:
                 sub.is_active = True
                 session.add(sub)
                 session.commit()
-                await update.message.reply_text("✅ 已恢復訂閱！")
-            else:
-                await update.message.reply_text("您已經是訂閱者囉！")
+                return "reactivated"
+            return "already"
+
+    result = await asyncio.to_thread(_do)
+    if result == "new":
+        await update.message.reply_text("✅ 已訂閱！")
+    elif result == "reactivated":
+        await update.message.reply_text("✅ 已恢復訂閱！")
+    else:
+        await update.message.reply_text("您已經是訂閱者囉！")
 
 
 async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-    from sqlmodel import Session, select
 
-    from ..database import engine
-    from ..models.subscriber import Subscriber
+    def _do():
+        with Session(engine) as session:
+            sub = session.exec(select(Subscriber).where(Subscriber.chat_id == chat_id)).first()
+            if sub:
+                sub.is_active = False
+                session.add(sub)
+                session.commit()
+                return True
+            return False
 
-    with Session(engine) as session:
-        sub = session.exec(select(Subscriber).where(Subscriber.chat_id == chat_id)).first()
-        if sub:
-            sub.is_active = False
-            session.add(sub)
-            session.commit()
-            await update.message.reply_text("❌ 已取消訂閱。")
-        else:
-            await update.message.reply_text("您尚未訂閱。")
+    found = await asyncio.to_thread(_do)
+    if found:
+        await update.message.reply_text("❌ 已取消訂閱。")
+    else:
+        await update.message.reply_text("您尚未訂閱。")
 
 
 async def sub_ispike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """訂閱盤中爆量自動通知。"""
     chat_id = update.effective_chat.id
-    from sqlmodel import Session, select
-    from ..database import engine
-    from ..models.subscriber import Subscriber
 
-    with Session(engine) as session:
-        sub = session.exec(select(Subscriber).where(Subscriber.chat_id == chat_id)).first()
-        if not sub:
-            sub = Subscriber(chat_id=chat_id)
-        sub.is_active = True
-        sub.ispike_enabled = True
-        session.add(sub)
-        session.commit()
+    def _do():
+        with Session(engine) as session:
+            sub = session.exec(select(Subscriber).where(Subscriber.chat_id == chat_id)).first()
+            if not sub:
+                sub = Subscriber(chat_id=chat_id)
+            sub.is_active = True
+            sub.ispike_enabled = True
+            session.add(sub)
+            session.commit()
+
+    await asyncio.to_thread(_do)
     await update.message.reply_text("✅ 已訂閱盤中爆量通知！\n交易時段每 5 分鐘自動掃描，有爆量股立即推播。")
 
 
 async def unsub_ispike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """取消訂閱盤中爆量自動通知。"""
     chat_id = update.effective_chat.id
-    from sqlmodel import Session, select
-    from ..database import engine
-    from ..models.subscriber import Subscriber
 
-    with Session(engine) as session:
-        sub = session.exec(select(Subscriber).where(Subscriber.chat_id == chat_id)).first()
-        if sub and sub.ispike_enabled:
-            sub.ispike_enabled = False
-            session.add(sub)
-            session.commit()
-            await update.message.reply_text("❌ 已取消盤中爆量通知訂閱。")
-        else:
-            await update.message.reply_text("您尚未訂閱盤中爆量通知。")
+    def _do():
+        with Session(engine) as session:
+            sub = session.exec(select(Subscriber).where(Subscriber.chat_id == chat_id)).first()
+            if sub and sub.ispike_enabled:
+                sub.ispike_enabled = False
+                session.add(sub)
+                session.commit()
+                return True
+            return False
+
+    found = await asyncio.to_thread(_do)
+    if found:
+        await update.message.reply_text("❌ 已取消盤中爆量通知訂閱。")
+    else:
+        await update.message.reply_text("您尚未訂閱盤中爆量通知。")
 
 
 # --- Watchlist ---
@@ -1073,7 +1251,7 @@ async def name_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     ticker = _normalize_ticker(str(context.args[0]))
     if not ticker:
-        await update.message.reply_text("Ticker 格式不正確")
+        await update.message.reply_text("❌ Ticker 格式不正確")
         return
 
     data, _from_cache = await StockService.get_or_analyze_stock(ticker)
@@ -1108,19 +1286,17 @@ async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("無法取得使用者資訊，請稍後再試。")
         return
 
-    from sqlmodel import Session, select
-
-    from ..database import engine
-    from ..models.watchlist import WatchlistEntry
-
     if sub == "list":
-        with Session(engine) as session:
-            items = session.exec(
-                select(WatchlistEntry)
-                .where(WatchlistEntry.chat_id == chat_id)
-                .where(WatchlistEntry.user_id == user_id)
-                .order_by(WatchlistEntry.ticker)
-            ).all()
+        def _list():
+            with Session(engine) as session:
+                return session.exec(
+                    select(WatchlistEntry)
+                    .where(WatchlistEntry.chat_id == chat_id)
+                    .where(WatchlistEntry.user_id == user_id)
+                    .order_by(WatchlistEntry.ticker)
+                ).all()
+
+        items = await asyncio.to_thread(_list)
 
         if not items:
             await update.message.reply_text("目前沒有自選股")
@@ -1143,7 +1319,7 @@ async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     ticker = _normalize_ticker(str(context.args[1]))
     if not ticker:
-        await update.message.reply_text("Ticker 格式不正確")
+        await update.message.reply_text("❌ Ticker 格式不正確")
         return
 
     alias = " ".join([str(x) for x in context.args[2:]]).strip() if len(context.args) > 2 else None
@@ -1152,15 +1328,14 @@ async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         # Best-effort auto name fetch if user didn't provide alias.
         try:
-            from sqlmodel import Session, select
+            def _lookup_name():
+                with Session(engine) as session:
+                    stock = session.exec(select(StockData).where(StockData.ticker == ticker)).first()
+                    if stock and stock.name:
+                        return str(stock.name)[:MAX_ALIAS_LENGTH]
+                    return None
 
-            from ..database import engine
-            from ..models.stock import StockData
-
-            with Session(engine) as session:
-                stock = session.exec(select(StockData).where(StockData.ticker == ticker)).first()
-                if stock and stock.name:
-                    alias = str(stock.name)[:MAX_ALIAS_LENGTH]
+            alias = await asyncio.to_thread(_lookup_name)
         except Exception:
             alias = None
 
@@ -1173,32 +1348,39 @@ async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 alias = None
 
-    with Session(engine) as session:
-        existing = session.exec(
-            select(WatchlistEntry)
-            .where(WatchlistEntry.chat_id == chat_id)
-            .where(WatchlistEntry.user_id == user_id)
-            .where(WatchlistEntry.ticker == ticker)
-        ).first()
+    def _add_or_remove():
+        with Session(engine) as session:
+            existing = session.exec(
+                select(WatchlistEntry)
+                .where(WatchlistEntry.chat_id == chat_id)
+                .where(WatchlistEntry.user_id == user_id)
+                .where(WatchlistEntry.ticker == ticker)
+            ).first()
 
-        if sub == "add":
-            if existing:
-                await update.message.reply_text(f"ℹ️ 已存在：{ticker}")
-                return
-            session.add(
-                WatchlistEntry(chat_id=chat_id, user_id=user_id, ticker=ticker, alias=alias)
-            )
+            if sub == "add":
+                if existing:
+                    return "exists"
+                session.add(
+                    WatchlistEntry(chat_id=chat_id, user_id=user_id, ticker=ticker, alias=alias)
+                )
+                session.commit()
+                return "added"
+            # remove
+            if not existing:
+                return "not_found"
+            session.delete(existing)
             session.commit()
-            alias_suffix = f"（{alias}）" if alias else ""
-            await update.message.reply_text(f"✅ 已加入：{ticker}{alias_suffix}")
-            return
+            return "removed"
 
-        # remove
-        if not existing:
-            await update.message.reply_text(f"ℹ️ 不在清單：{ticker}")
-            return
-        session.delete(existing)
-        session.commit()
+    result = await asyncio.to_thread(_add_or_remove)
+    if result == "exists":
+        await update.message.reply_text(f"ℹ️ 已存在：{ticker}")
+    elif result == "added":
+        alias_suffix = f"（{alias}）" if alias else ""
+        await update.message.reply_text(f"✅ 已加入：{ticker}{alias_suffix}")
+    elif result == "not_found":
+        await update.message.reply_text(f"ℹ️ 不在清單：{ticker}")
+    else:
         await update.message.reply_text(f"✅ 已移除：{ticker}")
 
 
@@ -1234,43 +1416,47 @@ async def threads_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sub = str(context.args[0]).lower()
     chat_id = str(update.effective_chat.id)
 
-    from sqlmodel import Session, select
-
-    from ..database import engine
-    from ..models.threads_watch import ThreadsWatchEntry
+    # Lazy import: playwright is an optional heavy dependency
     from ..services.threads_watch_service import MAX_SEEN_IDS, fetch_posts_playwright
-    from .jobs import process_threads_watch_entry
 
     if sub == "list":
-        with Session(engine) as session:
-            items = session.exec(
-                select(ThreadsWatchEntry)
-                .where(ThreadsWatchEntry.chat_id == chat_id)
-                .order_by(ThreadsWatchEntry.threads_username)
-            ).all()
-        if not items:
+        def _list():
+            with Session(engine) as session:
+                items = session.exec(
+                    select(ThreadsWatchEntry)
+                    .where(ThreadsWatchEntry.chat_id == chat_id)
+                    .order_by(ThreadsWatchEntry.threads_username)
+                ).all()
+                return [it.threads_username for it in items]
+
+        usernames = await asyncio.to_thread(_list)
+        if not usernames:
             await update.message.reply_text("📭 此聊天室尚無 Threads 訂閱")
             return
         lines = ["🧵 此聊天室 Threads 訂閱："]
-        for it in items:
-            lines.append(f"• @{it.threads_username}")
+        for u in usernames:
+            lines.append(f"• @{u}")
         await update.message.reply_text("\n".join(lines))
         return
 
     if sub == "check":
-        with Session(engine) as session:
-            items = session.exec(
-                select(ThreadsWatchEntry).where(ThreadsWatchEntry.chat_id == chat_id)
-            ).all()
-        if not items:
+        def _get_ids():
+            with Session(engine) as session:
+                items = session.exec(
+                    select(ThreadsWatchEntry).where(ThreadsWatchEntry.chat_id == chat_id)
+                ).all()
+                return [it.id for it in items]
+
+        item_ids = await asyncio.to_thread(_get_ids)
+        if not item_ids:
             await update.message.reply_text("尚無訂閱。先 /threads add <使用者名稱>")
             return
         await update.message.reply_text("⏳ 檢查中（Playwright 約需數秒）…")
         total = 0
         last_err: str | None = None
         with Session(engine) as session:
-            for row in items:
-                ent = session.get(ThreadsWatchEntry, row.id)
+            for row_id in item_ids:
+                ent = session.get(ThreadsWatchEntry, row_id)
                 if not ent:
                     continue
                 n, err = await process_threads_watch_entry(context.bot, session, ent)
@@ -1293,15 +1479,18 @@ async def threads_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not user:
             await update.message.reply_text("使用者名稱格式不正確")
             return
-        with Session(engine) as session:
-            ent = session.exec(
-                select(ThreadsWatchEntry)
-                .where(ThreadsWatchEntry.chat_id == chat_id)
-                .where(ThreadsWatchEntry.threads_username == user)
-            ).first()
-            if not ent:
-                await update.message.reply_text(f"請先 /threads add {user}")
-                return
+        def _check_exists():
+            with Session(engine) as session:
+                return session.exec(
+                    select(ThreadsWatchEntry)
+                    .where(ThreadsWatchEntry.chat_id == chat_id)
+                    .where(ThreadsWatchEntry.threads_username == user)
+                ).first() is not None
+
+        exists = await asyncio.to_thread(_check_exists)
+        if not exists:
+            await update.message.reply_text(f"請先 /threads add {user}")
+            return
         await update.message.reply_text("⏳ 抓取頁面…")
         try:
             posts = await asyncio.to_thread(
@@ -1317,18 +1506,25 @@ async def threads_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         ids = [p.post_id for p in posts][-MAX_SEEN_IDS:]
-        with Session(engine) as session:
-            ent = session.exec(
-                select(ThreadsWatchEntry)
-                .where(ThreadsWatchEntry.chat_id == chat_id)
-                .where(ThreadsWatchEntry.threads_username == user)
-            ).first()
-            if not ent:
-                await update.message.reply_text("訂閱已不存在，請重新 add")
-                return
-            ent.seen_post_ids = json.dumps(ids, ensure_ascii=False)
-            session.add(ent)
-            session.commit()
+
+        def _save_ids():
+            with Session(engine) as session:
+                ent = session.exec(
+                    select(ThreadsWatchEntry)
+                    .where(ThreadsWatchEntry.chat_id == chat_id)
+                    .where(ThreadsWatchEntry.threads_username == user)
+                ).first()
+                if not ent:
+                    return False
+                ent.seen_post_ids = json.dumps(ids, ensure_ascii=False)
+                session.add(ent)
+                session.commit()
+                return True
+
+        saved = await asyncio.to_thread(_save_ids)
+        if not saved:
+            await update.message.reply_text("訂閱已不存在，請重新 add")
+            return
         await update.message.reply_text(f"✅ 已記錄 {len(ids)} 則現有貼文 id，之後只推播新貼文")
         return
 
@@ -1345,27 +1541,35 @@ async def threads_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("使用者名稱格式不正確")
         return
 
-    with Session(engine) as session:
-        existing = session.exec(
-            select(ThreadsWatchEntry)
-            .where(ThreadsWatchEntry.chat_id == chat_id)
-            .where(ThreadsWatchEntry.threads_username == user)
-        ).first()
-        if sub == "add":
-            if existing:
-                await update.message.reply_text(f"ℹ️ 已訂閱 @{user}")
-                return
-            session.add(ThreadsWatchEntry(chat_id=chat_id, threads_username=user))
+    def _add_or_remove():
+        with Session(engine) as session:
+            existing = session.exec(
+                select(ThreadsWatchEntry)
+                .where(ThreadsWatchEntry.chat_id == chat_id)
+                .where(ThreadsWatchEntry.threads_username == user)
+            ).first()
+            if sub == "add":
+                if existing:
+                    return "exists"
+                session.add(ThreadsWatchEntry(chat_id=chat_id, threads_username=user))
+                session.commit()
+                return "added"
+            if not existing:
+                return "not_found"
+            session.delete(existing)
             session.commit()
-            await update.message.reply_text(
-                f"✅ 已訂閱 @{user}\n"
-                f"建議：/threads bootstrap {user}\n"
-                "（避免首次排程一次推播多則舊貼文）"
-            )
-            return
-        if not existing:
-            await update.message.reply_text(f"ℹ️ 未訂閱 @{user}")
-            return
-        session.delete(existing)
-        session.commit()
+            return "removed"
+
+    result = await asyncio.to_thread(_add_or_remove)
+    if result == "exists":
+        await update.message.reply_text(f"ℹ️ 已訂閱 @{user}")
+    elif result == "added":
+        await update.message.reply_text(
+            f"✅ 已訂閱 @{user}\n"
+            f"建議：/threads bootstrap {user}\n"
+            "（避免首次排程一次推播多則舊貼文）"
+        )
+    elif result == "not_found":
+        await update.message.reply_text(f"ℹ️ 未訂閱 @{user}")
+    else:
         await update.message.reply_text(f"✅ 已取消 @{user}")

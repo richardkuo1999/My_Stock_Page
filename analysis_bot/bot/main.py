@@ -15,30 +15,23 @@ logger = logging.getLogger(__name__)
 from ..services.news_parser import NewsParser
 from .handlers import (
     ASK_CHAT,
-    ASK_GOOGLE_NEWS,
     ASK_RESEARCH,
-    ASK_TICKER_ESTI,
-    ASK_TICKER_INFO,
-    _menu_breakout,
     cancel,
     chat_command,
     chat_handle,
     chat_start,
     chatid_command,
     esti_command,
-    google_news_handle,
-    google_news_start,
-    handle_ticker_esti,
-    handle_ticker_info,
+    google_command,
     help_command,
     hold888_command,
     hold981_command,
     info_command,
     intraday_spike_command,
     kline_command,
-    menu_settings_handler,
-    menu_stock_esti_start,
-    menu_stock_info_start,
+    mega_command,
+    menu_callback_handler,
+    menu_command,
     name_command,
     news_button_handler,
     news_command,
@@ -51,6 +44,9 @@ from .handlers import (
     sub_ispike_command,
     subscribe_command,
     threads_command,
+    ua_command,
+    uask_command,
+    umon_command,
     unsub_ispike_command,
     unsubscribe_command,
     vix_command,
@@ -62,28 +58,16 @@ settings = get_settings()
 
 ALLOWED_CHATS_FILTER = filters.ALL
 
-# 主選單按鈕：在對話流程中點擊時，跳出並執行對應功能（須放在 state handler 之前）
-MENU_BREAKOUT_HANDLERS = [
-    MessageHandler(filters.Regex("^📰 最新新聞$"), _menu_breakout(news_command)),
-    MessageHandler(filters.Regex("^🔥 爆量偵測$"), _menu_breakout(spike_command)),
-    MessageHandler(filters.Regex("^⚙️ 設定/訂閱$"), _menu_breakout(menu_settings_handler)),
-    MessageHandler(filters.Regex("^🔍 Google 新聞$"), _menu_breakout(google_news_start)),
-    MessageHandler(filters.Regex("^💬 AI 聊天$"), _menu_breakout(chat_start)),
-    MessageHandler(filters.Regex("^🔎 檔案 Summary$"), _menu_breakout(research_start)),
-    MessageHandler(filters.Regex("^📊 公司介紹/分析$"), _menu_breakout(menu_stock_info_start)),
-    MessageHandler(filters.Regex("^📈 估值報告$"), _menu_breakout(menu_stock_esti_start)),
-]
-
 
 def create_bot_application() -> Application:
     """Create and configure the Telegram Bot Application."""
     if not settings.TELEGRAM_TOKEN:
         logger.warning("TELEGRAM_TOKEN not set. Bot will not start properly.")
 
-    # 提高 timeout 以因應 Telegram API 連線較慢（如 9+ 秒）
     application = (
         Application.builder()
         .token(settings.TELEGRAM_TOKEN)
+        .concurrent_updates(True)
         .connect_timeout(60.0)
         .read_timeout(60.0)
         .write_timeout(60.0)
@@ -94,14 +78,14 @@ def create_bot_application() -> Application:
     # Initialize Services
     application.bot_data["news_parser"] = NewsParser()
 
-    # Commands（僅允許白名單 chat）
+    # Commands
     f = ALLOWED_CHATS_FILTER
     application.add_handler(CommandHandler("start", start_command, filters=f))
     application.add_handler(CommandHandler("help", help_command, filters=f))
     application.add_handler(CommandHandler("info", info_command, filters=f))
     application.add_handler(CommandHandler("esti", esti_command, filters=f))
     application.add_handler(CommandHandler("news", news_command, filters=f))
-    application.add_handler(CommandHandler("chat", chat_command, filters=f))
+    application.add_handler(CommandHandler("google", google_command, filters=f))
     application.add_handler(CommandHandler("subscribe", subscribe_command, filters=f))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command, filters=f))
     application.add_handler(CommandHandler("watch", watch_command, filters=f))
@@ -117,85 +101,46 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("unsub_ispike", unsub_ispike_command, filters=f))
     application.add_handler(CommandHandler("vix", vix_command, filters=f))
     application.add_handler(CommandHandler("chatid", chatid_command, filters=f))
+    application.add_handler(CommandHandler("menu", menu_command, filters=f))
+    application.add_handler(CommandHandler("ua", ua_command, filters=f))
+    application.add_handler(CommandHandler("uask", uask_command, filters=f))
+    application.add_handler(CommandHandler("umon", umon_command, filters=f))
+    application.add_handler(CommandHandler("mega", mega_command, filters=f))
 
-    # Conversation: Research
+    # Conversation: Research (per_chat=False allows concurrent users)
     research_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("research", research_start),
-            MessageHandler(filters.Regex("^🔎 檔案 Summary$"), research_start),
-        ],
+        entry_points=[CommandHandler("research", research_start)],
         states={
-            ASK_RESEARCH: MENU_BREAKOUT_HANDLERS
-            + [
+            ASK_RESEARCH: [
                 MessageHandler(
                     filters.Document.ALL | (filters.TEXT & ~filters.COMMAND),
                     research_handle,
                 ),
-                CallbackQueryHandler(research_finish, pattern="^research_done$"),
             ]
         },
         fallbacks=[CommandHandler("rq", research_finish), CommandHandler("cancel", cancel)],
+        per_chat=False,
+        conversation_timeout=300,
     )
     application.add_handler(research_conv)
 
-    # Conversation: Analysis Flow (Menu)
-    analysis_conv = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.Regex("^📊 公司介紹/分析$"), menu_stock_info_start),
-            MessageHandler(filters.Regex("^📈 估值報告$"), menu_stock_esti_start),
-        ],
-        states={
-            ASK_TICKER_INFO: MENU_BREAKOUT_HANDLERS
-            + [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ticker_info)],
-            ASK_TICKER_ESTI: MENU_BREAKOUT_HANDLERS
-            + [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ticker_esti)],
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            MessageHandler(filters.Regex("^cancel$"), cancel),
-        ],
-    )
-    application.add_handler(analysis_conv)
-
-    # Conversation: Google News
-    google_news_conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("google_news", google_news_start),
-            MessageHandler(filters.Regex("^🔍 Google 新聞$"), google_news_start),
-        ],
-        states={
-            ASK_GOOGLE_NEWS: MENU_BREAKOUT_HANDLERS
-            + [MessageHandler(filters.TEXT & ~filters.COMMAND, google_news_handle)]
-        },
-        fallbacks=[
-            CommandHandler("cancel", cancel),
-            MessageHandler(filters.Regex("^cancel$"), cancel),
-        ],
-    )
-    application.add_handler(google_news_conv)
-
-    # Conversation: Chat
+    # Conversation: Chat (per_chat=False allows concurrent users)
     chat_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^💬 AI 聊天$"), chat_start)],
+        entry_points=[CommandHandler("chat", chat_command)],
         states={
-            ASK_CHAT: MENU_BREAKOUT_HANDLERS
-            + [MessageHandler(filters.TEXT & ~filters.COMMAND, chat_handle)]
+            ASK_CHAT: [MessageHandler(filters.TEXT & ~filters.COMMAND, chat_handle)]
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
             MessageHandler(filters.Regex("^(cancel|exit)$"), cancel),
         ],
+        per_chat=False,
+        conversation_timeout=300,
     )
     application.add_handler(chat_conv)
 
-    # Menu Button Handlers (Stateless)
-    application.add_handler(MessageHandler(filters.Regex("^📰 最新新聞$"), news_command))
-    application.add_handler(MessageHandler(filters.Regex("^🔥 爆量偵測$"), spike_command))
-    application.add_handler(MessageHandler(filters.Regex("^⚙️ 設定/訂閱$"), menu_settings_handler))
-    # AI Research Button - redirect to research_start (which is entry point for another conv)
-    # But research_conv entry_points currently only has CommandHandler. Need to add Regex handler there.
-
     # Callbacks
+    application.add_handler(CallbackQueryHandler(menu_callback_handler, pattern="^menu_"))
     application.add_handler(CallbackQueryHandler(news_button_handler, pattern="^news_"))
 
     # Jobs

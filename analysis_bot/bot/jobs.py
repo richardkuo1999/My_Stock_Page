@@ -349,7 +349,7 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
 
         # Vocus
         try:
-            vocus_users = ["@ieobserve", "@miula", "65ab564cfd897800018a88cc"]
+            vocus_users = get_settings().VOCUS_USERS
 
             async def fetch_vocus(user):
                 try:
