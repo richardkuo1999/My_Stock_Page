@@ -34,13 +34,12 @@ async def analyze_stock(self, ticker: str, lohas_years: float = 3.5) -> Dict[str
 ### AIService (`ai_service.py`)
 **Location:** `analysis_bot/services/ai_service.py`
 
-**Responsibility:** AI provider abstraction layer with automatic failover between Ollama and Gemini.
+**Responsibility:** AI provider abstraction layer using Google Gemini with automatic key rotation and model fallback.
 
 **Key Features:**
-- Provider switching (Ollama Cloud / Gemini)
-- API key rotation for Gemini (supports multiple keys)
-- Web search integration (Ollama Cloud only)
-- Model fallback chain for Gemini
+- Multiple API key rotation (handles rate limits)
+- Model fallback chain: `gemini-2.5-flash → gemini-2.0-flash → gemini-1.5-flash`
+- Google Search grounding (`use_search=True`)
 
 **Usage Pattern:**
 ```python
@@ -124,6 +123,88 @@ response = await ai.call(RequestType.TEXT, contents=prompt, use_search=True)
 
 ---
 
+### HTTP Session Factory (`http.py`)
+**Location:** `analysis_bot/services/http.py`
+
+**Responsibility:** 提供統一的 `aiohttp.ClientSession` 工廠函式，內建 certifi SSL 憑證。
+
+**背景：** 所有 service 原本各自建立 `aiohttp.ClientSession()`，在某些環境（macOS、Docker）會遇到 SSL 憑證問題。統一改用 `create_session()` 確保所有 HTTP 請求使用 certifi 的 CA bundle。
+
+**Usage:**
+```python
+from .http import create_session
+
+async with create_session() as session:
+    async with session.get(url) as resp:
+        data = await resp.json()
+```
+
+**被使用的 service：** `news_parser`, `price_fetcher`, `stock_analyzer`, `market_data_fetcher`, `blake_chips_scraper`, `cnyes_quote_scraper`, `eps_momentum_service`, `intraday_chart`, `legacy_scraper`, `stock_selector`, `uanalyze_ai`, `uanalyze_monitor`
+
+---
+
+### UAnalyze AI (`uanalyze_ai.py`)
+**Location:** `analysis_bot/services/uanalyze_ai.py`
+
+**Responsibility:** 透過 UAnalyze API 對個股執行多題 AI 分析，回傳 Markdown 報告。
+
+**Key Features:**
+- 30 個預設分析 prompt（近況、產業趨勢、護城河、關稅影響等）
+- 並發控制（`MAX_CONCURRENT_REQUESTS=5`）
+- 隨機延遲避免 rate limit
+
+**Main Methods:**
+- `analyze_stock(stock, prompts=None)` — 執行完整分析，回傳 Markdown
+- `fetch_completion(session, prompt, stock, semaphore, results)` — 單一 prompt 請求
+
+**Configuration:** `UANALYZE_AI_URL_TEMPLATE`（Settings）
+
+---
+
+### UAnalyze Monitor (`uanalyze_monitor.py`)
+**Location:** `analysis_bot/services/uanalyze_monitor.py`
+
+**Responsibility:** 定時輪詢 UAnalyze API 檢查新報告，有新報告時推播至 Telegram。
+
+**Key Features:**
+- 狀態持久化（`data/uanalyze/last_seen_id.json`）
+- 關鍵字高亮（HTML bold）
+- 首次執行只記錄 state 不推播
+- 含關鍵字的報告開啟通知音效
+
+**Main Method:**
+```python
+async def check_new_reports(bot=None, dry_run=False) -> int
+```
+
+**排程：** `scheduler.py` 每 60 秒執行一次（需設定 `UANALYZE_API_URL`）
+
+**Configuration:** `UANALYZE_API_URL`, `UANALYZE_KEYWORDS`, `TELEGRAM_AI_NEWS_CHAT_ID`, `TELEGRAM_AI_NEWS_TOPIC_ID`
+
+---
+
+### MEGA Download (`mega_download.py`)
+**Location:** `analysis_bot/services/mega_download.py`
+
+**Responsibility:** 透過 MEGAcmd CLI 搜尋並下載 MEGA 雲端檔案。
+
+**Key Features:**
+- 支援關鍵字搜尋
+- `y` 模式：先 import 再搜尋下載
+- `n` 模式：僅搜尋暫存區
+- 自動跳過已下載檔案
+
+**Main Method:**
+```python
+async def mega_search_and_download_async(should_fetch: bool, keywords: list[str]) -> str
+```
+
+**Prerequisites:** 需安裝 MEGAcmd（`brew install megacmd`）
+
+**Configuration:** `MEGA_PUBLIC_URL`
+
+---
+
 ## Data Flow Diagram
 
 ```
@@ -134,36 +215,55 @@ User Request (Telegram)
 │   handlers.py   │ ─── Command parsing & routing
 └────────┬────────┘
          │
-    ┌────┴────┬─────────┬────────────┐
-    ▼         ▼         ▼            ▼
-┌───────┐ ┌───────┐ ┌─────────┐ ┌──────────┐
-│Stock  │ │ AISvc │ │ News    │ │ Report   │
-│Service│ │       │ │ Parser  │ │Generator │
-└───┬───┘ └───┬───┘ └────┬────┘ └────┬─────┘
-    │         │          │           │
-    ▼         ▼          ▼           │
-┌─────────────────────────┐          │
-│    StockAnalyzer        │          │
-│  (orchestrates fetch)   │          │
-└───────────┬─────────────┘          │
-            │                        │
-    ┌───────┼───────┬────────┐       │
-    ▼       ▼       ▼        ▼       │
-┌───────┐ ┌───────┐ ┌──────┐ ┌─────┐│
-│Yahoo  │ │FinMind│ │ Anue  │ │Math ││
-│Finance│ │ API   │ │Scrape │ │Utils││
-└───────┘ └───────┘ └──────┘ └─────┘│
-                                     │
-                     ┌───────────────┘
-                     ▼
-            ┌─────────────────┐
-            │   SQLModel DB   │
-            │ (StockData, etc)│
-            └─────────────────┘
+    ┌────┴────┬─────────┬────────────┬──────────────┐
+    ▼         ▼         ▼            ▼              ▼
+┌───────┐ ┌───────┐ ┌─────────┐ ┌──────────┐ ┌──────────┐
+│Stock  │ │ AISvc │ │ News    │ │ Report   │ │UAnalyze  │
+│Service│ │       │ │ Parser  │ │Generator │ │AI / MEGA │
+└───┬───┘ └───┬───┘ └────┬────┘ └────┬─────┘ └────┬─────┘
+    │         │          │           │             │
+    ▼         ▼          ▼           │             │
+┌─────────────────────────┐          │             │
+│    StockAnalyzer        │          │             │
+│  (orchestrates fetch)   │          │             │
+└───────────┬─────────────┘          │             │
+            │                        │             │
+    ┌───────┼───────┬────────┐       │             │
+    ▼       ▼       ▼        ▼       │             │
+┌───────┐ ┌───────┐ ┌──────┐ ┌─────┐│             │
+│Yahoo  │ │FinMind│ │ Anue  │ │Math ││             │
+│Finance│ │ API   │ │Scrape │ │Utils││             │
+└───────┘ └───────┘ └──────┘ └─────┘│             │
+                                     │             │
+                     ┌───────────────┘             │
+                     ▼                             │
+            ┌─────────────────┐                    │
+            │   SQLModel DB   │                    │
+            │ (StockData, etc)│                    │
+            └─────────────────┘                    │
+                                                   │
+            ┌──────────────────────────────────────┘
+            ▼
+    ┌───────────────┐
+    │  http.py      │ ← 所有 aiohttp 請求統一使用
+    │ create_session│    certifi SSL context
+    └───────────────┘
+
+Scheduler (背景排程)
+    │
+    ├── daily_analysis_job → StockAnalyzer → DB
+    ├── daily_volume_spike_job → VolumeSpikeScanner
+    ├── check_news_job → NewsParser → DB → Telegram push
+    ├── intraday_spike_scan_job → IntradaySpikeScanner
+    ├── vix_check_job → VixFetcher
+    ├── threads_watch_job → ThreadsWatchService (Playwright)
+    └── uanalyze_monitor_job → UAnalyzeMonitor → Telegram push
 ```
 
 ## Adding a New Service
 
 1. Create file in `analysis_bot/services/`
-2. Import in `__init__.py` if needed
-3. Use from handlers or other services via dependency injection
+2. Use `from .http import create_session` for HTTP requests
+3. Import in `__init__.py` if needed
+4. Use from handlers or other services
+5. Add configuration to `Settings` class in `config.py` if needed

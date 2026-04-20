@@ -2,195 +2,298 @@
 
 ## Overview
 All bot commands are defined in `analysis_bot/bot/handlers.py`.
+Handler registration is in `analysis_bot/bot/main.py`.
 
 ## Command Reference
 
-### `/start` and `/help`
-**Function:** `start_command()` / `help_command()`
+### `/start`
+**Function:** `start_command()`
 
-**Description:** Displays main menu with keyboard options:
-- 最新新聞
-- 公司介紹/分析
-- 估值報告
-- 檔案 Summary (Research)
-- Google 新聞
-- AI 聊天
-- 設定/訂閱
+**Description:** 啟動機器人，回傳歡迎訊息並提示使用 `/help` 查看指令。
 
 ---
 
-### `/info <ticker>`
+### `/help`
+**Function:** `help_command()`
+
+**Description:** 顯示完整指令列表（Markdown 格式），依分類列出所有可用指令。
+
+---
+
+### `/menu`
+**Function:** `menu_command()` / `menu_callback_handler()`
+
+**Description:** 開啟互動式 InlineKeyboard 選單。使用者點選分類後展開子選單，可直接執行指令或將指令填入輸入框。
+
+**架構：**
+- `_MENU_CATEGORIES` — 主選單分類列表（9 類）
+- `_MENU_PAGES` — 各分類的按鈕定義（`/` 開頭 = 填入輸入框，`!` 開頭 = 直接執行）
+- `_build_menu_main_keyboard()` — 建構主選單鍵盤
+- `_build_category_keyboard()` — 建構分類頁面鍵盤
+- `_fake_context` — 注入 args 的 context wrapper，供 menu 呼叫 command handler
+
+**Callback 路由：**
+- `menu_back` → 返回主選單
+- `menu_cat_*` → 展開分類頁面
+- `menu_exec!*` → 執行對應指令
+
+---
+
+### `/info <股號>`
 **Function:** `info_command()` / `run_info_analysis()`
 
-**Description:** Get company information and AI-generated analysis.
+**Description:** 查詢個股基本面、營收與 AI 總結報告。
 
 **Services Used:**
-- `LegacyMoneyDJ` - Scrapes MoneyDJ wiki
-- `AIService` - Generates summary with Google search
+- `LegacyMoneyDJ` — Scrapes MoneyDJ wiki
+- `AIService` — Generates summary with Google search
 
 **Example:** `/info 2330`
 
 ---
 
-### `/esti <ticker>`
+### `/esti <股號>`
 **Function:** `esti_command()` / `run_esti_analysis()`
 
-**Description:** Stock valuation analysis using "樂活五線譜" algorithm.
+**Description:** 執行「樂活五線譜」與「均值回歸」估值分析。
 
 **Services Used:**
-- `StockService.get_or_analyze_stock()` - Cache-aware analysis
-- `ReportGenerator.generate_telegram_report()` - Format output
+- `StockService.get_or_analyze_stock()` — Cache-aware analysis
+- `ReportGenerator.generate_telegram_report()` — Format output
 
 **Example:** `/esti 2330`
+
+---
+
+### `/p <股號>`
+**Function:** `price_command()`
+
+**Description:** 即時股價 + 盤中走勢圖（台股 09:00–13:30）。
+
+**Services Used:** `price_fetcher.fetch_price()`, `intraday_chart.render_intraday_chart()`
+
+**Example:** `/p 2330`
+
+---
+
+### `/k <股號>`
+**Function:** `kline_command()`
+
+**Description:** K 線圖（近 3 個月日線，含 MA5/20/60 與量）。
+
+**Services Used:** `candlestick_chart.render_candlestick_chart()`（lazy import，依賴 Playwright）
+
+**Example:** `/k 2330`
+
+---
+
+### `/name <股號>`
+**Function:** `name_command()`
+
+**Description:** 查詢公司名稱。
+
+**Service:** `StockService.get_or_analyze_stock()`
+
+---
+
+### `/vix`
+**Function:** `vix_command()`
+
+**Description:** 查詢 VIX 恐慌指數現值。
+
+**Services Used:** `vix_fetcher.fetch_vix_snapshot()`, `format_vix_message()`
+
+---
+
+### `/spike [change|t1]`
+**Function:** `spike_command()`
+
+**Description:** 收盤爆量偵測。掃描台灣上市櫃股票，找出成交量 ≥ 1000 張且 ≥ 20 日均量 1.5 倍的個股。
+
+**排序：**
+- `/spike` — 按 MA20 倍數排序（預設）
+- `/spike change` — 按漲幅排序
+- `/spike t1` — 按前日倍數排序
+
+**Services Used:**
+- `VolumeSpikeScanner` — TWSE/TPEx + yfinance
+- `spike_pager` — 分頁輸出
+- `enrich_with_news` — Google News + AI 題材分析（可設定開關）
+
+---
+
+### `/ispike [change]`
+**Function:** `intraday_spike_command()`
+
+**Description:** 盤中爆量偵測（即時）。使用 MA20 快照 + Fugle 盤中資料。
+
+**Services Used:** `IntradaySpikeScanner`, `spike_pager`
+
+---
+
+### `/sub_ispike` / `/unsub_ispike`
+**Functions:** `sub_ispike_command()` / `unsub_ispike_command()`
+
+**Description:** 訂閱/取消盤中爆量自動通知。
+
+**Database:** `Subscriber` model（`ispike_enabled` 欄位）
 
 ---
 
 ### `/news`
 **Function:** `news_command()` / `news_button_handler()`
 
-**Description:** Fetch news from multiple sources with inline keyboard selection.
+**Description:** 開啟新聞來源 InlineKeyboard 選單，支援 15+ 個來源。
 
-**Supported Sources:**
-- CNYES (鉅亨網)
-- Google News (TW)
-- MoneyDJ, Yahoo 股市
-- UDN, UAnalyze, MacroMicro
-- FinGuider, Fintastic, Forecastock
-- Vocus (方格子), NewsDigest AI
-- Fugle Report, SinoTrade, Pocket
+**共用函式：** `_build_news_main_keyboard()` — 新聞選單鍵盤（news_command 與 news_button_handler 共用）
 
 **Service:** `NewsParser`
 
 ---
 
-### `/chat <message>`
-**Function:** `chat_command()`
+### `/google <關鍵字>`
+**Function:** `google_command()`
 
-**Description:** One-off AI chat with search capability.
+**Description:** Google 新聞搜尋。直接指令，不再使用 ConversationHandler。
 
-**Service:** `AIService` with Gemini provider
+**Service:** `NewsParser.fetch_news_list()`
+
+**Example:** `/google 台積電`
+
+---
+
+### `/chat [問題]`
+**Function:** `chat_command()` / `chat_start()` / `chat_handle()`
+
+**Description:**
+- `/chat <問題>` — 單次 AI 回答
+- `/chat`（無參數）— 進入持續對話模式（輸入 `exit` 或 `cancel` 離開）
+
+**Service:** `AIService` with Gemini
+
+---
+
+### `/research`
+**Entry:** `research_start()` → `research_handle()` → `research_finish()`
+
+**Description:** 上傳 PDF/DOCX 文件，自動生成投資研究摘要。上傳完畢後輸入 `/rq` 產生報告。
+
+**Service:** `AIService.call(RequestType.FILE, ...)`
+
+---
+
+### `/ua <股號> [股號...]`
+**Function:** `ua_command()`
+
+**Description:** UAnalyze AI 多題分析。對每個股號執行 30 個預設 prompt，回傳 Markdown 文件。
+
+**Service:** `uanalyze_ai.analyze_stock()`
+
+**Example:** `/ua 2330 2317`
+
+---
+
+### `/uask <股號> <問題>`
+**Function:** `uask_command()`
+
+**Description:** UAnalyze AI 自訂問題。
+
+**Service:** `uanalyze_ai.analyze_stock(stock, prompts=[question])`
+
+**Example:** `/uask 2330 近期營收？`
+
+---
+
+### `/umon`
+**Function:** `umon_command()`
+
+**Description:** 手動觸發 UAnalyze 報告監控檢查。
+
+**Service:** `uanalyze_monitor.check_new_reports()`
+
+---
+
+### `/mega y|n <關鍵字>`
+**Function:** `mega_command()`
+
+**Description:** MEGA 雲端搜尋下載。`y` = 拉取最新，`n` = 僅搜尋暫存。
+
+**Service:** `mega_download.mega_search_and_download_async()`
+
+**Example:** `/mega y 企劃`
 
 ---
 
 ### `/subscribe` / `/unsubscribe`
 **Functions:** `subscribe_command()` / `unsubscribe_command()`
 
-**Description:** Manage push notifications for news and daily analysis.
+**Description:** 訂閱/取消每日推播（個股分析、新聞、Podcast 摘要）。DB 操作透過 `asyncio.to_thread` 執行。
 
-**Database:** Uses `Subscriber` model
+**Database:** `Subscriber` model
 
 ---
 
-### `/watch add/remove/list <ticker> [alias]`
+### `/watch add|remove|list <股號> [別名]`
 **Function:** `watch_command()`
 
-**Description:** Manage personal watchlist with optional aliases.
-
-**Database:** Uses `WatchlistEntry` model
+**Description:** 管理個人自選股。
 
 **Features:**
 - Per-chat, per-user watchlist
-- Auto-fetch company name as alias (for TW stocks)
-- News notification integration (see `check_news_job` in `jobs.py`)
+- Auto-fetch company name as alias（台股）
+- News notification integration（`check_news_job`）
+
+**Database:** `WatchlistEntry` model
 
 ---
 
-### `/name <ticker>`
-**Function:** `name_command()`
-
-**Description:** Fetch company name for a ticker.
-
-**Service:** `StockService.get_or_analyze_stock()`
-
----
-
-### `/p <ticker>`
-**Function:** `price_command()`
-
-**Description:** 即時股價查詢（yfinance，台股約 15–20 分鐘延遲）。Telegram 指令須小寫。
-
-**Services Used:** `price_fetcher.fetch_price()`
-
-**Example:** `/p 2330`、`/p AAPL`
-
----
-
-### `/threads`（Threads 新貼文推播）
+### `/threads add|remove|list|check|bootstrap <帳號>`
 **Function:** `threads_command()`
 
-**Description:** 在**目前聊天室**（私聊或群組）訂閱 Threads 公開帳號；背景 job 會定期用 Playwright 檢查新貼文並推送到該聊天室。
+**Description:** 訂閱 Threads 公開帳號，背景 job 定期用 Playwright 檢查新貼文並推播。
 
 **用法：**
-- `/threads add <使用者名稱>` — 不含 `@`
-- `/threads remove <使用者名稱>`
-- `/threads list`
-- `/threads bootstrap <使用者名稱>` — 只記錄頁面上現有貼文 id，避免首次大量推播
-- `/threads check` — 立即檢查此聊天室所有訂閱
-
-**設定：** `THREADS_WATCH_INTERVAL_SEC`（秒，`0` 表示關閉定時輪詢，仍可用 `/threads check`）。需安裝 Chromium：`playwright install chromium`。
+- `/threads add <帳號>` — 訂閱（不含 `@`）
+- `/threads remove <帳號>` — 取消訂閱
+- `/threads list` — 查看訂閱清單
+- `/threads check` — 立即檢查新貼文
+- `/threads bootstrap <帳號>` — 記錄現有貼文 id，避免首次大量推播
 
 **Database:** `ThreadsWatchEntry`
 
 ---
 
-### `/hold981 [date]`
-**Function:** `hold981_command()`
+### `/hold981 [date]` / `/hold888 [date]`
+**Functions:** `hold981_command()` / `hold888_command()`
 
-**Description:** 抓取 00981 持股變化（Blake Finance）。日期可選，格式 YYYY-MM-DD。
+**Description:** 抓取 Blake Finance 持股變化。日期可選，格式 `YYYY-MM-DD`。
 
-**Services Used:** `blake_chips_scraper.fetch_chips_data()`
-
-**Example:** `/hold981` 或 `/hold981 2026-03-18`
+**Services Used:** `blake_chips_scraper.fetch_chips_data()` / `fetch_chips_data_888()`
 
 ---
 
-### `/hold888 [date]`
-**Function:** `hold888_command()`
+### `/chatid`
+**Function:** `chatid_command()`
 
-**Description:** 抓取 Blake Finance CHIPS match_888 資金流向資料（00981A_match_888）。日期可選。
-
-**Services Used:** `blake_chips_scraper.fetch_chips_data_888()`
-
-**Example:** `/hold888` 或 `/hold888 2026-03-18`
+**Description:** 查看目前 Chat ID。
 
 ---
 
-### `/spike`
-**Function:** `spike_command()`
+## Conversation Handlers
 
-**Description:** 手動觸發爆量偵測。掃描台灣上市櫃股票，找出成交量 ≥ 1000 張且 ≥ 20 日均量 1.5 倍的個股。完成後會自動擷取前 20 檔的題材與產業面消息（Google News + AI 分析）。
+| Handler | Entry | States | Fallbacks |
+|---------|-------|--------|-----------|
+| Research | `/research` | `ASK_RESEARCH`（收集文件） | `/rq`（完成）, `/cancel` |
+| Chat | `/chat`（無參數） | `ASK_CHAT`（持續對話） | `/cancel`, `exit` |
 
-**Services Used:**
-- `VolumeSpikeScanner` - TWSE/TPEx OpenAPI + yfinance
-- `enrich_with_news` - Google News RSS + AIService（題材／產業分析）
-
-**Example:** `/spike`
-
----
-
-### Research Flow (Conversation Handler)
-**Entry:** `/research` or "🔎 檔案 Summary" button
-
-**States:**
-- `ASK_RESEARCH` - Collect materials (text/PDF/docx)
-- `/rq` - Finish and generate report
-
-**Services Used:**
-- `AIService.call(RequestType.FILE, ...)` - Multimodal analysis
-
----
-
-### Chat Flow (Conversation Handler)
-**Entry:** "💬 AI 聊天" button
-
-**States:**
-- `ASK_CHAT` - Persistent chat mode (type "exit" or "cancel" to leave)
+兩者皆設定 `per_chat=False`（允許多使用者同時使用）和 `conversation_timeout=300`。
 
 ---
 
 ## Adding a New Command
 
-1. Define handler function in `handlers.py`
-2. Register with `Application.builder().add_handler()`
-3. If conversation handler, define states and transitions
-4. Update help text in `start_command()`
+1. 在 `handlers.py` 定義 handler function
+2. 在 `main.py` 的 `create_bot_application()` 中註冊 `CommandHandler`
+3. 更新 `help_command()` 的指令列表
+4. 更新 `main.py` 中 `set_my_commands()` 的 BotCommand 列表
+5. 如需加入 `/menu`，在 `_MENU_PAGES` 對應分類中新增按鈕
