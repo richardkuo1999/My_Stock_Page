@@ -8,6 +8,7 @@ from sqlmodel import Session, col, select
 from ..database import engine
 from ..models.eps_estimate import EpsEstimate
 from .anue_scraper import AnueScraper
+from .http import create_session
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ class EpsMomentumService:
         Returns a dict ready for ReportGenerator consumption.
         """
         # --- Step 1: Fetch & Store ---
-        async with aiohttp.ClientSession() as session:
+        async with create_session() as session:
             all_estimates = await self.anue.fetch_all_estimates(session, ticker, stock_name)
 
         if all_estimates:

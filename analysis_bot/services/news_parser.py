@@ -41,8 +41,10 @@ class NewsParser:
 
     async def init_session(self):
         if not self.session or self.session.closed:
+            from .http import create_session
+
             timeout = aiohttp.ClientTimeout(total=30)
-            self.session = aiohttp.ClientSession(headers=self.headers, timeout=timeout)
+            self.session = create_session(headers=self.headers, timeout=timeout)
         self.logger.info("NewsParser init session done")
 
     async def close(self):

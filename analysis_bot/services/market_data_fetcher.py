@@ -14,6 +14,8 @@ import ssl
 
 import aiohttp
 
+from .http import create_session
+
 logger = logging.getLogger(__name__)
 
 
@@ -116,7 +118,7 @@ class MarketDataFetcher:
         """Fetch all TPEx (OTC) stocks' daily closing data."""
         close_after = False
         if session is None:
-            session = aiohttp.ClientSession(trust_env=True)
+            session = create_session(trust_env=True)
             close_after = True
 
         try:

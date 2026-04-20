@@ -13,10 +13,12 @@ from datetime import datetime
 import aiohttp
 from bs4 import BeautifulSoup
 
+from .http import create_session
+
 logger = logging.getLogger(__name__)
 
-BASE_URL_981 = "https://blake-finance-notes.org/chips_blake_finance/code_php/00981A.php"
-BASE_URL_888 = "https://blake-finance-notes.org/chips_blake_finance/code_php/00981A_match_888.php"
+from ..config import get_settings
+
 DEFAULT_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
 
@@ -37,12 +39,12 @@ async def fetch_chips_data(
     if not date_str:
         date_str = datetime.now().strftime("%Y-%m-%d")
 
-    url = f"{BASE_URL_981}?date={date_str}"
+    url = f"{get_settings().BLAKE_CHIPS_URL_981}?date={date_str}"
     own_session = session is None
 
     if own_session:
         timeout = aiohttp.ClientTimeout(total=60)
-        session = aiohttp.ClientSession(headers=DEFAULT_HEADERS, timeout=timeout)
+        session = create_session(headers=DEFAULT_HEADERS, timeout=timeout)
 
     try:
         logger.info("Fetching CHIPS 981: %s", url)
@@ -120,11 +122,11 @@ async def fetch_chips_data_888(
     該頁為持股列表，無張數變化欄。
     """
     date_str = date_str or datetime.now().strftime("%Y-%m-%d")
-    url = f"{BASE_URL_888}?date={date_str}"
+    url = f"{get_settings().BLAKE_CHIPS_URL_888}?date={date_str}"
     own_session = session is None
     if own_session:
         timeout = aiohttp.ClientTimeout(total=60)
-        session = aiohttp.ClientSession(headers=DEFAULT_HEADERS, timeout=timeout)
+        session = create_session(headers=DEFAULT_HEADERS, timeout=timeout)
     try:
         logger.info("Fetching CHIPS 888: %s", url)
         async with session.get(url, ssl=True) as resp:

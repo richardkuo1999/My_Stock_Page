@@ -9,6 +9,8 @@ from bs4 import BeautifulSoup
 from natsort import natsorted
 from sqlmodel import Session, select
 
+from .http import create_session
+
 from ..database import engine
 from ..models.config import SystemConfig
 
@@ -149,7 +151,7 @@ class StockSelector:
         """Fetch top 50 stocks from 3 institutional investors."""
         should_close = False
         if not session:
-            session = aiohttp.ClientSession()
+            session = create_session()
             should_close = True
 
         try:
@@ -172,7 +174,7 @@ class StockSelector:
         """Fetch popular stocks from top performing ETFs."""
         should_close = False
         if not session:
-            session = aiohttp.ClientSession()
+            session = create_session()
             should_close = True
 
         try:

@@ -12,6 +12,7 @@ from .anue_scraper import AnueScraper
 from .data_fetcher import DataFetcher
 from .eps_momentum_service import EpsMomentumService
 from .finmind_fetcher import FinMindFetcher
+from .http import create_session
 from .math_utils import MathUtils
 
 settings = get_settings()
@@ -72,7 +73,7 @@ class StockAnalyzer:
             per_list, pbr_list = [], []
             anue_data = None
             if ticker.isdigit():
-                async with aiohttp.ClientSession() as session:
+                async with create_session() as session:
                     start_date = (datetime.now() - timedelta(days=5 * 365)).strftime("%Y-%m-%d")
                     # Fetch concurrently
                     per_pbr_task = self.finmind.get_per_pbr(session, ticker, start_date)

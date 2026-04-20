@@ -69,8 +69,9 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
     final_tickers_map = {}  # Ticker -> Set of Tags
 
     import aiohttp
+    from .services.http import create_session
 
-    async with aiohttp.ClientSession() as http_session:
+    async with create_session() as http_session:
         # --- Tag: ETF ---
         if "ETF" in active_tags:
             try:
@@ -1174,6 +1175,22 @@ def start_scheduler():
     # Add News Check Job (Every 10 mins)
     # 註: check_news_job 已交由 telegram.ext.Application.job_queue 排程 (bot/main.py)
     # 為避免產生 ConflictError (雙 Bot 實例衝突)，這裡不再透過 apscheduler 排程。
+
+    # UAnalyze 報告監控：每 60 秒檢查一次
+    async def _uanalyze_monitor_job():
+        from .services.uanalyze_monitor import check_new_reports
+        from . import main as _m
+        bot = _m.bot_app.bot if getattr(_m, "bot_app", None) else None
+        await check_new_reports(bot=bot)
+
+    from .config import get_settings as _gs
+    if _gs().UANALYZE_API_URL:
+        scheduler.add_job(
+            _uanalyze_monitor_job,
+            trigger=IntervalTrigger(seconds=60),
+            id="uanalyze_monitor",
+            replace_existing=True,
+        )
 
     scheduler.start()
     logger.info("Scheduler started.")

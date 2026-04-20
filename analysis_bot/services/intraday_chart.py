@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import yfinance as yf
 
 from ..utils.ticker_utils import get_tw_search_tickers, is_taiwan_ticker
+from .http import create_session
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,7 @@ async def _fetch_live_tw_price(stock_id: str) -> float | None:
     try:
         from .cnyes_quote_scraper import fetch_tw_quote
 
-        async with aiohttp.ClientSession() as session:
+        async with create_session() as session:
             q = await fetch_tw_quote(stock_id, session)
             if q and q.get("price"):
                 return float(q["price"])

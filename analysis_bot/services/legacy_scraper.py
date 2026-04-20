@@ -5,6 +5,8 @@ import aiohttp
 from bs4 import BeautifulSoup
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
+from .http import create_session
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_HEADERS = {
@@ -134,7 +136,7 @@ class LegacyMoneyDJ:
         return stock_name, company_url
 
     async def get_wiki_result(self, stock_id) -> tuple[str, str] | tuple[None, None]:
-        async with aiohttp.ClientSession() as session:
+        async with create_session() as session:
             stock_name, company_url = await self.get_company_url(session, stock_id)
             if not company_url:
                 return None, None

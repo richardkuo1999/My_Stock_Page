@@ -14,6 +14,7 @@ import aiohttp
 import yfinance as yf
 
 from ..utils.ticker_utils import get_tw_search_tickers, is_taiwan_ticker
+from .http import create_session
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ async def fetch_price(ticker: str) -> str:
         try:
             from .cnyes_quote_scraper import fetch_tw_quote
 
-            async with aiohttp.ClientSession() as session:
+            async with create_session() as session:
                 quote = await fetch_tw_quote(stock_id, session)
                 if quote:
                     p = quote["price"]
@@ -97,7 +98,7 @@ async def fetch_price(ticker: str) -> str:
 
             settings = get_settings()
             if settings.FINMIND_TOKENS:
-                async with aiohttp.ClientSession() as session:
+                async with create_session() as session:
                     fm = FinMindFetcher()
                     snap = await fm.get_tick_snapshot(session, stock_id)
                     if snap:
@@ -181,7 +182,7 @@ async def fetch_price(ticker: str) -> str:
 
                     settings = get_settings()
                     if settings.FINMIND_TOKENS:
-                        async with aiohttp.ClientSession() as session:
+                        async with create_session() as session:
                             fm = FinMindFetcher()
                             info = await fm.get_stock_info(session, stock_id)
                             if info.get("name"):

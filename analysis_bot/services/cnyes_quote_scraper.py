@@ -11,6 +11,8 @@ import re
 import aiohttp
 from bs4 import BeautifulSoup
 
+from .http import create_session
+
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://invest.cnyes.com/twstock"
@@ -40,7 +42,7 @@ async def fetch_tw_quote(
 
     if own_session:
         timeout = aiohttp.ClientTimeout(total=15)
-        session = aiohttp.ClientSession(headers=DEFAULT_HEADERS, timeout=timeout)
+        session = create_session(headers=DEFAULT_HEADERS, timeout=timeout)
 
     try:
         async with session.get(url, ssl=True) as resp:
