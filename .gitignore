@@ -1,9 +1,21 @@
 __pycache__
 .google-cookie
 .DS_Store
+.claude
+.cursor
+.worktrees/
+.gemini/
+his.txt
+log.txt
+test_lohas*.py
+config.toml
 
 .env
 
+# Threads 監控腳本狀態（含已見過貼文 id）
+data/threads_watch_state.json
+
+.venv/
 venv/
 logs/
 files/
@@ -11,8 +23,6 @@ results/
 reports/
 
 *.db
-*.md
+*.db-shm
+*.db-wal
 *.mp3
-
-!analysis_bot/MIGRATION_PROGRESS.md
-!README.md

@@ -1,6 +1,7 @@
-import os
 import logging
+import os
 from logging.config import dictConfig
+
 
 def setup_logging():
     # Ensure logs directory exists
@@ -12,11 +13,9 @@ def setup_logging():
         "formatters": {
             "standard": {
                 "format": "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-                "datefmt": "%Y-%m-%d %H:%M:%S"
+                "datefmt": "%Y-%m-%d %H:%M:%S",
             },
-            "simple": {
-                "format": "[%(levelname)s] %(message)s"
-            },
+            "simple": {"format": "[%(levelname)s] %(message)s"},
         },
         "handlers": {
             "console": {

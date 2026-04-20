@@ -1,6 +1,7 @@
-import numpy as np
-from sklearn.linear_model import LinearRegression
 import statistics
+
+import numpy as np
+
 
 class MathUtils:
     # Probabilities for standard deviation bands
@@ -9,11 +10,7 @@ class MathUtils:
     @staticmethod
     def _generate_band_labels() -> list[str]:
         """Generate labels for standard deviation bands."""
-        return (
-            [f"TL+{i}SD" for i in range(3, 0, -1)]
-            + ["TL"]
-            + [f"TL-{i}SD" for i in range(1, 4)]
-        )
+        return [f"TL+{i}SD" for i in range(3, 0, -1)] + ["TL"] + [f"TL-{i}SD" for i in range(1, 4)]
 
     @staticmethod
     def std(datas: list[float]):
@@ -21,21 +18,23 @@ class MathUtils:
             raise ValueError("Input data cannot be empty")
         try:
             # Filter out None and NaN values
-            datas = [d for d in datas if d is not None and not (isinstance(d, float) and np.isnan(d))]
+            datas = [
+                d for d in datas if d is not None and not (isinstance(d, float) and np.isnan(d))
+            ]
             if not datas:
                 return {}, []
             datas_np = np.array(datas, dtype=float)
-        except ValueError:
-            raise ValueError("Input data must contain only numeric values")
+        except ValueError as e:
+            raise ValueError("Input data must contain only numeric values") from e
 
         result = {}
-        # Simple median regression for TL (Trend Line) in standard deviation context 
+        # Simple median regression for TL (Trend Line) in standard deviation context
         # (Legacy logic: uses median as baseline)
         tl_val = statistics.median(datas_np)
         result["TL"] = np.full_like(datas_np, tl_val)
         result["y-TL"] = datas_np - result["TL"]
         result["SD"] = np.std(result["y-TL"], ddof=1)  # Sample standard deviation
-        
+
         sd = result["SD"]
         if sd == 0:
             sd = 1e-10  # Avoid division by zero
@@ -43,9 +42,13 @@ class MathUtils:
         for i in range(1, 4):
             result[f"TL-{i}SD"] = result["TL"] - i * sd
             result[f"TL+{i}SD"] = result["TL"] + i * sd
-        
+
         # We process the final values for easy consumption
-        final_result = {k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in result.items() if k not in ["y-TL", "SD"]}
+        final_result = {
+            k: v.tolist() if isinstance(v, np.ndarray) else v
+            for k, v in result.items()
+            if k not in ["y-TL", "SD"]
+        }
         return final_result, MathUtils._generate_band_labels()
 
     @staticmethod
@@ -56,7 +59,7 @@ class MathUtils:
         datas = [d for d in datas if d is not None and not (isinstance(d, float) and np.isnan(d))]
         if not datas:
             return []
-            
+
         datas_np = np.array(datas, dtype=float)
         percentiles = [np.percentile(datas_np, p) for p in (25, 50, 75)]
         mean = float(np.mean(datas_np))
@@ -66,12 +69,12 @@ class MathUtils:
     def percentile_rank(datas: list[float], value: float) -> float:
         """Calculate the percentile rank of a value in the dataset (0-100)."""
         if not datas or value is None:
-            return 50.0 # Default to middle if no data
-            
+            return 50.0  # Default to middle if no data
+
         datas = [d for d in datas if d is not None and not (isinstance(d, float) and np.isnan(d))]
         if not datas:
             return 50.0
-            
+
         datas_np = np.array(datas, dtype=float)
         # Calculate percentage of values less than the target value
         return float((datas_np < value).mean() * 100)
@@ -81,19 +84,19 @@ class MathUtils:
         prices = [p for p in prices if p is not None and not np.isnan(p)]
         if not prices:
             return {}
-            
+
         prices_np = np.array(prices, dtype=float)
-        
-        # Fit linear regression
-        reg = LinearRegression()
+
+        # Fit simple linear regression (avoid heavy sklearn dependency)
         idx = np.arange(1, len(prices_np) + 1)
-        reg.fit(idx.reshape(-1, 1), prices_np)
+        # np.polyfit returns slope, intercept for degree=1
+        slope, intercept = np.polyfit(idx, prices_np, 1)
 
         # Calculate trend line and bands
-        tl = reg.intercept_ + idx * reg.coef_[0]
+        tl = intercept + idx * slope
         y_minus_tl = prices_np - tl
         sd = np.std(y_minus_tl, ddof=1)
-        
+
         if sd == 0:
             sd = 1e-10
 
@@ -102,51 +105,58 @@ class MathUtils:
         for i in range(1, 4):
             bands[f"TL-{i}SD"] = (tl - i * sd).tolist()
             bands[f"TL+{i}SD"] = (tl + i * sd).tolist()
-            
+
         # Probability calculation
         last_price = prices_np[-1]
         band_labels = MathUtils._generate_band_labels()
-        
-        # Calculate probabilities based on current price position relative to bands
-        # Legacy logic logic adapted
-        up_prob = 0.0
-        hold_prob = 0.0
-        down_prob = sum(MathUtils.PROB_WEIGHTS) # Should be ~1.0
-        
-        # Simplified probability mapping (mimicking strict legacy logic)
-        # Note: The legacy logic had a loop checking `last_price < result[band][-1]`
-        # We need to construct the bands dict first with full arrays or just last values
+
         last_band_values = {k: v[-1] for k, v in bands.items()}
-        last_band_values["TL"] = bands["TL"][-1]
-        
-        # Sort labels by value (High to Low typically, TL+3SD to TL-3SD)
-        # band_labels is sorted TL+3SD ... TL ... TL-3SD
-        
-        for idx, band in enumerate(band_labels):
-            band_val = last_band_values[band]
-            weight = MathUtils.PROB_WEIGHTS[idx]
-            
-            if last_price < band_val:
-                up_prob += weight
-                down_prob -= weight
-            else:
-                hold_prob += weight
-                down_prob -= weight
-                break # Legacy logic breaks on first match?
-                
-        # Calculate expected values
         tl_last = last_band_values["TL"]
-        tl_minus_3sd = last_band_values["TL-3SD"]
-        tl_plus_3sd = last_band_values["TL+3SD"]
-        
-        expect_val_bull_1 = up_prob * (tl_last - last_price) - down_prob * last_price
-        expect_val_bull_2 = up_prob * (tl_last - last_price) - down_prob * (last_price - tl_minus_3sd)
-        expect_val_bear_1 = down_prob * (last_price - tl_last) - up_prob * (tl_plus_3sd - last_price)
+
+        # Simplify probability calculation using normal distribution approximations
+        # Z = (last_price - tl_last) / sd
+        # Avoid SciPy dependency, use simple z-score to probability mapping
+        z_score = (last_price - tl_last) / sd
+
+        # Approximate cumulative distribution function (CDF)
+        # Using a logistic approximation for normal CDF to remain dependency-free
+        # F(x) ≈ 1 / (1 + e^(-1.702 * x))
+        # This gives the probability that value is LESS than last_price
+        cdf_prob = 1.0 / (1.0 + np.exp(-1.702 * z_score))
+
+        # In mean reversion, if price is above TL (z > 0, cdf > 0.5), it tends to revert down (down_prob > up_prob)
+        # If price is below TL (z < 0, cdf < 0.5), it tends to revert up (up_prob > down_prob)
+
+        # Base probabilities representing movement towards the mean
+        down_prob = cdf_prob
+        up_prob = 1.0 - cdf_prob
+        hold_prob = 0.0  # Simplify to just Up/Down for binary expectation models
+
+        # Calculate expected values (Risk/Reward context)
+        # Expected Value = (Prob of Success * Potential Profit) - (Prob of Failure * Potential Loss)
+
+        # Bull 1: Target is TL (Mean), Stop Loss is TL-1SD
+        tl_minus_1sd = last_band_values["TL-1SD"]
+        upside_tl = max(0.0, tl_last - last_price)
+        downside_1sd = max(0.0, last_price - tl_minus_1sd)
+        expect_val_bull_1 = (up_prob * upside_tl) - (down_prob * downside_1sd)
+
+        # Bull 2: Target is TL+1SD, Stop Loss is TL-2SD
+        tl_plus_1sd = last_band_values["TL+1SD"]
+        tl_minus_2sd = last_band_values["TL-2SD"]
+        upside_1sd = max(0.0, tl_plus_1sd - last_price)
+        downside_2sd = max(0.0, last_price - tl_minus_2sd)
+        expect_val_bull_2 = (up_prob * upside_1sd) - (down_prob * downside_2sd)
+
+        # Bear 1: Target is TL (Mean), Stop Loss is TL+1SD
+        downside_target = max(0.0, last_price - tl_last)
+        upside_risk = max(0.0, tl_plus_1sd - last_price)
+        expect_val_bear_1 = (down_prob * downside_target) - (up_prob * upside_risk)
 
         return {
             "prob": [up_prob * 100, hold_prob * 100, down_prob * 100],
             "TL": [float(tl_last)],
             "expect": [expect_val_bull_1, expect_val_bull_2, expect_val_bear_1],
             "targetprice": [float(last_band_values[title]) for title in band_labels],
-            "bands": bands # Return full series for charting
+            "bands": bands,  # Return full series for charting
         }

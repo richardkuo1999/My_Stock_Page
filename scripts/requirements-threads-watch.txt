@@ -1,0 +1,5 @@
+# Threads 監控 → Telegram（scripts/threads_telegram_watch.py）
+# 安裝：pip install -r scripts/requirements-threads-watch.txt && playwright install chromium
+python-dotenv>=1.0.0
+python-telegram-bot>=21.4
+playwright>=1.40.0

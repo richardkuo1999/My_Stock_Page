@@ -1,5 +1,31 @@
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+src = ["analysis_bot", "scripts", "tests"]
+exclude = [".venv", "__pycache__", "*.egg-info"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+]
+ignore = [
+    "E501",   # line length handled by formatter
+    "B008",   # FastAPI Depends() in function defaults is intentional
+    "E402",   # module-level imports not at top — intentional lazy imports
+    "B017",   # pytest.raises(Exception) — acceptable in test files
+]
+
+[tool.ruff.format]
+quote-style = "double"
+
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "analysis_bot/tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 addopts = "-v --tb=short"
@@ -20,4 +46,9 @@ exclude_lines = [
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.6",
 ]

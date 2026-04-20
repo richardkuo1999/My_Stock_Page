@@ -1,0 +1,20 @@
+services:
+  app:
+    build: .
+    container_name: my_stock_page
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      # 程式碼 mount 進來，改本機檔案即時生效
+      - ./analysis_bot:/app/analysis_bot
+      - ./tests:/app/tests
+      # SQLite 資料庫持久化
+      - ./stock_data.db:/app/stock_data.db
+      # Claude Code 設定持久化（API key 等）
+      - ~/.claude:/root/.claude
+    working_dir: /app
+    stdin_open: true
+    tty: true
+    restart: unless-stopped

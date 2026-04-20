@@ -5,7 +5,8 @@
     <div class="hero-section">
         <h2>Latest Market News</h2>
         <div class="search-container">
-            <input type="text" id="newsSearchInput" placeholder="Search news titles...">
+            <input type="text" id="newsSearchInput" placeholder="搜尋標題、內文或來源（多關鍵字用空格分隔，需全部符合）">
+            <span id="searchResultCount" class="search-result-count"></span>
         </div>
 
         <!-- Source Toggles -->
@@ -24,21 +25,24 @@
         </div>
     </div>
 
-    <div class="news-grid" id="newsGrid">
-        {% for news in news_items %}
-        <a href="{{ news.link }}" target="_blank" class="news-card" data-source="{{ news.source }}"
-            data-title="{{ news.title }}">
-            <div class="news-header">
-                <span class="source-tag">{{ news.source }}</span>
-                <span class="date">{{ news.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
-            </div>
-            <div class="news-body">
-                <h3>{{ news.title }}</h3>
-            </div>
-        </a>
-        {% else %}
-        <p class="empty-state">No news found.</p>
-        {% endfor %}
+    <div class="news-grid-wrapper">
+        <p id="noResultsMsg" class="empty-state" style="display:none;">沒有符合條件的新聞</p>
+        <div class="news-grid" id="newsGrid">
+            {% for news in news_items %}
+            <a href="{{ news.link }}" target="_blank" class="news-card" data-source="{{ news.source or '' }}"
+                data-title="{{ news.title }}" data-content="{{ (news.content or '') }}">
+                <div class="news-header">
+                    <span class="source-tag">{{ news.source }}</span>
+                    <span class="date">{{ news.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                </div>
+                <div class="news-body">
+                    <h3 class="news-title">{{ news.title }}</h3>
+                </div>
+            </a>
+            {% else %}
+            <p class="empty-state">No news found.</p>
+            {% endfor %}
+        </div>
     </div>
 </div>
 
@@ -47,16 +51,36 @@
         const searchInput = document.getElementById('newsSearchInput');
         const filterBtns = document.querySelectorAll('.filter-btn');
         const newsCards = document.querySelectorAll('.news-card');
+        const resultCountEl = document.getElementById('searchResultCount');
+        const noResultsMsg = document.getElementById('noResultsMsg');
 
         let currentFilter = 'all';
+
+        function escapeHtml(s) {
+            const div = document.createElement('div');
+            div.textContent = s;
+            return div.innerHTML;
+        }
+
+        function escapeRegex(s) {
+            return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+
+        function highlightTitle(title, keywords) {
+            if (!keywords.length) return escapeHtml(title);
+            let result = escapeHtml(title);
+            keywords.forEach(kw => {
+                const re = new RegExp('(' + escapeRegex(kw) + ')', 'gi');
+                result = result.replace(re, '<mark>$1</mark>');
+            });
+            return result;
+        }
 
         // 1. Filter by Source
         filterBtns.forEach(btn => {
             btn.addEventListener('click', () => {
-                // UI Toggle
                 filterBtns.forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
-
                 currentFilter = btn.dataset.filter;
                 applyFilters();
             });
@@ -66,24 +90,47 @@
         searchInput.addEventListener('input', applyFilters);
 
         function applyFilters() {
-            const query = searchInput.value.trim().toLowerCase();
+            const query = searchInput.value.trim();
+            const keywords = query ? query.split(/\s+/).filter(Boolean).map(k => k.toLowerCase()) : [];
+            let visibleCount = 0;
 
             newsCards.forEach(card => {
                 const source = card.dataset.source;
-                const title = card.dataset.title.toLowerCase();
+                const title = card.dataset.title;
+                const titleLower = title.toLowerCase();
+                const sourceLower = (source || '').toLowerCase();
 
-                // Source Match
+                const content = (card.dataset.content || '').toLowerCase();
+
                 const sourceMatch = (currentFilter === 'all') || (source === currentFilter);
+                const textMatch = !keywords.length ||
+                    keywords.every(kw =>
+                        titleLower.includes(kw) || sourceLower.includes(kw) || content.includes(kw)
+                    );
 
-                // Text Match
-                const textMatch = !query || title.includes(query);
+                const show = sourceMatch && textMatch;
+                card.style.display = show ? 'flex' : 'none';
+                if (show) visibleCount++;
 
-                if (sourceMatch && textMatch) {
-                    card.style.display = 'flex';
-                } else {
-                    card.style.display = 'none';
+                // Highlight matched keywords in visible cards
+                const h3 = card.querySelector('.news-title');
+                if (h3) {
+                    h3.innerHTML = highlightTitle(title, keywords);
                 }
             });
+
+            // Result count
+            if (resultCountEl) {
+                resultCountEl.textContent = query || currentFilter !== 'all'
+                    ? `共 ${visibleCount} 則`
+                    : '';
+            }
+
+            // No results message (only when we have cards but filter returns none)
+            if (noResultsMsg && newsCards.length > 0) {
+                noResultsMsg.style.display = (query || currentFilter !== 'all') && visibleCount === 0
+                    ? 'block' : 'none';
+            }
         }
     });
 </script>
@@ -113,6 +160,17 @@
         background: var(--primary-color);
         color: white;
         border-color: var(--primary-color);
+    }
+
+    .news-grid-wrapper {
+        position: relative;
+        padding: 20px;
+    }
+
+    .news-grid-wrapper .empty-state {
+        text-align: center;
+        color: var(--text-secondary);
+        padding: 40px 20px;
     }
 
     .news-grid {
@@ -158,6 +216,19 @@
         font-size: 1.1em;
         line-height: 1.4;
         color: var(--text-primary);
+    }
+
+    .search-result-count {
+        margin-left: 12px;
+        font-size: 0.9em;
+        color: var(--text-secondary);
+    }
+
+    .news-body h3 mark {
+        background: rgba(88, 166, 255, 0.35);
+        color: inherit;
+        padding: 0 2px;
+        border-radius: 2px;
     }
 </style>
 {% endblock %}
