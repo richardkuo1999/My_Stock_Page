@@ -18,6 +18,7 @@ def watchlist_engine(tmp_path, monkeypatch: pytest.MonkeyPatch):
     import analysis_bot.database as database
 
     monkeypatch.setattr(database, "engine", engine)
+    monkeypatch.setattr(handlers, "engine", engine)
     return engine
 
 
@@ -92,7 +93,7 @@ async def test_watch_ticker_validation(watchlist_engine) -> None:
 
     await handlers.watch_command(update, context)
 
-    assert msg.reply_text_calls[-1].text == "Ticker 格式不正確"
+    assert msg.reply_text_calls[-1].text == "❌ Ticker 格式不正確"
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,7 @@ from analysis_bot.services.volume_spike_formatter import (
     NAME_W,
     PRICE_CHG_W,
     RATIO_FIELD_W,
+    RATIO_T1_FIELD_W,
     TICKER_W,
     _fit_visual_width,
     display_width,
@@ -335,13 +336,13 @@ def test_spike_table_header_line_fixed_visual_width():
     """表頭列與資料列總寬一致。"""
     inner = get_table_header().removeprefix("```\n")
     first_line = inner.split("\n", 1)[0]
-    expected = TICKER_W + NAME_W + PRICE_CHG_W + 1 + RATIO_FIELD_W
+    expected = TICKER_W + NAME_W + PRICE_CHG_W + 1 + RATIO_FIELD_W + 1 + RATIO_T1_FIELD_W
     assert display_width(first_line) == expected
 
 
 def test_format_spike_row_fixed_visual_width():
     """Telegram 表格列顯示寬度應一致（CJK 佔 2），避免等寬字體跑版。"""
-    expected = TICKER_W + NAME_W + PRICE_CHG_W + 1 + RATIO_FIELD_W
+    expected = TICKER_W + NAME_W + PRICE_CHG_W + 1 + RATIO_FIELD_W + 1 + RATIO_T1_FIELD_W
     for change_pct in (1.5, None, -9.99):
         r = VolumeSpikeResult(
             ticker="2330",

@@ -24,12 +24,22 @@ class FakeMessage:
     async def reply_text(self, text: str, **kwargs: Any) -> None:
         self.reply_text_calls.append(ReplyCall(text=text, kwargs=kwargs))
 
+    async def reply_chat_action(self, action: Any, **kwargs: Any) -> None:
+        pass
+
+    async def reply_document(self, **kwargs: Any) -> None:
+        pass
+
+    async def reply_photo(self, **kwargs: Any) -> None:
+        pass
+
 
 class FakeCallbackQuery:
     def __init__(self, data: str) -> None:
         self.data = data
         self.answer_calls: int = 0
         self.edit_message_text_calls: list[EditCall] = []
+        self.message: FakeMessage = FakeMessage()
 
     async def answer(self, **_kwargs: Any) -> None:
         self.answer_calls += 1
@@ -41,6 +51,8 @@ class FakeCallbackQuery:
 class FakeChat:
     def __init__(self, chat_id: int) -> None:
         self.id = chat_id
+        self.type = "private"
+        self.title: str | None = None
 
 
 class FakeUser:
@@ -59,6 +71,7 @@ class FakeUpdate:
         user_id: int = 456,
         user_full_name: str = "",
     ) -> None:
+        self.update_id = 0
         self.message = message
         self.callback_query = callback_query
         self.effective_chat = FakeChat(chat_id)
@@ -74,6 +87,7 @@ class FakeContext:
     ) -> None:
         self.bot_data: dict[str, Any] = bot_data or {}
         self.args: list[str] = args or []
+        self.user_data: dict[str, Any] = {}
 
 
 class FakeNewsParser:

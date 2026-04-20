@@ -204,7 +204,7 @@ async def test_news_button_handler_empty_results_shows_back_to_main_menu() -> No
     assert query.answer_calls == 1
     assert len(query.edit_message_text_calls) == 1
     edit = query.edit_message_text_calls[0]
-    assert edit.text == "No news found or source not implemented yet."
+    assert edit.text == "❌ 找不到新聞或該來源尚未支援。"
     markup = edit.kwargs.get("reply_markup")
     assert isinstance(markup, InlineKeyboardMarkup)
     assert _first_button_callback(markup) == "news_main_menu"
