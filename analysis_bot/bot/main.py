@@ -47,6 +47,8 @@ from .handlers import (
     ua_command,
     uask_command,
     umon_command,
+    umon_bind_command,
+    umon_unbind_command,
     unsub_ispike_command,
     unsubscribe_command,
     vix_command,
@@ -105,6 +107,9 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("ua", ua_command, filters=f))
     application.add_handler(CommandHandler("uask", uask_command, filters=f))
     application.add_handler(CommandHandler("umon", umon_command, filters=f))
+    application.add_handler(CommandHandler("umon_bind", umon_bind_command, filters=f))
+    application.add_handler(CommandHandler("umon_unbind", umon_unbind_command, filters=f))
+    application.add_handler(CommandHandler("umon_unbind", umon_unbind_command, filters=f))
     application.add_handler(CommandHandler("mega", mega_command, filters=f))
 
     # Conversation: Research (per_chat=False allows concurrent users)

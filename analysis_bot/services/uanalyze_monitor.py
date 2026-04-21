@@ -1,10 +1,8 @@
 """UAnalyze 報告監控服務：定時抓取新報告並推播 Telegram。"""
 
 import html
-import json
 import logging
 from datetime import datetime
-from pathlib import Path
 
 import aiohttp
 
@@ -13,24 +11,36 @@ from .http import create_session
 
 logger = logging.getLogger(__name__)
 
-STATE_FILE = Path("data/uanalyze/last_seen_id.json")
+_LAST_ID_KEY = "umon_last_seen_id"
 
 
 def _load_last_id() -> int:
-    if STATE_FILE.exists():
-        try:
-            return json.loads(STATE_FILE.read_text(encoding="utf-8")).get("last_id", 0)
-        except Exception:
-            pass
+    from sqlmodel import Session as _S, select as _sel
+    import analysis_bot.database as _db
+    from ..models.config import SystemConfig
+    try:
+        with _S(_db.engine) as s:
+            row = s.exec(_sel(SystemConfig).where(SystemConfig.key == _LAST_ID_KEY)).first()
+            if row:
+                return int(row.value)
+    except Exception:
+        pass
     return 0
 
 
 def _save_last_id(last_id: int) -> None:
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(
-        json.dumps({"last_id": last_id, "updated_at": datetime.now().isoformat()}, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    from sqlmodel import Session as _S, select as _sel
+    import analysis_bot.database as _db
+    from ..models.config import SystemConfig
+    with _S(_db.engine) as s:
+        row = s.exec(_sel(SystemConfig).where(SystemConfig.key == _LAST_ID_KEY)).first()
+        if row:
+            row.value = str(last_id)
+            row.updated_at = datetime.now()
+        else:
+            row = SystemConfig(key=_LAST_ID_KEY, value=str(last_id), description="UAnalyze monitor last seen report id")
+        s.add(row)
+        s.commit()
 
 
 def _format_report(report: dict, index: int, total: int, keywords: list[str]) -> tuple[str, bool]:
@@ -73,8 +83,13 @@ async def check_new_reports(bot=None, dry_run: bool = False) -> int:
         return 0
 
     keywords = [k.strip() for k in settings.UANALYZE_KEYWORDS.split(",") if k.strip()]
-    chat_id = settings.TELEGRAM_AI_NEWS_CHAT_ID
-    topic_id = settings.TELEGRAM_AI_NEWS_TOPIC_ID or None
+
+    # Load all push targets from DB
+    from sqlmodel import Session as _Session, select as _select
+    from ..models.umon_target import UmonTarget
+    import analysis_bot.database as _db
+    with _Session(_db.engine) as _s:
+        targets = _s.exec(_select(UmonTarget)).all()
 
     async with create_session() as session:
         # Fetch reports
@@ -106,17 +121,18 @@ async def check_new_reports(bot=None, dry_run: bool = False) -> int:
 
     logger.info("UAnalyze: %d new reports", len(new_reports))
 
-    if not dry_run and bot and chat_id:
+    if not dry_run and bot and targets:
         total = len(new_reports)
         for i, report in enumerate(new_reports, 1):
             text, has_kw = _format_report(report, i, total, keywords)
-            kwargs = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_notification": not has_kw}
-            if topic_id:
-                kwargs["message_thread_id"] = topic_id
-            try:
-                await bot.send_message(**kwargs)
-            except Exception as e:
-                logger.error("UAnalyze telegram send error: %s", e)
+            for t in targets:
+                kwargs = {"chat_id": t.chat_id, "text": text, "parse_mode": "HTML", "disable_notification": not has_kw}
+                if t.topic_id:
+                    kwargs["message_thread_id"] = t.topic_id
+                try:
+                    await bot.send_message(**kwargs)
+                except Exception as e:
+                    logger.error("UAnalyze send error (chat=%s): %s", t.chat_id, e)
             if i < total:
                 import asyncio
                 await asyncio.sleep(0.3)

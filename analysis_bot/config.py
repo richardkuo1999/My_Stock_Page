@@ -79,10 +79,6 @@ class Settings(BaseSettings):
     UANALYZE_API_URL: str = ""
     UANALYZE_KEYWORDS: str = ""  # comma-separated
 
-    # UAnalyze Monitor → Telegram
-    TELEGRAM_AI_NEWS_CHAT_ID: str = ""
-    TELEGRAM_AI_NEWS_TOPIC_ID: int = 0
-
     # MEGA
     MEGA_PUBLIC_URL: str = ""
 

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import json
-
 import pytest
+from sqlmodel import SQLModel, create_engine
+
 from analysis_bot.services.uanalyze_monitor import (
     _format_report,
     _load_last_id,
@@ -12,33 +12,33 @@ from analysis_bot.services.uanalyze_monitor import (
 
 
 @pytest.fixture()
-def state_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    """Redirect STATE_FILE to tmp_path."""
-    import analysis_bot.services.uanalyze_monitor as mod
+def isolated_db(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """Provide an isolated SQLite DB with all tables created."""
+    import analysis_bot.database as database
+    from analysis_bot.models.config import SystemConfig  # noqa: F401
+    from analysis_bot.models.umon_target import UmonTarget  # noqa: F401
 
-    monkeypatch.setattr(mod, "STATE_FILE", tmp_path / "last_seen_id.json")
-    return tmp_path
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}", connect_args={"check_same_thread": False})
+    SQLModel.metadata.create_all(engine)
+    monkeypatch.setattr(database, "engine", engine)
+    return engine
 
 
 # --- state management ---
 
-def test_load_last_id_missing_file(state_dir) -> None:
+def test_load_last_id_no_row(isolated_db) -> None:
     assert _load_last_id() == 0
 
 
-def test_save_and_load_last_id(state_dir) -> None:
+def test_save_and_load_last_id(isolated_db) -> None:
     _save_last_id(42)
     assert _load_last_id() == 42
 
 
-def test_save_creates_parent_dirs(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import analysis_bot.services.uanalyze_monitor as mod
-
-    deep = tmp_path / "a" / "b" / "state.json"
-    monkeypatch.setattr(mod, "STATE_FILE", deep)
+def test_save_overwrites(isolated_db) -> None:
     _save_last_id(10)
-    assert deep.exists()
-    assert _load_last_id() == 10
+    _save_last_id(20)
+    assert _load_last_id() == 20
 
 
 # --- format ---
@@ -84,7 +84,7 @@ def test_format_report_no_keyword_match() -> None:
 # --- check_new_reports ---
 
 @pytest.mark.asyncio
-async def test_check_new_reports_no_url(state_dir, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_check_new_reports_no_url(isolated_db, monkeypatch: pytest.MonkeyPatch) -> None:
     """When UANALYZE_API_URL is empty, should return 0."""
     import analysis_bot.services.uanalyze_monitor as mod
 
@@ -97,15 +97,13 @@ async def test_check_new_reports_no_url(state_dir, monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.asyncio
-async def test_check_new_reports_first_run_saves_state(state_dir, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_check_new_reports_first_run_saves_state(isolated_db, monkeypatch: pytest.MonkeyPatch) -> None:
     """First run (last_id=0) should save state but not send messages."""
     import analysis_bot.services.uanalyze_monitor as mod
 
     class FakeSettings:
         UANALYZE_API_URL = "http://fake/api"
         UANALYZE_KEYWORDS = ""
-        TELEGRAM_AI_NEWS_CHAT_ID = ""
-        TELEGRAM_AI_NEWS_TOPIC_ID = 0
 
     monkeypatch.setattr(mod, "get_settings", lambda: FakeSettings())
 

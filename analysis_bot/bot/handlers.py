@@ -156,6 +156,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "  例：`/ua 2330 2317`\n"
         "• `/uask <股號> <問題>` — 💡 自訂問題\n"
         "  例：`/uask 2330 近期營收？`\n"
+        "• `/umon` — 🔍 手動觸發 UAnalyze 報告檢查\n"
+        "• `/umon_bind` — 📌 綁定此聊天室為報告推播目標\n"
+        "• `/umon_unbind` — 🔕 取消此聊天室的報告推播\n"
         "• `/mega y|n <關鍵字>` — 📥 MEGA 搜尋下載\n"
         "  例：`/mega y 企劃`\n\n"
         "⚙️ *其他*\n"
@@ -1028,6 +1031,53 @@ async def umon_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ 發現並推播 {count} 則新報告")
     else:
         await update.message.reply_text("📭 無新報告")
+
+
+async def umon_bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/umon_bind — 將目前聊天室綁定為 UAnalyze 報告推播目標（支援多目標）"""
+    from ..models.umon_target import UmonTarget
+
+    chat_id = update.effective_chat.id
+    topic_id = getattr(update.message, "message_thread_id", None)
+
+    with Session(engine) as session:
+        existing = session.exec(
+            select(UmonTarget).where(
+                UmonTarget.chat_id == chat_id, UmonTarget.topic_id == topic_id
+            )
+        ).first()
+        if existing:
+            await update.message.reply_text("ℹ️ 此聊天室已綁定過")
+            return
+        session.add(UmonTarget(chat_id=chat_id, topic_id=topic_id))
+        session.commit()
+
+    parts = [f"✅ 已新增 UAnalyze 推播目標\nChat ID: <code>{chat_id}</code>"]
+    if topic_id:
+        parts.append(f"Topic ID: <code>{topic_id}</code>")
+    await update.message.reply_text("\n".join(parts), parse_mode="HTML")
+
+
+async def umon_unbind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/umon_unbind — 取消目前聊天室的 UAnalyze 報告推播"""
+    from ..models.umon_target import UmonTarget
+
+    chat_id = update.effective_chat.id
+    topic_id = getattr(update.message, "message_thread_id", None)
+
+    with Session(engine) as session:
+        row = session.exec(
+            select(UmonTarget).where(
+                UmonTarget.chat_id == chat_id, UmonTarget.topic_id == topic_id
+            )
+        ).first()
+        if not row:
+            await update.message.reply_text("ℹ️ 此聊天室未綁定")
+            return
+        session.delete(row)
+        session.commit()
+
+    await update.message.reply_text("✅ 已移除此聊天室的 UAnalyze 推播")
 
 
 # --- Research (Files) ---
