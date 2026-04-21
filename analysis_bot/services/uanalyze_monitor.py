@@ -1,5 +1,6 @@
 """UAnalyze 報告監控服務：定時抓取新報告並推播 Telegram。"""
 
+import asyncio
 import html
 import logging
 from datetime import datetime
@@ -12,6 +13,7 @@ from .http import create_session
 logger = logging.getLogger(__name__)
 
 _LAST_ID_KEY = "umon_last_seen_id"
+_CHECK_LOCK = asyncio.Lock()
 
 
 def _load_last_id() -> int:
@@ -77,6 +79,14 @@ def _format_report(report: dict, index: int, total: int, keywords: list[str]) ->
 
 async def check_new_reports(bot=None, dry_run: bool = False) -> int:
     """Check for new reports and send to Telegram. Returns count of new reports."""
+    if _CHECK_LOCK.locked():
+        logger.info("UAnalyze monitor: previous run still in progress, skipping")
+        return 0
+    async with _CHECK_LOCK:
+        return await _do_check_new_reports(bot=bot, dry_run=dry_run)
+
+
+async def _do_check_new_reports(bot=None, dry_run: bool = False) -> int:
     settings = get_settings()
     api_url = settings.UANALYZE_API_URL
     if not api_url:
@@ -121,21 +131,24 @@ async def check_new_reports(bot=None, dry_run: bool = False) -> int:
 
     logger.info("UAnalyze: %d new reports", len(new_reports))
 
+    sent = 0
     if not dry_run and bot and targets:
         total = len(new_reports)
         for i, report in enumerate(new_reports, 1):
             text, has_kw = _format_report(report, i, total, keywords)
-            for t in targets:
-                kwargs = {"chat_id": t.chat_id, "text": text, "parse_mode": "HTML", "disable_notification": not has_kw}
-                if t.topic_id:
-                    kwargs["message_thread_id"] = t.topic_id
-                try:
-                    await bot.send_message(**kwargs)
-                except Exception as e:
-                    logger.error("UAnalyze send error (chat=%s): %s", t.chat_id, e)
+            kwargs = {"chat_id": t.chat_id, "text": text, "parse_mode": "HTML", "disable_notification": not has_kw}
+            if topic_id:
+                kwargs["message_thread_id"] = t.topic_id
+            try:
+                await bot.send_message(**kwargs)
+                _save_last_id(report["id"])
+                sent += 1
+            except Exception as e:
+                logger.error("UAnalyze send error (chat=%s): %s", t.chat_id, e)
             if i < total:
-                import asyncio
                 await asyncio.sleep(0.3)
+    else:
+        _save_last_id(max(r["id"] for r in new_reports))
+        sent = total
 
-    _save_last_id(max(r["id"] for r in new_reports))
-    return len(new_reports)
+    return sent
