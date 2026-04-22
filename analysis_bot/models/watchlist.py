@@ -20,4 +20,7 @@ class WatchlistEntry(SQLModel, table=True):
     user_id: int = Field(index=True)
     ticker: str = Field(index=True)
     alias: str | None = Field(default=None, index=True)
+    added_price: float | None = Field(default=None)
+    user_name: str | None = Field(default=None)
+    note: str | None = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)

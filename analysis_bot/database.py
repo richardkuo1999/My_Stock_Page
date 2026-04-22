@@ -34,6 +34,9 @@ def create_db_and_tables():
                 "ALTER TABLE news ADD COLUMN content TEXT",
                 "ALTER TABLE intraday_ma20_snapshot ADD COLUMN vol_19d_sum_lots REAL",
                 "ALTER TABLE subscriber ADD COLUMN ispike_enabled INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE watchlist_entry ADD COLUMN added_price REAL",
+                "ALTER TABLE watchlist_entry ADD COLUMN user_name TEXT",
+                "ALTER TABLE watchlist_entry ADD COLUMN note TEXT",
             ]:
                 try:
                     conn.execute(text(ddl))

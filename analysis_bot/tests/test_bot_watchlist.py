@@ -10,9 +10,6 @@ from sqlmodel import SQLModel, create_engine
 def watchlist_engine(tmp_path, monkeypatch: pytest.MonkeyPatch):
     db_path = tmp_path / "watchlist_test.sqlite"
     engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
-
-    # Import all models to ensure they are registered
-
     SQLModel.metadata.create_all(engine)
 
     import analysis_bot.database as database
@@ -22,134 +19,212 @@ def watchlist_engine(tmp_path, monkeypatch: pytest.MonkeyPatch):
     return engine
 
 
+# --- /wadd ---
+
 @pytest.mark.asyncio
-async def test_watch_usage_no_args(watchlist_engine) -> None:
+async def test_wadd_no_args(watchlist_engine) -> None:
     msg = FakeMessage()
-    update = FakeUpdate(message=msg, chat_id=1, user_id=10)
-    context = FakeContext(args=[])
-
-    await handlers.watch_command(update, context)
-
-    assert len(msg.reply_text_calls) == 1
-    assert msg.reply_text_calls[0].text.startswith("用法：/watch")
+    update = FakeUpdate(message=msg, chat_id=1, user_id=10, user_full_name="Richard")
+    await handlers.wadd_command(update, FakeContext(args=[]))
+    assert msg.reply_text_calls[0].text.startswith("用法：/wadd")
 
 
 @pytest.mark.asyncio
-async def test_watch_add_list_remove_flow(watchlist_engine) -> None:
-    # add
-    msg1 = FakeMessage()
-    update1 = FakeUpdate(message=msg1, chat_id=1, user_id=10)
-    context1 = FakeContext(args=["add", "2330", "台積電"])
-    await handlers.watch_command(update1, context1)
-    assert msg1.reply_text_calls[-1].text == "✅ 已加入：2330（台積電）"
+async def test_wadd_basic(watchlist_engine) -> None:
+    msg = FakeMessage()
+    update = FakeUpdate(message=msg, chat_id=1, user_id=10, user_full_name="Richard")
+    await handlers.wadd_command(update, FakeContext(args=["2330"]))
+    text = msg.reply_text_calls[-1].text
+    assert "✅ 已加入：2330" in text
+    assert "📌 自選股清單" in text
+    assert "👤 Richard:" in text
 
-    # add duplicate
+
+@pytest.mark.asyncio
+async def test_wadd_with_note(watchlist_engine) -> None:
+    msg = FakeMessage()
+    update = FakeUpdate(message=msg, chat_id=1, user_id=10, user_full_name="Richard")
+    await handlers.wadd_command(update, FakeContext(args=["2330", "長期持有"]))
+    text = msg.reply_text_calls[-1].text
+    assert "✅ 已加入：2330" in text
+    assert "📝 長期持有" in text
+
+
+@pytest.mark.asyncio
+async def test_wadd_duplicate(watchlist_engine) -> None:
+    update1 = FakeUpdate(message=FakeMessage(), chat_id=1, user_id=10, user_full_name="Richard")
+    await handlers.wadd_command(update1, FakeContext(args=["2330"]))
+
     msg2 = FakeMessage()
-    update2 = FakeUpdate(message=msg2, chat_id=1, user_id=10)
-    context2 = FakeContext(args=["add", "2330"])
-    await handlers.watch_command(update2, context2)
+    update2 = FakeUpdate(message=msg2, chat_id=1, user_id=10, user_full_name="Richard")
+    await handlers.wadd_command(update2, FakeContext(args=["2330"]))
     assert msg2.reply_text_calls[-1].text == "ℹ️ 已存在：2330"
 
-    # list contains
-    msg3 = FakeMessage()
-    update3 = FakeUpdate(message=msg3, chat_id=1, user_id=10)
-    context3 = FakeContext(args=["list"])
-    await handlers.watch_command(update3, context3)
-    txt = msg3.reply_text_calls[-1].text
-    assert "你的自選股" in txt
-    assert "2330" in txt
 
-    # remove
-    msg4 = FakeMessage()
-    update4 = FakeUpdate(message=msg4, chat_id=1, user_id=10)
-    context4 = FakeContext(args=["remove", "2330"])
-    await handlers.watch_command(update4, context4)
-    assert msg4.reply_text_calls[-1].text == "✅ 已移除：2330"
+@pytest.mark.asyncio
+async def test_wadd_bad_ticker(watchlist_engine) -> None:
+    msg = FakeMessage()
+    update = FakeUpdate(message=msg, chat_id=1, user_id=10, user_full_name="Richard")
+    await handlers.wadd_command(update, FakeContext(args=["bad ticker!"]))
+    assert msg.reply_text_calls[-1].text == "❌ Ticker 格式不正確"
 
-    # list empty
-    msg5 = FakeMessage()
-    update5 = FakeUpdate(message=msg5, chat_id=1, user_id=10)
-    context5 = FakeContext(args=["list"])
-    await handlers.watch_command(update5, context5)
-    assert msg5.reply_text_calls[-1].text == "目前沒有自選股"
+
+# --- /wdel ---
+
+@pytest.mark.asyncio
+async def test_wdel_no_args(watchlist_engine) -> None:
+    msg = FakeMessage()
+    update = FakeUpdate(message=msg, chat_id=1, user_id=10, user_full_name="Richard")
+    await handlers.wdel_command(update, FakeContext(args=[]))
+    assert msg.reply_text_calls[0].text.startswith("用法：/wdel")
 
 
 @pytest.mark.asyncio
-async def test_watch_remove_not_found(watchlist_engine) -> None:
+async def test_wdel_not_found(watchlist_engine) -> None:
     msg = FakeMessage()
-    update = FakeUpdate(message=msg, chat_id=1, user_id=10)
-    context = FakeContext(args=["remove", "2330"])
-
-    await handlers.watch_command(update, context)
-
+    update = FakeUpdate(message=msg, chat_id=1, user_id=10, user_full_name="Richard")
+    await handlers.wdel_command(update, FakeContext(args=["2330"]))
     assert msg.reply_text_calls[-1].text == "ℹ️ 不在清單：2330"
 
 
 @pytest.mark.asyncio
-async def test_watch_ticker_validation(watchlist_engine) -> None:
+async def test_wdel_basic(watchlist_engine) -> None:
+    # Add first
+    update1 = FakeUpdate(message=FakeMessage(), chat_id=1, user_id=10, user_full_name="Richard")
+    await handlers.wadd_command(update1, FakeContext(args=["TSLA"]))
+
+    # Delete
     msg = FakeMessage()
-    update = FakeUpdate(message=msg, chat_id=1, user_id=10)
-    context = FakeContext(args=["add", "bad ticker!"])
-
-    await handlers.watch_command(update, context)
-
-    assert msg.reply_text_calls[-1].text == "❌ Ticker 格式不正確"
-
-
-@pytest.mark.asyncio
-async def test_watch_is_per_chat(watchlist_engine) -> None:
-    # add to chat 1
-    msg1 = FakeMessage()
-    await handlers.watch_command(
-        FakeUpdate(message=msg1, chat_id=1, user_id=10), FakeContext(args=["add", "TSLA"])
-    )
-    assert msg1.reply_text_calls[-1].text == "✅ 已加入：TSLA"
-
-    # list in chat 2 is empty
-    msg2 = FakeMessage()
-    await handlers.watch_command(
-        FakeUpdate(message=msg2, chat_id=2, user_id=10), FakeContext(args=["list"])
-    )
-    assert msg2.reply_text_calls[-1].text == "目前沒有自選股"
+    update2 = FakeUpdate(message=msg, chat_id=1, user_id=10, user_full_name="Richard")
+    await handlers.wdel_command(update2, FakeContext(args=["TSLA"]))
+    text = msg.reply_text_calls[-1].text
+    assert "✅ 已移除：TSLA" in text
+    assert "目前沒有自選股" in text
 
 
 @pytest.mark.asyncio
-async def test_watch_is_per_user_in_same_chat(watchlist_engine) -> None:
-    # user 10 adds
-    msg1 = FakeMessage()
-    await handlers.watch_command(
-        FakeUpdate(message=msg1, chat_id=1, user_id=10), FakeContext(args=["add", "TSLA"])
-    )
-    assert msg1.reply_text_calls[-1].text == "✅ 已加入：TSLA"
+async def test_wdel_with_profit(watchlist_engine, monkeypatch) -> None:
+    """When added_price exists and current price is higher, show profit."""
+    from sqlmodel import Session
+    from analysis_bot.models.stock import StockData
 
-    # user 20 lists empty
-    msg2 = FakeMessage()
-    await handlers.watch_command(
-        FakeUpdate(message=msg2, chat_id=1, user_id=20), FakeContext(args=["list"])
-    )
-    assert msg2.reply_text_calls[-1].text == "目前沒有自選股"
+    # Seed StockData with a price
+    with Session(watchlist_engine) as session:
+        session.add(StockData(ticker="2330", name="台積電", price=1000.0))
+        session.commit()
+
+    # Add (will pick up price=1000 from StockData)
+    update1 = FakeUpdate(message=FakeMessage(), chat_id=1, user_id=10, user_full_name="Richard")
+    await handlers.wadd_command(update1, FakeContext(args=["2330"]))
+
+    # Update price to simulate gain
+    with Session(watchlist_engine) as session:
+        stock = session.exec(
+            __import__("sqlmodel").select(StockData).where(StockData.ticker == "2330")
+        ).first()
+        stock.price = 1100.0
+        session.add(stock)
+        session.commit()
+
+    # Delete
+    msg = FakeMessage()
+    update2 = FakeUpdate(message=msg, chat_id=1, user_id=10, user_full_name="Richard")
+    await handlers.wdel_command(update2, FakeContext(args=["2330"]))
+    text = msg.reply_text_calls[-1].text
+    assert "🎉 恭喜" in text
+    assert "+10.00%" in text
 
 
 @pytest.mark.asyncio
-async def test_watch_add_auto_alias_from_stock_service(
-    watchlist_engine, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    async def fake_get_or_analyze_stock(ticker: str, force_update: bool = False):
-        return {"name": "台積電"}, False
+async def test_wdel_with_loss(watchlist_engine) -> None:
+    """When current price is lower, show loss message."""
+    from sqlmodel import Session
+    from analysis_bot.models.stock import StockData
 
-    monkeypatch.setattr(handlers.StockService, "get_or_analyze_stock", fake_get_or_analyze_stock)
+    with Session(watchlist_engine) as session:
+        session.add(StockData(ticker="2330", name="台積電", price=1000.0))
+        session.commit()
 
-    msg1 = FakeMessage()
-    await handlers.watch_command(
-        FakeUpdate(message=msg1, chat_id=1, user_id=10),
-        FakeContext(args=["add", "2330"]),
-    )
-    assert msg1.reply_text_calls[-1].text == "✅ 已加入：2330（台積電）"
+    update1 = FakeUpdate(message=FakeMessage(), chat_id=1, user_id=10, user_full_name="Richard")
+    await handlers.wadd_command(update1, FakeContext(args=["2330"]))
 
-    # list shows alias
-    msg2 = FakeMessage()
-    await handlers.watch_command(
-        FakeUpdate(message=msg2, chat_id=1, user_id=10),
-        FakeContext(args=["list"]),
-    )
-    assert "2330（台積電）" in msg2.reply_text_calls[-1].text
+    with Session(watchlist_engine) as session:
+        stock = session.exec(
+            __import__("sqlmodel").select(StockData).where(StockData.ticker == "2330")
+        ).first()
+        stock.price = 900.0
+        session.add(stock)
+        session.commit()
+
+    msg = FakeMessage()
+    update2 = FakeUpdate(message=msg, chat_id=1, user_id=10, user_full_name="Richard")
+    await handlers.wdel_command(update2, FakeContext(args=["2330"]))
+    text = msg.reply_text_calls[-1].text
+    assert "💪 下次加油" in text
+    assert "-10.00%" in text
+
+
+# --- /wlist ---
+
+@pytest.mark.asyncio
+async def test_wlist_empty(watchlist_engine) -> None:
+    msg = FakeMessage()
+    update = FakeUpdate(message=msg, chat_id=1, user_id=10, user_full_name="Richard")
+    await handlers.wlist_command(update, FakeContext())
+    assert msg.reply_text_calls[-1].text == "📌 目前沒有自選股"
+
+
+@pytest.mark.asyncio
+async def test_wlist_grouped_by_user(watchlist_engine) -> None:
+    # User 10 adds
+    update1 = FakeUpdate(message=FakeMessage(), chat_id=1, user_id=10, user_full_name="Richard")
+    await handlers.wadd_command(update1, FakeContext(args=["TSLA"]))
+
+    # User 20 adds
+    update2 = FakeUpdate(message=FakeMessage(), chat_id=1, user_id=20, user_full_name="Alice")
+    await handlers.wadd_command(update2, FakeContext(args=["AAPL"]))
+
+    # List shows both
+    msg = FakeMessage()
+    update3 = FakeUpdate(message=msg, chat_id=1, user_id=10, user_full_name="Richard")
+    await handlers.wlist_command(update3, FakeContext())
+    text = msg.reply_text_calls[-1].text
+    assert "👤 Richard:" in text
+    assert "TSLA" in text
+    assert "👤 Alice:" in text
+    assert "AAPL" in text
+
+
+@pytest.mark.asyncio
+async def test_wlist_per_chat(watchlist_engine) -> None:
+    # Add to chat 1
+    update1 = FakeUpdate(message=FakeMessage(), chat_id=1, user_id=10, user_full_name="Richard")
+    await handlers.wadd_command(update1, FakeContext(args=["TSLA"]))
+
+    # List in chat 2 is empty
+    msg = FakeMessage()
+    update2 = FakeUpdate(message=msg, chat_id=2, user_id=10, user_full_name="Richard")
+    await handlers.wlist_command(update2, FakeContext())
+    assert msg.reply_text_calls[-1].text == "📌 目前沒有自選股"
+
+
+# --- user_name update ---
+
+@pytest.mark.asyncio
+async def test_user_name_updated_on_wadd(watchlist_engine) -> None:
+    """When user changes name, wadd updates all their entries."""
+    # Add with old name
+    update1 = FakeUpdate(message=FakeMessage(), chat_id=1, user_id=10, user_full_name="OldName")
+    await handlers.wadd_command(update1, FakeContext(args=["TSLA"]))
+
+    # Add another with new name
+    update2 = FakeUpdate(message=FakeMessage(), chat_id=1, user_id=10, user_full_name="NewName")
+    await handlers.wadd_command(update2, FakeContext(args=["AAPL"]))
+
+    # List should show NewName for both
+    msg = FakeMessage()
+    update3 = FakeUpdate(message=msg, chat_id=1, user_id=10, user_full_name="NewName")
+    await handlers.wlist_command(update3, FakeContext())
+    text = msg.reply_text_calls[-1].text
+    assert "👤 NewName:" in text
+    assert "OldName" not in text

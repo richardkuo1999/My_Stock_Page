@@ -52,7 +52,9 @@ from .handlers import (
     unsub_ispike_command,
     unsubscribe_command,
     vix_command,
-    watch_command,
+    wadd_command,
+    wdel_command,
+    wlist_command,
 )
 from .jobs import check_news_job, threads_watch_job
 
@@ -90,7 +92,9 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("google", google_command, filters=f))
     application.add_handler(CommandHandler("subscribe", subscribe_command, filters=f))
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command, filters=f))
-    application.add_handler(CommandHandler("watch", watch_command, filters=f))
+    application.add_handler(CommandHandler("wadd", wadd_command, filters=f))
+    application.add_handler(CommandHandler("wdel", wdel_command, filters=f))
+    application.add_handler(CommandHandler("wlist", wlist_command, filters=f))
     application.add_handler(CommandHandler("threads", threads_command, filters=f))
     application.add_handler(CommandHandler("name", name_command, filters=f))
     application.add_handler(CommandHandler("p", price_command, filters=f))

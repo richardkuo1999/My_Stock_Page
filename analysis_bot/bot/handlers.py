@@ -136,9 +136,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• `/research` — 📚 上傳 PDF/DOCX 生成研究摘要\n"
         "  上傳完畢後輸入 `/rq` 產生報告\n\n"
         "⭐ *自選股 & 追蹤*\n"
-        "• `/watch add <股號>` — 加入自選股\n"
-        "• `/watch remove <股號>` — 移除自選股\n"
-        "• `/watch list` — 查看自選股清單\n"
+        "• `/wadd <股號> [備註]` — 加入自選股\n"
+        "• `/wdel <股號>` — 移除自選股\n"
+        "• `/wlist` — 查看自選股清單\n"
         "• `/threads add <帳號>` — 🧵 訂閱 Threads 帳號\n"
         "• `/threads remove <帳號>` — 取消訂閱\n"
         "• `/threads list` — 查看訂閱清單\n"
@@ -227,8 +227,8 @@ _MENU_PAGES: dict[str, tuple[str, list[list[tuple[str, str]]]]] = {
     "menu_cat_watch": (
         "⭐ *自選股 & 追蹤*\n點擊按鈕將指令填入輸入框",
         [
-            [("➕ 加入", "/watch add "), ("➖ 移除", "/watch remove ")],
-            [("📋 清單", "!watch_list")],
+            [("➕ 加入", "/wadd "), ("➖ 移除", "/wdel ")],
+            [("📋 清單", "!wlist")],
             [("🧵 追蹤 Threads", "/threads add "), ("🧵 清單", "!threads_list")],
         ],
     ),
@@ -333,7 +333,7 @@ async def menu_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             "google": lambda u, c: query.message.reply_text("請輸入：/google <關鍵字>"),
             "chat_mode": chat_start,
             "research": research_start,
-            "watch_list": lambda u, c: watch_command(u, _fake_context(c, ["list"])),
+            "wlist": wlist_command,
             "threads_list": lambda u, c: threads_command(u, _fake_context(c, ["list"])),
             "hold981": hold981_command,
             "hold888": hold888_command,
@@ -1312,90 +1312,113 @@ async def name_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"公司名稱：{name}\nTicker：{ticker}")
 
 
-async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Manage per-chat watchlist.
-    Usage:
-      /watch add <ticker>
-      /watch remove <ticker>
-      /watch list
-    """
-    usage = "用法：/watch add <ticker> | /watch remove <ticker> | /watch list"
+def _format_watchlist(chat_id: int) -> str:
+    """Format the full watchlist for a chat, grouped by user."""
+    with Session(engine) as session:
+        items = session.exec(
+            select(WatchlistEntry)
+            .where(WatchlistEntry.chat_id == chat_id)
+            .order_by(WatchlistEntry.user_id, WatchlistEntry.ticker)
+        ).all()
+        if not items:
+            return "📌 目前沒有自選股"
 
+        tickers = list({it.ticker for it in items})
+        stocks = session.exec(
+            select(StockData).where(StockData.ticker.in_(tickers))
+        ).all()
+    price_map = {s.ticker: s.price for s in stocks}
+
+    # Group by user
+    grouped: dict[str, list[WatchlistEntry]] = {}
+    for it in items:
+        name = it.user_name or str(it.user_id)
+        grouped.setdefault(name, []).append(it)
+
+    lines = ["📌 自選股清單\n"]
+    for user_name, entries in grouped.items():
+        lines.append(f"👤 {user_name}:")
+        for i, e in enumerate(entries, 1):
+            alias = f" {e.alias}" if e.alias else ""
+            date_str = e.created_at.strftime("%m/%d") if e.created_at else ""
+
+            # Price & P/L
+            cur_price = price_map.get(e.ticker)
+            price_part = ""
+            if e.added_price and cur_price:
+                pnl = (cur_price - e.added_price) / e.added_price * 100
+                price_part = f" ${e.added_price:.1f}→${cur_price:.1f} ({pnl:+.2f}%)"
+            elif e.added_price:
+                price_part = f" ${e.added_price:.1f}"
+            elif cur_price:
+                price_part = f" ${cur_price:.1f}"
+
+            line = f"  {i}. {e.ticker}{alias}{price_part} {date_str}"
+            if e.note:
+                line += f"\n     📝 {e.note}"
+            lines.append(line)
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
+
+
+def _update_user_name(session: Session, chat_id: int, user_id: int, user_name: str) -> None:
+    """Update user_name on all entries for this user in this chat."""
+    entries = session.exec(
+        select(WatchlistEntry)
+        .where(WatchlistEntry.chat_id == chat_id)
+        .where(WatchlistEntry.user_id == user_id)
+    ).all()
+    for e in entries:
+        if e.user_name != user_name:
+            e.user_name = user_name
+            session.add(e)
+
+
+async def _resolve_alias_and_price(ticker: str) -> tuple[str | None, float | None]:
+    """Look up stock name and price for a ticker."""
+    def _from_db():
+        with Session(engine) as session:
+            stock = session.exec(select(StockData).where(StockData.ticker == ticker)).first()
+            if stock:
+                return (str(stock.name)[:MAX_ALIAS_LENGTH] if stock.name else None, stock.price)
+            return None, None
+
+    alias, price = await asyncio.to_thread(_from_db)
+    if not alias and ticker.isdigit():
+        try:
+            data, _ = await StockService.get_or_analyze_stock(ticker)
+            if isinstance(data, dict):
+                alias = str(data["name"])[:MAX_ALIAS_LENGTH] if data.get("name") and data["name"] != ticker else alias
+                price = data.get("price") or price
+        except Exception:
+            pass
+    return alias, price
+
+
+async def wadd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/wadd <ticker> [備註] — 加入自選股"""
+    usage = "用法：/wadd <股號> [備註]"
     if not getattr(context, "args", None):
         await update.message.reply_text(usage)
         return
 
-    sub = str(context.args[0]).lower()
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id if update.effective_user else None
     if not user_id:
-        await update.message.reply_text("無法取得使用者資訊，請稍後再試。")
+        await update.message.reply_text("無法取得使用者資訊。")
         return
 
-    if sub == "list":
-        def _list():
-            with Session(engine) as session:
-                return session.exec(
-                    select(WatchlistEntry)
-                    .where(WatchlistEntry.chat_id == chat_id)
-                    .where(WatchlistEntry.user_id == user_id)
-                    .order_by(WatchlistEntry.ticker)
-                ).all()
-
-        items = await asyncio.to_thread(_list)
-
-        if not items:
-            await update.message.reply_text("目前沒有自選股")
-            return
-
-        lines = ["📌 你的自選股："]
-        for i, it in enumerate(items, start=1):
-            alias = f"（{it.alias}）" if it.alias else ""
-            lines.append(f"{i}. {it.ticker}{alias}")
-        await update.message.reply_text("\n".join(lines))
-        return
-
-    if sub not in ("add", "remove"):
-        await update.message.reply_text(usage)
-        return
-
-    if len(context.args) < 2:
-        await update.message.reply_text(usage)
-        return
-
-    ticker = _normalize_ticker(str(context.args[1]))
+    ticker = _normalize_ticker(str(context.args[0]))
     if not ticker:
         await update.message.reply_text("❌ Ticker 格式不正確")
         return
 
-    alias = " ".join([str(x) for x in context.args[2:]]).strip() if len(context.args) > 2 else None
-    if alias:
-        alias = alias[:MAX_ALIAS_LENGTH]
-    else:
-        # Best-effort auto name fetch if user didn't provide alias.
-        try:
-            def _lookup_name():
-                with Session(engine) as session:
-                    stock = session.exec(select(StockData).where(StockData.ticker == ticker)).first()
-                    if stock and stock.name:
-                        return str(stock.name)[:MAX_ALIAS_LENGTH]
-                    return None
+    note = " ".join(str(a) for a in context.args[1:]).strip() or None
+    user_name = update.effective_user.full_name or str(user_id)
+    alias, price = await _resolve_alias_and_price(ticker)
 
-            alias = await asyncio.to_thread(_lookup_name)
-        except Exception:
-            alias = None
-
-        # Only do network-ish name lookup for TW numeric tickers (keeps /watch fast & stable for US tickers)
-        if not alias and ticker.isdigit():
-            try:
-                data, _ = await StockService.get_or_analyze_stock(ticker)
-                if isinstance(data, dict) and data.get("name") and data.get("name") != ticker:
-                    alias = str(data["name"])[:MAX_ALIAS_LENGTH]
-            except Exception:
-                alias = None
-
-    def _add_or_remove():
+    def _add():
         with Session(engine) as session:
             existing = session.exec(
                 select(WatchlistEntry)
@@ -1403,32 +1426,96 @@ async def watch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 .where(WatchlistEntry.user_id == user_id)
                 .where(WatchlistEntry.ticker == ticker)
             ).first()
-
-            if sub == "add":
-                if existing:
-                    return "exists"
-                session.add(
-                    WatchlistEntry(chat_id=chat_id, user_id=user_id, ticker=ticker, alias=alias)
-                )
-                session.commit()
-                return "added"
-            # remove
-            if not existing:
-                return "not_found"
-            session.delete(existing)
+            if existing:
+                return "exists"
+            session.add(WatchlistEntry(
+                chat_id=chat_id, user_id=user_id, ticker=ticker,
+                alias=alias, added_price=price, user_name=user_name, note=note,
+            ))
+            _update_user_name(session, chat_id, user_id, user_name)
             session.commit()
-            return "removed"
+            return "added"
 
-    result = await asyncio.to_thread(_add_or_remove)
+    result = await asyncio.to_thread(_add)
     if result == "exists":
         await update.message.reply_text(f"ℹ️ 已存在：{ticker}")
-    elif result == "added":
-        alias_suffix = f"（{alias}）" if alias else ""
-        await update.message.reply_text(f"✅ 已加入：{ticker}{alias_suffix}")
-    elif result == "not_found":
+        return
+
+    alias_suffix = f"（{alias}）" if alias else ""
+    price_suffix = f" ${price:.1f}" if price else ""
+    msg = f"✅ 已加入：{ticker}{alias_suffix}{price_suffix}"
+    watchlist = await asyncio.to_thread(_format_watchlist, chat_id)
+    await update.message.reply_text(f"{msg}\n\n{watchlist}")
+
+
+async def wdel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/wdel <ticker> — 移除自選股"""
+    usage = "用法：/wdel <股號>"
+    if not getattr(context, "args", None):
+        await update.message.reply_text(usage)
+        return
+
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id if update.effective_user else None
+    if not user_id:
+        await update.message.reply_text("無法取得使用者資訊。")
+        return
+
+    ticker = _normalize_ticker(str(context.args[0]))
+    if not ticker:
+        await update.message.reply_text("❌ Ticker 格式不正確")
+        return
+
+    user_name = update.effective_user.full_name or str(user_id)
+
+    def _del():
+        with Session(engine) as session:
+            entry = session.exec(
+                select(WatchlistEntry)
+                .where(WatchlistEntry.chat_id == chat_id)
+                .where(WatchlistEntry.user_id == user_id)
+                .where(WatchlistEntry.ticker == ticker)
+            ).first()
+            if not entry:
+                return "not_found", None, None
+            added_price = entry.added_price
+            alias = entry.alias
+            session.delete(entry)
+            _update_user_name(session, chat_id, user_id, user_name)
+            session.commit()
+            return "deleted", added_price, alias
+
+    status, added_price, alias = await asyncio.to_thread(_del)
+    if status == "not_found":
         await update.message.reply_text(f"ℹ️ 不在清單：{ticker}")
-    else:
-        await update.message.reply_text(f"✅ 已移除：{ticker}")
+        return
+
+    # P/L message
+    alias_suffix = f"（{alias}）" if alias else ""
+    pnl_msg = ""
+    if added_price:
+        def _get_cur_price():
+            with Session(engine) as session:
+                stock = session.exec(select(StockData).where(StockData.ticker == ticker)).first()
+                return stock.price if stock else None
+        cur_price = await asyncio.to_thread(_get_cur_price)
+        if cur_price:
+            pnl = (cur_price - added_price) / added_price * 100
+            if pnl > 0:
+                pnl_msg = f"\n🎉 恭喜！{ticker} 獲利 {pnl:+.2f}%"
+            else:
+                pnl_msg = f"\n💪 下次加油！{ticker} 虧損 {pnl:+.2f}%"
+
+    msg = f"✅ 已移除：{ticker}{alias_suffix}{pnl_msg}"
+    watchlist = await asyncio.to_thread(_format_watchlist, chat_id)
+    await update.message.reply_text(f"{msg}\n\n{watchlist}")
+
+
+async def wlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/wlist — 查看自選股清單"""
+    chat_id = update.effective_chat.id
+    watchlist = await asyncio.to_thread(_format_watchlist, chat_id)
+    await update.message.reply_text(watchlist)
 
 
 def _normalize_threads_username(raw: str) -> str | None:
