@@ -991,13 +991,10 @@ async def uask_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_chat_action(ChatAction.TYPING)
     try:
         md = await analyze_stock(stock, prompts=[prompt])
-        if len(md) > 4000:
-            f = io.BytesIO(md.encode("utf-8"))
-            await update.message.reply_document(
-                document=InputFile(f, filename=f"Ask_{stock}.md"), caption=f"✅ {stock}",
-            )
-        else:
-            await update.message.reply_text(md[:4096])
+        f = io.BytesIO(md.encode("utf-8"))
+        await update.message.reply_document(
+            document=InputFile(f, filename=f"Ask_{stock}.md"), caption=f"✅ {stock}",
+        )
     except Exception as e:
         await update.message.reply_text(f"❌ 失敗：{str(e)[:200]}")
 
