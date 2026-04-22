@@ -134,21 +134,22 @@ async def _do_check_new_reports(bot=None, dry_run: bool = False) -> int:
     sent = 0
     if not dry_run and bot and targets:
         total = len(new_reports)
-        for i, report in enumerate(new_reports, 1):
-            text, has_kw = _format_report(report, i, total, keywords)
-            kwargs = {"chat_id": t.chat_id, "text": text, "parse_mode": "HTML", "disable_notification": not has_kw}
-            if topic_id:
-                kwargs["message_thread_id"] = t.topic_id
-            try:
-                await bot.send_message(**kwargs)
-                _save_last_id(report["id"])
-                sent += 1
-            except Exception as e:
-                logger.error("UAnalyze send error (chat=%s): %s", t.chat_id, e)
-            if i < total:
-                await asyncio.sleep(0.3)
+        for t in targets:
+            for i, report in enumerate(new_reports, 1):
+                text, has_kw = _format_report(report, i, total, keywords)
+                kwargs = {"chat_id": t.chat_id, "text": text, "parse_mode": "HTML", "disable_notification": not has_kw}
+                if t.topic_id:
+                    kwargs["message_thread_id"] = t.topic_id
+                try:
+                    await bot.send_message(**kwargs)
+                    sent += 1
+                except Exception as e:
+                    logger.error("UAnalyze send error (chat=%s): %s", t.chat_id, e)
+                if i < total:
+                    await asyncio.sleep(0.3)
+        _save_last_id(max(r["id"] for r in new_reports))
     else:
         _save_last_id(max(r["id"] for r in new_reports))
-        sent = total
+        sent = len(new_reports)
 
     return sent
