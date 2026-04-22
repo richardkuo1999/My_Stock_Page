@@ -53,7 +53,7 @@ async def _append_news(price_text: str, ticker: str, name: str, is_tw: bool = Tr
 
 async def fetch_price(ticker: str) -> str:
     """
-    查詢股價，回傳格式化字串。
+    查詢股價，回傳格式化字串（不含新聞）。
 
     Args:
         ticker: 股票代碼，如 2330、2330.TW、AAPL
@@ -82,12 +82,7 @@ async def fetch_price(ticker: str) -> str:
                     sign = "📈" if (ch is not None and ch >= 0) else "📉"
                     ch_str = f"{ch:+.2f}" if ch is not None else ""
                     pct_str = f"({chp:+.2f}%)" if chp is not None else ""
-                    return await _append_news(
-                        f"{sign}{stock_id} {name}\n💰{p:.2f} {ch_str}{pct_str}",
-                        stock_id,
-                        name,
-                        is_tw=True,
-                    )
+                    return f"{sign}{stock_id} {name}\n💰{p:.2f} {ch_str}{pct_str}"
         except Exception as e:
             logger.debug("CNYES quote: %s", e)
 
@@ -116,12 +111,7 @@ async def fetch_price(ticker: str) -> str:
                         sign = "📈" if (ch is not None and ch >= 0) else "📉"
                         ch_str = f"{ch:+.2f}" if ch is not None else ""
                         pct_str = f"({chp:+.2f}%)" if chp is not None else ""
-                        return await _append_news(
-                            f"{sign}{stock_id} {name}\n💰{p:.2f} {ch_str}{pct_str}",
-                            stock_id,
-                            name,
-                            is_tw=True,
-                        )
+                        return f"{sign}{stock_id} {name}\n💰{p:.2f} {ch_str}{pct_str}"
         except Exception as e:
             logger.debug("FinMind tick snapshot: %s", e)
 
@@ -207,11 +197,8 @@ async def fetch_price(ticker: str) -> str:
             )
             stock_id = ticker if is_taiwan_ticker(ticker) else sym.split(".")[0]
             is_tw = is_taiwan_ticker(ticker) or sym.endswith(".TW") or sym.endswith(".TWO")
-            return await _append_news(
-                f"{sign}{result['ticker']} {name}\n💰{p:.2f} {ch_str}{pct_str}{delay_note}",
-                stock_id,
-                name,
-                is_tw=is_tw,
+            return (
+                f"{sign}{result['ticker']} {name}\n💰{p:.2f} {ch_str}{pct_str}{delay_note}"
             )
 
     return f"❌ 找不到 {ticker} 的股價資料"

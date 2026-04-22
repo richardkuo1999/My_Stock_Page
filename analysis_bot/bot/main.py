@@ -36,6 +36,7 @@ from .handlers import (
     news_button_handler,
     news_command,
     price_command,
+    price_news_callback,
     research_finish,
     research_handle,
     research_start,
@@ -151,6 +152,7 @@ def create_bot_application() -> Application:
     # Callbacks
     application.add_handler(CallbackQueryHandler(menu_callback_handler, pattern="^menu_"))
     application.add_handler(CallbackQueryHandler(news_button_handler, pattern="^news_"))
+    application.add_handler(CallbackQueryHandler(price_news_callback, pattern="^pnews:"))
 
     # Jobs
     if application.job_queue:

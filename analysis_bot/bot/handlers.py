@@ -499,7 +499,20 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_chat_action(ChatAction.TYPING)
     try:
         text = await fetch_price(ticker)
-        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+        # Extract name from price text: "📈2330 台積電\n💰..."
+        ticker_upper = ticker.strip().upper()
+        name = ticker_upper
+        first_line = text.split("\n")[0] if text else ""
+        if ticker_upper in first_line:
+            after = first_line.split(ticker_upper, 1)[-1].strip()
+            if after:
+                name = after
+        # Telegram callback_data max 64 bytes; truncate name
+        cb_name = name[:20]
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📰 相關新聞", callback_data=f"pnews:{ticker_upper}:{cb_name}")]
+        ])
+        await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
     except Exception as e:
         logger.exception("Price command error")
         await update.message.reply_text(f"❌ 查詢失敗：{str(e)[:150]}")
@@ -516,6 +529,33 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     os.remove(chart_path)
     except Exception as e:
         logger.debug("intraday chart send failed: %s", e)
+
+
+async def price_news_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle 📰 相關新聞 button click from /p command."""
+    query = update.callback_query
+    await query.answer()
+    # callback_data format: "pnews:{ticker}:{name}"
+    parts = query.data.split(":", 2)
+    if len(parts) < 2:
+        return
+    ticker = parts[1]
+    name = parts[2] if len(parts) > 2 else ticker
+    try:
+        from ..services.price_fetcher import _format_news_section
+        from ..services.stock_news_fetcher import fetch_stock_news
+        from ..utils.ticker_utils import is_taiwan_ticker
+
+        is_tw = is_taiwan_ticker(ticker)
+        news_list = await fetch_stock_news(ticker, name, limit=5, is_tw=is_tw)
+        news_text = _format_news_section(news_list)
+        if news_text:
+            await query.message.reply_text(news_text.strip(), parse_mode=ParseMode.MARKDOWN, disable_web_page_preview=True)
+        else:
+            await query.message.reply_text(f"📰 {ticker} 暫無相關新聞")
+    except Exception as e:
+        logger.debug("price news callback error: %s", e)
+        await query.message.reply_text(f"❌ 新聞查詢失敗：{str(e)[:150]}")
 
 
 async def kline_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
