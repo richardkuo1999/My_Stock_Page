@@ -24,6 +24,10 @@
 *   **多來源整合**: 自動抓取 Fugle, UDN, MoneyDJ, MacroMicro 等 15+ 個財經來源。
 *   **智慧去重**: 避免重複標題轟炸，提供乾淨的閱讀體驗。
 *   **網頁牆**: 提供 `/news` 網頁介面，支援關鍵字搜尋與來源過濾。
+*   **/senti [股號]**: 查看個股近 7 天新聞情緒趨勢（正面/中性/負面比例與每日分佈）。
+*   **/senti market**: 查看整體市場情緒摘要（近 24 小時），含自動轉變通知。
+*   **/sub_news** / **/unsub_news**: 訂閱/取消新聞推播。
+*   **/sub_senti** / **/unsub_senti**: 訂閱/取消情緒警報（個股急轉 + 市場轉變）。
 
 ### 3. 🔥 爆量偵測 (Volume Spike Detection)
 *   **/spike**: 收盤爆量偵測（支援按倍數、漲幅、前日倍數排序）。
@@ -115,8 +119,9 @@ uvicorn analysis_bot.main:app --reload
 analysis_bot/
 ├── api/             # FastAPI 路由 (Web Endpoints)
 ├── bot/             # Telegram Bot 邏輯 (Handlers, Jobs)
-├── models/          # SQLModel 資料庫模型 (Stock, News, User)
+├── models/          # SQLModel 資料庫模型 (Stock, News, Subscriber, Sentiment)
 ├── services/        # 核心商業邏輯 (Analyzer, Parser, Crawler)
+├── utils/           # 共用工具 (時區、Ticker 正規化、PII)
 ├── static/          # 前端資源 (CSS, JS)
 ├── templates/       # HTML 模板 (Jinja2)
 ├── config.py        # 全域設定與環境變數

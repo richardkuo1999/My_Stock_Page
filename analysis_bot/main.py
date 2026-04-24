@@ -103,9 +103,12 @@ async def lifespan(app: FastAPI):
                     BotCommand("threads", "🧵 Threads 追蹤"),
                     BotCommand("hold981", "🏦 00981A 持股"),
                     BotCommand("hold888", "🏦 大額權證"),
-                    BotCommand("subscribe", "📬 訂閱推播"),
-                    BotCommand("unsubscribe", "🔕 取消訂閱"),
+                    BotCommand("sub_news", "📰 訂閱新聞推播"),
+                    BotCommand("unsub_news", "🔕 取消新聞推播"),
                     BotCommand("chatid", "🆔 Chat ID"),
+                    BotCommand("senti", "📊 新聞情緒分析"),
+                    BotCommand("sub_senti", "🔔 訂閱情緒警報"),
+                    BotCommand("unsub_senti", "🔕 取消情緒警報"),
                 ]
                 await bot_app.bot.set_my_commands(commands)
 

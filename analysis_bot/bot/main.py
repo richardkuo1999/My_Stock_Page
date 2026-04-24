@@ -45,7 +45,8 @@ from .handlers import (
     spike_command,
     start_command,
     sub_ispike_command,
-    subscribe_command,
+    sub_senti_command,
+    sub_news_command,
     threads_command,
     ua_command,
     uask_command,
@@ -53,7 +54,8 @@ from .handlers import (
     umon_bind_command,
     umon_unbind_command,
     unsub_ispike_command,
-    unsubscribe_command,
+    unsub_senti_command,
+    unsub_news_command,
     vix_command,
     wadd_command,
     wdel_command,
@@ -93,8 +95,8 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("esti", esti_command, filters=f))
     application.add_handler(CommandHandler("news", news_command, filters=f))
     application.add_handler(CommandHandler("google", google_command, filters=f))
-    application.add_handler(CommandHandler("subscribe", subscribe_command, filters=f))
-    application.add_handler(CommandHandler("unsubscribe", unsubscribe_command, filters=f))
+    application.add_handler(CommandHandler("sub_news", sub_news_command, filters=f))
+    application.add_handler(CommandHandler("unsub_news", unsub_news_command, filters=f))
     application.add_handler(CommandHandler("wadd", wadd_command, filters=f))
     application.add_handler(CommandHandler("wdel", wdel_command, filters=f))
     application.add_handler(CommandHandler("wlist", wlist_command, filters=f))
@@ -108,6 +110,8 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("ispike", intraday_spike_command, filters=f))
     application.add_handler(CommandHandler("sub_ispike", sub_ispike_command, filters=f))
     application.add_handler(CommandHandler("unsub_ispike", unsub_ispike_command, filters=f))
+    application.add_handler(CommandHandler("sub_senti", sub_senti_command, filters=f))
+    application.add_handler(CommandHandler("unsub_senti", unsub_senti_command, filters=f))
     application.add_handler(CommandHandler("vix", vix_command, filters=f))
     application.add_handler(CommandHandler("chatid", chatid_command, filters=f))
     application.add_handler(CommandHandler("menu", menu_command, filters=f))
@@ -118,7 +122,7 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("umon_unbind", umon_unbind_command, filters=f))
     application.add_handler(CommandHandler("umon_unbind", umon_unbind_command, filters=f))
     application.add_handler(CommandHandler("mega", mega_command, filters=f))
-    application.add_handler(CommandHandler("sentiment", sentiment_command, filters=f))
+    application.add_handler(CommandHandler("senti", sentiment_command, filters=f))
 
     # Conversation: Research (per_chat=False allows concurrent users)
     research_conv = ConversationHandler(

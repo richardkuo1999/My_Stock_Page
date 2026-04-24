@@ -19,6 +19,7 @@ from ..models.content import News
 from ..models.threads_watch import ThreadsWatchEntry
 from ..services.news_parser import NewsParser
 from ..utils.pii import redact_telegram_id
+from ..utils.tz import now_tw
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,37 @@ _SOURCE_DISPLAY_NAME: dict[str, str] = {
     "BuffettLetter": "Buffett 股東信",
     "HowardMarksMemo": "Howard Marks 備忘錄",
 }
+
+# --- Sentiment Alert Helper ---
+
+
+async def _broadcast_sentiment_alert(bot, message: str) -> None:
+    """推送情緒警報給管理員及情緒警報訂閱者。"""
+    from ..config import get_settings
+    from ..models.subscriber import Subscriber
+
+    admin_id = get_settings().TELEGRAM_CHAT_ID
+
+    with Session(engine) as session:
+        subs = session.exec(
+            select(Subscriber).where(
+                Subscriber.sentiment_alert_enabled == True,
+            )
+        ).all()
+
+    targets: list[tuple[int, int | None]] = [(s.chat_id, s.topic_id) for s in subs]
+    if admin_id and not any(cid == int(admin_id) and tid is None for cid, tid in targets):
+        targets.append((int(admin_id), None))
+
+    for cid, tid in targets:
+        try:
+            kwargs: dict = {"chat_id": cid, "text": message}
+            if tid:
+                kwargs["message_thread_id"] = tid
+            await bot.send_message(**kwargs)
+        except Exception as e:
+            logger.warning("Sentiment alert to %s/%s failed: %s", cid, tid, e)
+
 
 # --- Cursor Agent Summary Helpers ---
 
@@ -490,10 +522,11 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
 
         # 3. Filter and Save with Deduplication
         final_new_articles = []
+        new_news_items = []
 
         with Session(engine) as session:
             # Pre-fetch recent titles for fuzzy matching (last 24 hours)
-            yesterday = datetime.utcnow() - timedelta(days=1)
+            yesterday = now_tw() - timedelta(days=1)
             recent_news = session.exec(select(News).where(News.created_at >= yesterday)).all()
             recent_titles = [n.title for n in recent_news]
 
@@ -549,13 +582,48 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
                 news_item = News(title=title, link=link, source=source_name, content=content)
                 session.add(news_item)
                 final_new_articles.append(article)
+                new_news_items.append(news_item)
                 # Add to recent_titles so next item in loop checks against this one too
                 recent_titles.append(title)
 
             session.commit()
+            # Capture IDs after commit (SQLite auto-assigns)
+            new_news_ids = [item.id for item in new_news_items]
 
         # Send notifications using final_new_articles
         new_articles = final_new_articles  # Update reference for sending logic below
+
+        # ── 情緒分析：對新文章進行批次情緒標記 ──
+        if final_new_articles:
+            try:
+                from ..services.sentiment_service import SentimentService
+
+                titles_for_sentiment = [a.get("title", "") for a in final_new_articles]
+                sentiments = await SentimentService.analyze_batch(
+                    titles_for_sentiment, ai_service=ai_service
+                )
+                if sentiments:
+                    await asyncio.to_thread(
+                        SentimentService.save_sentiments, new_news_ids, sentiments
+                    )
+                    logger.info("Sentiment analysis saved for %d articles", len(sentiments))
+
+                    # 檢查情緒急轉：對有 ticker 的情緒結果檢查
+                    alerted_tickers: set[str] = set()
+                    for sent in sentiments:
+                        for ticker in sent.get("tickers", []):
+                            if ticker and ticker not in alerted_tickers:
+                                shift_msg = SentimentService.check_sentiment_shift(ticker)
+                                if shift_msg:
+                                    alerted_tickers.add(ticker)
+                                    await _broadcast_sentiment_alert(bot_instance, shift_msg)
+
+                    # 檢查市場情緒轉變（正轉負 / 負轉正）
+                    market_shift_msg = SentimentService.check_market_sentiment_shift()
+                    if market_shift_msg:
+                        await _broadcast_sentiment_alert(bot_instance, market_shift_msg)
+            except Exception as e:
+                logger.warning("Sentiment analysis in news job failed: %s", e)
 
         # Send notifications
         if new_articles:
@@ -567,15 +635,16 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
             subscribers = []
             with Session(engine) as session:
                 subs = session.exec(select(Subscriber).where(Subscriber.is_active)).all()
-                subscribers = [s.chat_id for s in subs]
+                subscribers = [(s.chat_id, s.topic_id) for s in subs]
 
             # Preload watchlist entries for subscriber chats
             watch_by_chat: dict[int, dict[int, list[WatchlistEntry]]] = {}
             tickers_by_chat: dict[int, set[str]] = {}
-            if subscribers:
+            sub_chat_ids = list({cid for cid, _ in subscribers})
+            if sub_chat_ids:
                 with Session(engine) as session:
                     entries = session.exec(
-                        select(WatchlistEntry).where(col(WatchlistEntry.chat_id).in_(subscribers))
+                        select(WatchlistEntry).where(col(WatchlistEntry.chat_id).in_(sub_chat_ids))
                     ).all()
                     for e in entries:
                         watch_by_chat.setdefault(e.chat_id, {}).setdefault(e.user_id, []).append(e)
@@ -656,8 +725,11 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
                 msg_md = news_data["msg_md"]
                 source_name = news_data.get("source_name")
 
-                for chat_id in subscribers:
+                for chat_id, topic_id in subscribers:
                     try:
+                        _thread_kwargs: dict = {}
+                        if topic_id:
+                            _thread_kwargs["message_thread_id"] = topic_id
                         # If we have watchlist entries for this chat, try to mention matching users
                         related = watch_by_chat.get(chat_id, {})
                         if related:
@@ -713,6 +785,7 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
                                     text=msg_html,
                                     parse_mode=ParseMode.HTML,
                                     disable_web_page_preview=True,
+                                    **_thread_kwargs,
                                 )
                                 continue
 
@@ -722,6 +795,7 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
                             text=msg_md,
                             parse_mode=ParseMode.MARKDOWN,
                             disable_web_page_preview=True,
+                            **_thread_kwargs,
                         )
                     except Exception as e:
                         logger.error(
@@ -771,15 +845,18 @@ async def process_threads_watch_entry(
     if not fresh:
         return 0, None
 
-    chat_id_int = int(entry.chat_id)
+    chat_id_int = entry.chat_id
     sent = 0
     for post in fresh:
         try:
-            await bot.send_message(
-                chat_id=chat_id_int,
-                text=format_message(entry.threads_username, post),
-                disable_web_page_preview=False,
-            )
+            kwargs: dict = {
+                "chat_id": chat_id_int,
+                "text": format_message(entry.threads_username, post),
+                "disable_web_page_preview": False,
+            }
+            if entry.topic_id:
+                kwargs["message_thread_id"] = entry.topic_id
+            await bot.send_message(**kwargs)
             sent += 1
             await asyncio.sleep(0.6)
         except Exception as e:

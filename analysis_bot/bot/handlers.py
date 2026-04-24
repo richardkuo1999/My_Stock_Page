@@ -156,7 +156,9 @@ _HELP_PAGES = {
         "📰 *新聞與搜尋*\n\n"
         "• `/news` — 新聞來源選單\n"
         "• `/google <關鍵字>` — 🔍 Google 新聞\n"
-        "  例：`/google 台積電`"
+        "  例：`/google 台積電`\n"
+        "• `/senti <股號>` — 📊 個股情緒趨勢（7 天）\n"
+        "• `/senti market` — 📊 市場情緒摘要"
     ),
     "help_ai": (
         "🤖 *AI 工具*\n\n"
@@ -183,8 +185,10 @@ _HELP_PAGES = {
     ),
     "help_sub": (
         "📬 *訂閱管理*\n\n"
-        "• `/subscribe` — 訂閱每日推播\n"
-        "• `/unsubscribe` — 取消訂閱"
+        "• `/sub_news` — 📰 訂閱新聞推播\n"
+        "• `/unsub_news` — 取消新聞推播\n"
+        "• `/sub_senti` — 🔔 訂閱情緒警報\n"
+        "• `/unsub_senti` — 取消情緒警報"
     ),
     "help_ua": (
         "🔬 *UAnalyze / MEGA*\n\n"
@@ -399,8 +403,8 @@ async def menu_callback_handler(update: Update, context: ContextTypes.DEFAULT_TY
             "threads_list": lambda u, c: threads_command(u, _fake_context(c, ["list"])),
             "hold981": hold981_command,
             "hold888": hold888_command,
-            "subscribe": subscribe_command,
-            "unsubscribe": unsubscribe_command,
+            "subscribe": sub_news_command,
+            "unsubscribe": unsub_news_command,
             "chatid": chatid_command,
             "help": help_command,
             "ua": lambda u, c: query.message.reply_text("請輸入：/ua <股號>"),
@@ -1196,24 +1200,21 @@ async def umon_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def umon_bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/umon_bind — 將目前聊天室綁定為 UAnalyze 報告推播目標（支援多目標）"""
-    from ..models.umon_target import UmonTarget
-
+    """/umon_bind — 將目前聊天室綁定為 UAnalyze 報告推播目標"""
     chat_id = update.effective_chat.id
-    topic_id = getattr(update.message, "message_thread_id", None)
+    topic_id = _get_topic_id(update)
 
-    with Session(engine) as session:
-        existing = session.exec(
-            select(UmonTarget).where(
-                UmonTarget.chat_id == chat_id, UmonTarget.topic_id == topic_id
-            )
-        ).first()
-        if existing:
-            await update.message.reply_text("ℹ️ 此聊天室已綁定過")
-            return
-        session.add(UmonTarget(chat_id=chat_id, topic_id=topic_id))
-        session.commit()
+    def _do():
+        with Session(engine) as session:
+            sub = _find_subscriber(session, chat_id, topic_id)
+            if not sub:
+                sub = Subscriber(chat_id=chat_id, topic_id=topic_id)
+            sub.is_active = True
+            sub.umon_enabled = True
+            session.add(sub)
+            session.commit()
 
+    await asyncio.to_thread(_do)
     parts = [f"✅ 已新增 UAnalyze 推播目標\nChat ID: <code>{chat_id}</code>"]
     if topic_id:
         parts.append(f"Topic ID: <code>{topic_id}</code>")
@@ -1222,24 +1223,24 @@ async def umon_bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def umon_unbind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/umon_unbind — 取消目前聊天室的 UAnalyze 報告推播"""
-    from ..models.umon_target import UmonTarget
-
     chat_id = update.effective_chat.id
-    topic_id = getattr(update.message, "message_thread_id", None)
+    topic_id = _get_topic_id(update)
 
-    with Session(engine) as session:
-        row = session.exec(
-            select(UmonTarget).where(
-                UmonTarget.chat_id == chat_id, UmonTarget.topic_id == topic_id
-            )
-        ).first()
-        if not row:
-            await update.message.reply_text("ℹ️ 此聊天室未綁定")
-            return
-        session.delete(row)
-        session.commit()
+    def _do():
+        with Session(engine) as session:
+            sub = _find_subscriber(session, chat_id, topic_id)
+            if sub and sub.umon_enabled:
+                sub.umon_enabled = False
+                session.add(sub)
+                session.commit()
+                return True
+            return False
 
-    await update.message.reply_text("✅ 已移除此聊天室的 UAnalyze 推播")
+    found = await asyncio.to_thread(_do)
+    if found:
+        await update.message.reply_text("✅ 已移除此聊天室的 UAnalyze 推播")
+    else:
+        await update.message.reply_text("ℹ️ 此聊天室未綁定")
 
 
 # --- Research (Files) ---
@@ -1356,14 +1357,29 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # --- Subscribe ---
-async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+
+def _get_topic_id(update: Update) -> int | None:
+    return getattr(update.message, "message_thread_id", None)
+
+
+def _find_subscriber(session, chat_id: int, topic_id: int | None):
+    return session.exec(
+        select(Subscriber).where(
+            Subscriber.chat_id == chat_id, Subscriber.topic_id == topic_id
+        )
+    ).first()
+
+
+async def sub_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    topic_id = _get_topic_id(update)
 
     def _do():
         with Session(engine) as session:
-            sub = session.exec(select(Subscriber).where(Subscriber.chat_id == chat_id)).first()
+            sub = _find_subscriber(session, chat_id, topic_id)
             if not sub:
-                session.add(Subscriber(chat_id=chat_id))
+                session.add(Subscriber(chat_id=chat_id, topic_id=topic_id))
                 session.commit()
                 return "new"
             if not sub.is_active:
@@ -1382,12 +1398,13 @@ async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("您已經是訂閱者囉！")
 
 
-async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def unsub_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    topic_id = _get_topic_id(update)
 
     def _do():
         with Session(engine) as session:
-            sub = session.exec(select(Subscriber).where(Subscriber.chat_id == chat_id)).first()
+            sub = _find_subscriber(session, chat_id, topic_id)
             if sub:
                 sub.is_active = False
                 session.add(sub)
@@ -1405,12 +1422,13 @@ async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def sub_ispike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """訂閱盤中爆量自動通知。"""
     chat_id = update.effective_chat.id
+    topic_id = _get_topic_id(update)
 
     def _do():
         with Session(engine) as session:
-            sub = session.exec(select(Subscriber).where(Subscriber.chat_id == chat_id)).first()
+            sub = _find_subscriber(session, chat_id, topic_id)
             if not sub:
-                sub = Subscriber(chat_id=chat_id)
+                sub = Subscriber(chat_id=chat_id, topic_id=topic_id)
             sub.is_active = True
             sub.ispike_enabled = True
             session.add(sub)
@@ -1423,10 +1441,11 @@ async def sub_ispike_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def unsub_ispike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """取消訂閱盤中爆量自動通知。"""
     chat_id = update.effective_chat.id
+    topic_id = _get_topic_id(update)
 
     def _do():
         with Session(engine) as session:
-            sub = session.exec(select(Subscriber).where(Subscriber.chat_id == chat_id)).first()
+            sub = _find_subscriber(session, chat_id, topic_id)
             if sub and sub.ispike_enabled:
                 sub.ispike_enabled = False
                 session.add(sub)
@@ -1439,6 +1458,47 @@ async def unsub_ispike_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("❌ 已取消盤中爆量通知訂閱。")
     else:
         await update.message.reply_text("您尚未訂閱盤中爆量通知。")
+
+
+async def sub_senti_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """訂閱情緒警報（個股急轉 + 市場轉變）。"""
+    chat_id = update.effective_chat.id
+    topic_id = _get_topic_id(update)
+
+    def _do():
+        with Session(engine) as session:
+            sub = _find_subscriber(session, chat_id, topic_id)
+            if not sub:
+                sub = Subscriber(chat_id=chat_id, topic_id=topic_id)
+            sub.is_active = True
+            sub.sentiment_alert_enabled = True
+            session.add(sub)
+            session.commit()
+
+    await asyncio.to_thread(_do)
+    await update.message.reply_text("✅ 已訂閱情緒警報！\n個股情緒急轉、市場情緒轉變時自動通知。")
+
+
+async def unsub_senti_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """取消訂閱情緒警報。"""
+    chat_id = update.effective_chat.id
+    topic_id = _get_topic_id(update)
+
+    def _do():
+        with Session(engine) as session:
+            sub = _find_subscriber(session, chat_id, topic_id)
+            if sub and sub.sentiment_alert_enabled:
+                sub.sentiment_alert_enabled = False
+                session.add(sub)
+                session.commit()
+                return True
+            return False
+
+    found = await asyncio.to_thread(_do)
+    if found:
+        await update.message.reply_text("❌ 已取消情緒警報訂閱。")
+    else:
+        await update.message.reply_text("您尚未訂閱情緒警報。")
 
 
 # --- Watchlist ---
@@ -1713,7 +1773,8 @@ async def threads_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     sub = str(context.args[0]).lower()
-    chat_id = str(update.effective_chat.id)
+    chat_id = update.effective_chat.id
+    topic_id = _get_topic_id(update)
 
     # Lazy import: playwright is an optional heavy dependency
     from ..services.threads_watch_service import MAX_SEEN_IDS, fetch_posts_playwright
@@ -1724,6 +1785,7 @@ async def threads_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 items = session.exec(
                     select(ThreadsWatchEntry)
                     .where(ThreadsWatchEntry.chat_id == chat_id)
+                    .where(ThreadsWatchEntry.topic_id == topic_id)
                     .order_by(ThreadsWatchEntry.threads_username)
                 ).all()
                 return [it.threads_username for it in items]
@@ -1742,7 +1804,9 @@ async def threads_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         def _get_ids():
             with Session(engine) as session:
                 items = session.exec(
-                    select(ThreadsWatchEntry).where(ThreadsWatchEntry.chat_id == chat_id)
+                    select(ThreadsWatchEntry)
+                    .where(ThreadsWatchEntry.chat_id == chat_id)
+                    .where(ThreadsWatchEntry.topic_id == topic_id)
                 ).all()
                 return [it.id for it in items]
 
@@ -1783,6 +1847,7 @@ async def threads_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return session.exec(
                     select(ThreadsWatchEntry)
                     .where(ThreadsWatchEntry.chat_id == chat_id)
+                    .where(ThreadsWatchEntry.topic_id == topic_id)
                     .where(ThreadsWatchEntry.threads_username == user)
                 ).first() is not None
 
@@ -1811,6 +1876,7 @@ async def threads_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ent = session.exec(
                     select(ThreadsWatchEntry)
                     .where(ThreadsWatchEntry.chat_id == chat_id)
+                    .where(ThreadsWatchEntry.topic_id == topic_id)
                     .where(ThreadsWatchEntry.threads_username == user)
                 ).first()
                 if not ent:
@@ -1845,12 +1911,13 @@ async def threads_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             existing = session.exec(
                 select(ThreadsWatchEntry)
                 .where(ThreadsWatchEntry.chat_id == chat_id)
+                .where(ThreadsWatchEntry.topic_id == topic_id)
                 .where(ThreadsWatchEntry.threads_username == user)
             ).first()
             if sub == "add":
                 if existing:
                     return "exists"
-                session.add(ThreadsWatchEntry(chat_id=chat_id, threads_username=user))
+                session.add(ThreadsWatchEntry(chat_id=chat_id, topic_id=topic_id, threads_username=user))
                 session.commit()
                 return "added"
             if not existing:
@@ -1884,14 +1951,14 @@ async def sentiment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """新聞情緒分析。
 
     用法：
-      /sentiment 2330       → 查看個股近 7 天情緒趨勢
-      /sentiment market     → 查看整體市場情緒
+      /senti 2330       → 查看個股近 7 天情緒趨勢
+      /senti market     → 查看整體市場情緒
     """
     if not context.args:
         await update.message.reply_text(
             "用法：\n"
-            "  /sentiment 2330  → 個股情緒趨勢\n"
-            "  /sentiment market → 市場情緒摘要"
+            "  /senti 2330  → 個股情緒趨勢\n"
+            "  /senti market → 市場情緒摘要"
         )
         return
 
