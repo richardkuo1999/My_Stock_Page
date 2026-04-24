@@ -43,6 +43,7 @@
 *   **/ua [股號]**: AI 多題分析（30 個預設 prompt，回傳 Markdown 報告）。
 *   **/uask [股號] [問題]**: 自訂問題分析。
 *   **/umon**: 手動觸發 UAnalyze 報告監控（背景每 60 秒自動檢查）。
+*   **/sub_umon** / **/unsub_umon**: 訂閱/取消 UAnalyze 報告推播。
 *   **/mega y|n [關鍵字]**: MEGA 雲端搜尋下載。
 
 ### 6. 🎧 Podcast 自動摘要

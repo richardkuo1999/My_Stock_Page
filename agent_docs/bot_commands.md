@@ -218,6 +218,20 @@ Handler registration is in `analysis_bot/bot/main.py`.
 
 ---
 
+### `/sub_umon`
+**Function:** `sub_umon_command()`
+
+**Description:** 訂閱 UAnalyze 報告推播（綁定目前聊天室）。
+
+---
+
+### `/unsub_umon`
+**Function:** `unsub_umon_command()`
+
+**Description:** 取消 UAnalyze 報告推播。
+
+---
+
 ### `/mega y|n <關鍵字>`
 **Function:** `mega_command()`
 

@@ -195,8 +195,8 @@ _HELP_PAGES = {
         "• `/ua <股號>` — AI 多題分析\n"
         "• `/uask <股號> <問題>` — 自訂問題\n"
         "• `/umon` — 觸發報告檢查\n"
-        "• `/umon_bind` — 綁定推播目標\n"
-        "• `/umon_unbind` — 取消推播\n"
+        "• `/sub_umon` — 訂閱推播\n"
+        "• `/unsub_umon` — 取消推播\n"
         "• `/mega y|n <關鍵字>` — MEGA 搜尋下載"
     ),
     "help_misc": (
@@ -1199,8 +1199,8 @@ async def umon_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📭 無新報告")
 
 
-async def umon_bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/umon_bind — 將目前聊天室綁定為 UAnalyze 報告推播目標"""
+async def sub_umon_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/sub_umon — 將目前聊天室綁定為 UAnalyze 報告推播目標"""
     chat_id = update.effective_chat.id
     topic_id = _get_topic_id(update)
 
@@ -1221,8 +1221,8 @@ async def umon_bind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(parts), parse_mode="HTML")
 
 
-async def umon_unbind_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/umon_unbind — 取消目前聊天室的 UAnalyze 報告推播"""
+async def unsub_umon_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/unsub_umon — 取消目前聊天室的 UAnalyze 報告推播"""
     chat_id = update.effective_chat.id
     topic_id = _get_topic_id(update)
 
