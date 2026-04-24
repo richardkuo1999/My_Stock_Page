@@ -16,7 +16,7 @@ def isolated_db(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """Provide an isolated SQLite DB with all tables created."""
     import analysis_bot.database as database
     from analysis_bot.models.config import SystemConfig  # noqa: F401
-    from analysis_bot.models.umon_target import UmonTarget  # noqa: F401
+    from analysis_bot.models.subscriber import Subscriber  # noqa: F401
 
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}", connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(engine)

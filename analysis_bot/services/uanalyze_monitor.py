@@ -96,10 +96,12 @@ async def _do_check_new_reports(bot=None, dry_run: bool = False) -> int:
 
     # Load all push targets from DB
     from sqlmodel import Session as _Session, select as _select
-    from ..models.umon_target import UmonTarget
+    from ..models.subscriber import Subscriber
     import analysis_bot.database as _db
     with _Session(_db.engine) as _s:
-        targets = _s.exec(_select(UmonTarget)).all()
+        targets = _s.exec(
+            _select(Subscriber).where(Subscriber.umon_enabled == True)
+        ).all()
 
     async with create_session() as session:
         # Fetch reports
