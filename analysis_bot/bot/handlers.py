@@ -109,8 +109,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📊 *資訊查詢*\n"
         "• `/p <股號>` — 💹 即時股價 + 盤中走勢圖\n"
         "  例：`/p 2330`\n"
-        "• `/k <股號>` — 📈 K 線圖（近 3 個月，含 MA5/20/60）\n"
-        "  例：`/k 2330`\n"
+        "• `/k <股號>` — 📈 K 線圖（近 3 個月）\n"
+        "  支援參數：MA週期、`rsi` `macd` `kd` `bb` `dmi`\n"
+        "  例：`/k 2330`、`/k 2330 bb kd`\n"
         "• `/info <股號>` — 🏢 公司介紹與基本面 AI 報告\n"
         "  例：`/info 2330`\n"
         "• `/esti <股號>` — 🎯 樂活五線譜估值分析\n"
@@ -559,18 +560,81 @@ async def price_news_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def kline_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """日 K 線圖（近 3 個月，含 MA5/20/60 與量）。用法：/k 2330"""
+    """日 K 線圖（近 3 個月）。
+
+    用法：
+      /k 2330              → 預設 MA5/20/60
+      /k 2330 5 10 20      → 自訂 MA 週期
+      /k 2330 rsi          → 加入 RSI(14)
+      /k 2330 macd         → 加入 MACD(12,26,9)
+      /k 2330 kd           → 加入 KD(9,3,3)
+      /k 2330 bb           → 加入布林通道
+      /k 2330 dmi          → 加入 DMI(14)
+      /k 2330 5 10 20 rsi macd kd bb dmi → 全部自訂
+    """
     logger.info("kline_command received: args=%s", context.args)
-    ticker = context.args[0].strip() if context.args and context.args[0] else None
-    if not ticker:
-        await update.message.reply_text("❌ 用法：/k 2330")
+    if not context.args:
+        await update.message.reply_text(
+            "❌ 用法：/k 2330 [MA週期...] [rsi] [macd] [kd] [bb] [dmi]\n"
+            "範例：\n"
+            "  /k 2330\n"
+            "  /k 2330 5 10 20\n"
+            "  /k 2330 rsi macd\n"
+            "  /k 2330 kd bb dmi\n"
+            "  /k 2330 bb        ← 布林通道（不含 MA）\n"
+            "  /k 2330 10 20 rsi kd bb"
+        )
         return
+
+    ticker = context.args[0].strip()
+    # 解析後續參數：數字 = MA 週期，rsi/macd/kd/bb/dmi = 指標開關
+    ma_periods = []
+    show_rsi = False
+    show_macd = False
+    show_kd = False
+    show_bb = False
+    show_dmi = False
+
+    for arg in context.args[1:]:
+        arg_lower = arg.strip().lower()
+        if arg_lower == "rsi":
+            show_rsi = True
+        elif arg_lower == "macd":
+            show_macd = True
+        elif arg_lower == "kd":
+            show_kd = True
+        elif arg_lower == "bb":
+            show_bb = True
+        elif arg_lower == "dmi":
+            show_dmi = True
+        elif arg_lower.isdigit():
+            period = int(arg_lower)
+            if 2 <= period <= 240:
+                ma_periods.append(period)
+        # 忽略無法辨識的參數
+
+    # 限制最多 6 條 MA 線
+    if len(ma_periods) > 6:
+        ma_periods = ma_periods[:6]
+
+    # 沒指定就用預設值
+    if not ma_periods:
+        ma_periods = [] if show_bb else None  # BB 開啟時不疊加預設 MA
+
     await update.message.reply_chat_action(ChatAction.TYPING)
     try:
         # Lazy import: candlestick_chart depends on playwright
         from ..services.candlestick_chart import render_candlestick_chart
 
-        chart_path = await render_candlestick_chart(ticker)
+        chart_path = await render_candlestick_chart(
+            ticker,
+            ma_periods=ma_periods,
+            show_rsi=show_rsi,
+            show_macd=show_macd,
+            show_kd=show_kd,
+            show_bb=show_bb,
+            show_dmi=show_dmi,
+        )
         if not chart_path:
             await update.message.reply_text(f"❌ 找不到 {ticker} 的 K 線資料")
             return
@@ -1747,3 +1811,97 @@ async def threads_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"ℹ️ 未訂閱 @{user}")
     else:
         await update.message.reply_text(f"✅ 已取消 @{user}")
+
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 新聞情緒分析
+# ─────────────────────────────────────────────────────────────────────
+
+
+async def sentiment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """新聞情緒分析。
+
+    用法：
+      /sentiment 2330       → 查看個股近 7 天情緒趨勢
+      /sentiment market     → 查看整體市場情緒
+    """
+    if not context.args:
+        await update.message.reply_text(
+            "用法：\n"
+            "  /sentiment 2330  → 個股情緒趨勢\n"
+            "  /sentiment market → 市場情緒摘要"
+        )
+        return
+
+    target = context.args[0].strip().lower()
+    await update.message.reply_chat_action(ChatAction.TYPING)
+
+    from ..services.sentiment_service import SentimentService
+
+    if target == "market":
+        summary = await asyncio.to_thread(SentimentService.get_market_sentiment_summary)
+        if summary["total"] == 0:
+            await update.message.reply_text("📊 目前沒有情緒分析資料。")
+            return
+
+        total = summary["total"]
+        pos_pct = summary["positive"] / total * 100
+        neg_pct = summary["negative"] / total * 100
+        neu_pct = summary["neutral"] / total * 100
+
+        # 情緒指標
+        if summary["avg_score"] > 0.2:
+            mood = "😊 偏樂觀"
+        elif summary["avg_score"] < -0.2:
+            mood = "😟 偏悲觀"
+        else:
+            mood = "😐 中性"
+
+        msg = (
+            f"📊 *市場情緒摘要*（近 24 小時）\n\n"
+            f"整體情緒：{mood}\n"
+            f"情緒分數：{summary['avg_score']:+.3f}\n\n"
+            f"📰 新聞總數：{total}\n"
+            f"  🟢 正面：{summary['positive']} ({pos_pct:.0f}%)\n"
+            f"  ⚪ 中性：{summary['neutral']} ({neu_pct:.0f}%)\n"
+            f"  🔴 負面：{summary['negative']} ({neg_pct:.0f}%)\n"
+        )
+        await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+    else:
+        # 個股情緒
+        ticker = target.upper()
+        trend = await asyncio.to_thread(SentimentService.get_ticker_sentiment_trend, ticker)
+
+        if trend["total"] == 0:
+            await update.message.reply_text(f"📊 {ticker} 近 7 天沒有情緒分析資料。")
+            return
+
+        total = trend["total"]
+        pos_pct = trend["positive"] / total * 100
+        neg_pct = trend["negative"] / total * 100
+
+        # 情緒趨勢圖（文字版）
+        daily_chart = ""
+        for d in trend["daily"]:
+            bar_pos = "🟢" * d["positive"]
+            bar_neg = "🔴" * d["negative"]
+            bar_neu = "⚪" * d["neutral"]
+            daily_chart += f"  {d['date']} {bar_pos}{bar_neu}{bar_neg} ({d['avg']:+.2f})\n"
+
+        msg = (
+            f"📊 *{ticker} 情緒趨勢*（近 7 天）\n\n"
+            f"情緒分數：{trend['avg_score']:+.3f}\n"
+            f"📰 相關新聞：{total} 則\n"
+            f"  🟢 正面：{trend['positive']} ({pos_pct:.0f}%)\n"
+            f"  🔴 負面：{trend['negative']} ({neg_pct:.0f}%)\n\n"
+            f"📈 *每日趨勢*\n{daily_chart}"
+        )
+        await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
+
+        # 檢查情緒急轉
+        shift_warning = await asyncio.to_thread(
+            SentimentService.check_sentiment_shift, ticker
+        )
+        if shift_warning:
+            await update.message.reply_text(shift_warning)

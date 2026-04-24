@@ -76,14 +76,14 @@ Handler registration is in `analysis_bot/bot/main.py`.
 
 ---
 
-### `/k <股號>`
+### `/k <股號> [參數...]`
 **Function:** `kline_command()`
 
-**Description:** K 線圖（近 3 個月日線，含 MA5/20/60 與量）。
+**Description:** K 線圖（近 3 個月日線），支援自訂 MA 週期及技術指標 `rsi` `macd` `kd` `bb` `dmi`。
 
 **Services Used:** `candlestick_chart.render_candlestick_chart()`（lazy import，依賴 Playwright）
 
-**Example:** `/k 2330`
+**Example:** `/k 2330`、`/k 2330 rsi kd`、`/k 2330 bb`、`/k 2330 dmi macd`
 
 ---
 
