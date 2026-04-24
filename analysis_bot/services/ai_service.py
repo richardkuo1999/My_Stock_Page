@@ -30,7 +30,7 @@ class AIService:
 
         # Initialize Gemini Clients
         self.gemini_clients = [self._create_gemini_client(key) for key in self.gemini_keys]
-        self.gemini_model = "gemini-2.5-flash"
+        self.gemini_model = "gemini-3-flash"
 
         logger.info("AIService initialized with provider: gemini")
 
@@ -54,9 +54,10 @@ class AIService:
             raise RuntimeError("No Gemini keys configured.")
 
         models_to_try = [
+            "gemini-3-flash",
             "gemini-2.5-flash",
-            "gemini-2.0-flash",
-            "gemini-1.5-flash",
+            "gemini-3-flash-lite",
+            "gemini-2.5-flash-lite",
         ]
         max_total_attempts = 10
         attempt = 0

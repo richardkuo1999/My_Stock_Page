@@ -38,7 +38,7 @@ async def analyze_stock(self, ticker: str, lohas_years: float = 3.5) -> Dict[str
 
 **Key Features:**
 - Multiple API key rotation (handles rate limits)
-- Model fallback chain: `gemini-2.5-flash → gemini-2.0-flash → gemini-1.5-flash`
+- Model fallback chain: `gemini-3-flash → gemini-2.5-flash → gemini-3-flash-lite → gemini-2.5-flash-lite`
 - Google Search grounding (`use_search=True`)
 
 **Usage Pattern:**
