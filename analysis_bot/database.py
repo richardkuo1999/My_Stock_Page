@@ -30,6 +30,21 @@ def create_db_and_tables():
     # Migration: add columns if missing (SQLite)
     if "sqlite" in settings.DATABASE_URL:
         with engine.connect() as conn:
+            # Drop legacy unique index on chat_id alone (blocks group multi-topic subs)
+            try:
+                conn.execute(text("DROP INDEX IF EXISTS ix_subscriber_chat_id"))
+                conn.commit()
+            except Exception:
+                pass
+            # Ensure composite unique index exists
+            try:
+                conn.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_subscriber_chat_topic "
+                    "ON subscriber (chat_id, topic_id)"
+                ))
+                conn.commit()
+            except Exception:
+                pass
             for ddl in [
                 "ALTER TABLE news ADD COLUMN content TEXT",
                 "ALTER TABLE intraday_ma20_snapshot ADD COLUMN vol_19d_sum_lots REAL",
