@@ -428,7 +428,7 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
 
         def get_subscribers():
             with Session(engine) as session:
-                subs = session.exec(select(Subscriber).where(Subscriber.is_active)).all()
+                subs = session.exec(select(Subscriber).where(Subscriber.news_enabled)).all()
                 return [s.chat_id for s in subs]
 
         subscribers = await asyncio.to_thread(get_subscribers)
@@ -473,7 +473,7 @@ async def daily_podcast_job():
 
         def get_sub_ids():
             with Session(engine) as session:
-                subs = session.exec(select(Subscriber).where(Subscriber.is_active)).all()
+                subs = session.exec(select(Subscriber).where(Subscriber.news_enabled)).all()
                 return [s.chat_id for s in subs]
 
         sub_ids = await asyncio.to_thread(get_sub_ids)
@@ -645,7 +645,7 @@ async def daily_volume_spike_job():
         # 4. Send to subscribers
         def get_sub_chat_ids():
             with Session(engine) as session:
-                subs = session.exec(select(Subscriber).where(Subscriber.is_active)).all()
+                subs = session.exec(select(Subscriber).where(Subscriber.news_enabled)).all()
                 return [s.chat_id for s in subs]
 
         sub_ids = await asyncio.to_thread(get_sub_chat_ids)

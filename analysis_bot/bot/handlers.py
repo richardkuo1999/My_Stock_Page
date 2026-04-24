@@ -1209,7 +1209,6 @@ async def sub_umon_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sub = _find_subscriber(session, chat_id, topic_id)
             if not sub:
                 sub = Subscriber(chat_id=chat_id, topic_id=topic_id)
-            sub.is_active = True
             sub.umon_enabled = True
             session.add(sub)
             session.commit()
@@ -1379,11 +1378,12 @@ async def sub_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with Session(engine) as session:
             sub = _find_subscriber(session, chat_id, topic_id)
             if not sub:
-                session.add(Subscriber(chat_id=chat_id, topic_id=topic_id))
+                sub = Subscriber(chat_id=chat_id, topic_id=topic_id, news_enabled=True)
+                session.add(sub)
                 session.commit()
                 return "new"
-            if not sub.is_active:
-                sub.is_active = True
+            if not sub.news_enabled:
+                sub.news_enabled = True
                 session.add(sub)
                 session.commit()
                 return "reactivated"
@@ -1405,8 +1405,8 @@ async def unsub_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     def _do():
         with Session(engine) as session:
             sub = _find_subscriber(session, chat_id, topic_id)
-            if sub:
-                sub.is_active = False
+            if sub and sub.news_enabled:
+                sub.news_enabled = False
                 session.add(sub)
                 session.commit()
                 return True
@@ -1429,7 +1429,6 @@ async def sub_ispike_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             sub = _find_subscriber(session, chat_id, topic_id)
             if not sub:
                 sub = Subscriber(chat_id=chat_id, topic_id=topic_id)
-            sub.is_active = True
             sub.ispike_enabled = True
             session.add(sub)
             session.commit()
@@ -1470,7 +1469,6 @@ async def sub_senti_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sub = _find_subscriber(session, chat_id, topic_id)
             if not sub:
                 sub = Subscriber(chat_id=chat_id, topic_id=topic_id)
-            sub.is_active = True
             sub.sentiment_alert_enabled = True
             session.add(sub)
             session.commit()

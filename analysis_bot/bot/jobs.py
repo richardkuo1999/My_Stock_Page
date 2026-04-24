@@ -634,7 +634,7 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
 
             subscribers = []
             with Session(engine) as session:
-                subs = session.exec(select(Subscriber).where(Subscriber.is_active)).all()
+                subs = session.exec(select(Subscriber).where(Subscriber.news_enabled)).all()
                 subscribers = [(s.chat_id, s.topic_id) for s in subs]
 
             # Preload watchlist entries for subscriber chats

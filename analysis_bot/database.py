@@ -50,6 +50,7 @@ def create_db_and_tables():
                 "ALTER TABLE intraday_ma20_snapshot ADD COLUMN vol_19d_sum_lots REAL",
                 "ALTER TABLE subscriber ADD COLUMN ispike_enabled INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE subscriber ADD COLUMN sentiment_alert_enabled INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE subscriber ADD COLUMN news_enabled INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE subscriber ADD COLUMN umon_enabled INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE subscriber ADD COLUMN topic_id INTEGER",
                 "ALTER TABLE threadswatchentry ADD COLUMN topic_id INTEGER",

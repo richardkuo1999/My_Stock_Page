@@ -51,7 +51,7 @@ async def test_check_news_job_mentions_only_matching_user_by_ticker(isolated_eng
 
     # Seed DB: one subscriber group chat, two users with different watchlists
     with Session(isolated_engine) as session:
-        session.add(Subscriber(chat_id=1000, is_active=True))
+        session.add(Subscriber(chat_id=1000, news_enabled=True))
         session.add(WatchlistEntry(chat_id=1000, user_id=111, ticker="TSLA", alias="特斯拉"))
         session.add(WatchlistEntry(chat_id=1000, user_id=222, ticker="2330", alias="台積電"))
         session.commit()
@@ -93,7 +93,7 @@ async def test_check_news_job_mentions_by_alias(isolated_engine):
     bot = FakeBot()
 
     with Session(isolated_engine) as session:
-        session.add(Subscriber(chat_id=1000, is_active=True))
+        session.add(Subscriber(chat_id=1000, news_enabled=True))
         session.add(WatchlistEntry(chat_id=1000, user_id=222, ticker="2330", alias="台積電"))
         session.commit()
 

@@ -25,10 +25,18 @@ class StockData(SQLModel, table=True):
 ### Subscriber (`subscriber.py`)
 ```python
 class Subscriber(SQLModel, table=True):
+    __table_args__ = (
+        UniqueConstraint("chat_id", "topic_id", name="uq_subscriber_chat_topic"),
+    )
+
     id: Optional[int] = Field(default=None, primary_key=True)
-    chat_id: int = Field(index=True, unique=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    is_active: bool = Field(default=True)
+    chat_id: int = Field(index=True)
+    topic_id: Optional[int] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=now_tw)
+    news_enabled: bool = Field(default=False)
+    ispike_enabled: bool = Field(default=False)
+    sentiment_alert_enabled: bool = Field(default=False)
+    umon_enabled: bool = Field(default=False)
 ```
 
 **Purpose:** Track Telegram chat IDs for push notifications.
@@ -118,8 +126,9 @@ class SystemConfig(SQLModel, table=True):
 ┌─────────────────┐
 │   Subscriber    │
 │─────────────────│
-│ chat_id (PK)    │◄──────┐
-│ is_active       │       │
+│ chat_id         │◄──────┐
+│ topic_id        │       │
+│ news_enabled    │       │
 └─────────────────┘       │
                           │ (same chat_id)
 ┌─────────────────┐       │

@@ -68,23 +68,23 @@ class TestStockData:
 
 class TestSubscriber:
     def test_create_subscriber(self, db_session):
-        subscriber = Subscriber(chat_id=123456789, is_active=True)
+        subscriber = Subscriber(chat_id=123456789, news_enabled=True)
         db_session.add(subscriber)
         db_session.commit()
         db_session.refresh(subscriber)
 
         assert subscriber.id is not None
         assert subscriber.chat_id == 123456789
-        assert subscriber.is_active is True
+        assert subscriber.news_enabled is True
         assert isinstance(subscriber.created_at, datetime)
 
-    def test_subscriber_default_is_active(self, db_session):
+    def test_subscriber_default_news_enabled(self, db_session):
         subscriber = Subscriber(chat_id=123456789)
         db_session.add(subscriber)
         db_session.commit()
         db_session.refresh(subscriber)
 
-        assert subscriber.is_active is True
+        assert subscriber.news_enabled is False
 
     def test_unique_chat_id_constraint(self, db_session):
         sub1 = Subscriber(chat_id=123456789)
