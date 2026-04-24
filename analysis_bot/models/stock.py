@@ -2,6 +2,8 @@ from datetime import datetime
 
 from sqlmodel import Field, SQLModel
 
+from ..utils.tz import now_tw
+
 
 class StockData(SQLModel, table=True):
     """Stocks analyzed by the bot (manual esti or daily run)."""
@@ -13,4 +15,4 @@ class StockData(SQLModel, table=True):
     sector: str | None = None
     price: float | None = None
     data: str | None = None  # JSON string of full analysis result
-    last_analyzed: datetime = Field(default_factory=datetime.utcnow)
+    last_analyzed: datetime = Field(default_factory=now_tw)

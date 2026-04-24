@@ -1,9 +1,9 @@
-from __future__ import annotations
-
 from datetime import datetime
 
 from sqlalchemy import UniqueConstraint
 from sqlmodel import Field, SQLModel
+
+from ..utils.tz import now_tw
 
 
 class WatchlistEntry(SQLModel, table=True):
@@ -23,4 +23,4 @@ class WatchlistEntry(SQLModel, table=True):
     added_price: float | None = Field(default=None)
     user_name: str | None = Field(default=None)
     note: str | None = Field(default=None)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=now_tw)

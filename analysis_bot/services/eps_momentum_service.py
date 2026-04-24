@@ -7,6 +7,7 @@ from sqlmodel import Session, col, select
 
 from ..database import engine
 from ..models.eps_estimate import EpsEstimate
+from ..utils.tz import now_tw
 from .anue_scraper import AnueScraper
 from .http import create_session
 
@@ -74,13 +75,13 @@ class EpsMomentumService:
                     try:
                         source_date = datetime.fromisoformat(source_date)
                     except ValueError:
-                        source_date = datetime.utcnow()
+                        source_date = now_tw()
 
                 record = EpsEstimate(
                     ticker=ticker,
                     est_eps=float(eps_val),
                     est_price=est.get("est_price"),
-                    source_date=source_date or datetime.utcnow(),
+                    source_date=source_date or now_tw(),
                     source_url=url,
                 )
                 session.add(record)
@@ -96,7 +97,7 @@ class EpsMomentumService:
         """Load EPS estimates for a ticker within the last 1 year, ordered by source_date ASC."""
         from datetime import timedelta
 
-        one_year_ago = datetime.utcnow() - timedelta(days=365)
+        one_year_ago = now_tw() - timedelta(days=365)
         with Session(engine) as session:
             results = session.exec(
                 select(EpsEstimate)

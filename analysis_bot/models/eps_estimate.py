@@ -2,6 +2,8 @@ from datetime import datetime
 
 from sqlmodel import Field, SQLModel
 
+from ..utils.tz import now_tw
+
 
 class EpsEstimate(SQLModel, table=True):
     """Historical FactSet EPS estimate snapshots from 鉅亨網."""
@@ -12,4 +14,4 @@ class EpsEstimate(SQLModel, table=True):
     est_price: float | None = None
     source_date: datetime = Field(index=True)
     source_url: str | None = None
-    fetched_at: datetime = Field(default_factory=datetime.utcnow)
+    fetched_at: datetime = Field(default_factory=now_tw)

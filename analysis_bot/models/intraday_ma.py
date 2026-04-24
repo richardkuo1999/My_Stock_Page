@@ -3,6 +3,8 @@ from typing import Optional
 
 from sqlmodel import Field, SQLModel
 
+from ..utils.tz import now_tw
+
 
 class IntradayMA20Snapshot(SQLModel, table=True):
     """
@@ -21,4 +23,4 @@ class IntradayMA20Snapshot(SQLModel, table=True):
     ma20_lots: float = 0.0              # 舊版：20 日均量（張），收盤掃描寫入
     vol_19d_sum_lots: Optional[float] = Field(default=None)  # 盤前掃描：過去 19 日量加總（張）
     snapshot_date: str = ""             # ISO 日期字串，如 "2026-04-07"
-    updated_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=now_tw)
