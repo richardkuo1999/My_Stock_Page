@@ -6,13 +6,13 @@
 import asyncio
 import json
 import logging
+import multiprocessing
 import os
 import tempfile
 from datetime import datetime, timedelta
 
 import pandas as pd
 import yfinance as yf
-from playwright.async_api import async_playwright
 
 from ..utils.ticker_utils import get_tw_search_tickers, is_taiwan_ticker
 
@@ -180,6 +180,24 @@ def _isnan(x) -> bool:
         return True
 
 
+def _screenshot_in_subprocess(html: str, path: str) -> None:
+    """Run in a separate process — gets its own event loop with full subprocess support."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        try:
+            ctx = browser.new_context(viewport={"width": 1120, "height": 640})
+            page = ctx.new_page()
+            page.set_content(html, wait_until="networkidle")
+            page.wait_for_function("window.__ready__ === true", timeout=10_000)
+            page.wait_for_timeout(300)
+            elem = page.query_selector("#wrap")
+            (elem or page).screenshot(path=path)
+        finally:
+            browser.close()
+
+
 async def _screenshot(payload: dict) -> str:
     html = _HTML_TEMPLATE.format(
         title=payload["title"],
@@ -191,19 +209,18 @@ async def _screenshot(payload: dict) -> str:
     )
     fd, path = tempfile.mkstemp(prefix="kline_", suffix=".png", dir=tempfile.gettempdir())
     os.close(fd)
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        try:
-            context = await browser.new_context(viewport={"width": 1120, "height": 640})
-            page = await context.new_page()
-            await page.set_content(html, wait_until="networkidle")
-            await page.wait_for_function("window.__ready__ === true", timeout=10_000)
-            await page.wait_for_timeout(300)
-            elem = await page.query_selector("#wrap")
-            await (elem or page).screenshot(path=path)
-        finally:
-            await browser.close()
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _run_in_process, html, path)
     return path
+
+
+def _run_in_process(html: str, path: str) -> None:
+    proc = multiprocessing.Process(target=_screenshot_in_subprocess, args=(html, path))
+    proc.start()
+    proc.join(timeout=30)
+    if proc.exitcode != 0:
+        raise RuntimeError(f"screenshot subprocess failed (exit={proc.exitcode})")
 
 
 async def render_candlestick_chart(ticker: str, name: str = "") -> str | None:
