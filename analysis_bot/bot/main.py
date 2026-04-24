@@ -23,6 +23,7 @@ from .handlers import (
     chatid_command,
     esti_command,
     google_command,
+    help_callback_handler,
     help_command,
     hold888_command,
     hold981_command,
@@ -40,6 +41,7 @@ from .handlers import (
     research_finish,
     research_handle,
     research_start,
+    sentiment_command,
     spike_command,
     start_command,
     sub_ispike_command,
@@ -116,6 +118,7 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("umon_unbind", umon_unbind_command, filters=f))
     application.add_handler(CommandHandler("umon_unbind", umon_unbind_command, filters=f))
     application.add_handler(CommandHandler("mega", mega_command, filters=f))
+    application.add_handler(CommandHandler("sentiment", sentiment_command, filters=f))
 
     # Conversation: Research (per_chat=False allows concurrent users)
     research_conv = ConversationHandler(
@@ -151,6 +154,7 @@ def create_bot_application() -> Application:
 
     # Callbacks
     application.add_handler(CallbackQueryHandler(menu_callback_handler, pattern="^menu_"))
+    application.add_handler(CallbackQueryHandler(help_callback_handler, pattern="^help_"))
     application.add_handler(CallbackQueryHandler(news_button_handler, pattern="^news_"))
     application.add_handler(CallbackQueryHandler(price_news_callback, pattern="^pnews:"))
 

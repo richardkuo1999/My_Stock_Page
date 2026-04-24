@@ -99,74 +99,135 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Display detailed help message with all available commands."""
-    help_text = (
-        "🤖 *Stock Analysis Bot — 完整指令*\n\n"
-        "🏠 *基本*\n"
+    """Display help categories with inline keyboard."""
+    rows = []
+    for i in range(0, len(_HELP_CATEGORIES), 2):
+        row = [InlineKeyboardButton(t, callback_data=d) for t, d in _HELP_CATEGORIES[i:i + 2]]
+        rows.append(row)
+    await update.message.reply_text(
+        "📖 *指令說明 — 選擇分類：*",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(rows),
+    )
+
+
+_HELP_CATEGORIES = [
+    ("🏠 基本", "help_basic"),
+    ("📊 資訊查詢", "help_query"),
+    ("🔥 爆量偵測", "help_spike"),
+    ("📰 新聞搜尋", "help_news"),
+    ("🤖 AI 工具", "help_ai"),
+    ("⭐ 自選股", "help_watch"),
+    ("🏦 持股查詢", "help_hold"),
+    ("📬 訂閱管理", "help_sub"),
+    ("🔬 UAnalyze", "help_ua"),
+    ("⚙️ 其他", "help_misc"),
+]
+
+_HELP_PAGES = {
+    "help_basic": (
+        "🏠 *基本*\n\n"
         "• `/start` — 啟動機器人\n"
-        "• `/help` — 顯示此幫助訊息\n"
-        "• `/menu` — 開啟互動選單\n\n"
-        "📊 *資訊查詢*\n"
-        "• `/p <股號>` — 💹 即時股價 + 盤中走勢圖\n"
-        "  例：`/p 2330`\n"
+        "• `/help` — 指令分類選單\n"
+        "• `/menu` — 互動式操作選單"
+    ),
+    "help_query": (
+        "📊 *資訊查詢*\n\n"
+        "• `/p <股號>` — 💹 即時股價 + 走勢圖\n"
         "• `/k <股號>` — 📈 K 線圖（近 3 個月）\n"
-        "  支援參數：MA週期、`rsi` `macd` `kd` `bb` `dmi`\n"
-        "  例：`/k 2330`、`/k 2330 bb kd`\n"
-        "• `/info <股號>` — 🏢 公司介紹與基本面 AI 報告\n"
-        "  例：`/info 2330`\n"
-        "• `/esti <股號>` — 🎯 樂活五線譜估值分析\n"
-        "  例：`/esti 2330`\n"
+        "  參數：`rsi` `macd` `kd` `bb` `dmi` + 自訂 MA\n"
+        "  例：`/k 2330 bb kd`\n"
+        "• `/info <股號>` — 🏢 基本面 AI 報告\n"
+        "• `/esti <股號>` — 🎯 樂活五線譜估值\n"
         "• `/name <股號>` — 🏷 查詢公司名稱\n"
-        "• `/vix` — 😱 VIX 恐慌指數現值\n\n"
-        "🔥 *爆量偵測*\n"
-        "• `/spike` — 收盤爆量（預設按倍數排序）\n"
+        "• `/vix` — 😱 VIX 恐慌指數"
+    ),
+    "help_spike": (
+        "🔥 *爆量偵測*\n\n"
+        "• `/spike` — 收盤爆量（按倍數）\n"
         "• `/spike change` — 按漲幅排序\n"
-        "• `/spike t1` — 按前日倍數排序\n"
-        "• `/ispike` — ⚡ 盤中爆量（即時）\n"
-        "• `/ispike change` — 盤中爆量，按漲幅排序\n"
-        "• `/sub_ispike` — 🔔 訂閱盤中爆量自動通知\n"
-        "• `/unsub_ispike` — 🔕 取消訂閱盤中爆量通知\n\n"
-        "📰 *新聞與搜尋*\n"
-        "• `/news` — 開啟新聞來源選單\n"
-        "• `/google <關鍵字>` — 🔍 Google 新聞搜尋\n"
-        "  例：`/google 台積電`\n\n"
-        "🤖 *AI 工具*\n"
-        "• `/chat <問題>` — 💬 AI 單次回答\n"
-        "  例：`/chat 台股明天怎麼看`\n"
-        "• `/chat` — 進入 AI 對話模式（輸入 exit 離開）\n"
-        "• `/research` — 📚 上傳 PDF/DOCX 生成研究摘要\n"
-        "  上傳完畢後輸入 `/rq` 產生報告\n\n"
-        "⭐ *自選股 & 追蹤*\n"
+        "• `/spike t1` — 按前日倍數\n"
+        "• `/ispike` — ⚡ 盤中爆量\n"
+        "• `/ispike change` — 盤中按漲幅\n"
+        "• `/sub_ispike` — 🔔 訂閱通知\n"
+        "• `/unsub_ispike` — 🔕 取消通知"
+    ),
+    "help_news": (
+        "📰 *新聞與搜尋*\n\n"
+        "• `/news` — 新聞來源選單\n"
+        "• `/google <關鍵字>` — 🔍 Google 新聞\n"
+        "  例：`/google 台積電`"
+    ),
+    "help_ai": (
+        "🤖 *AI 工具*\n\n"
+        "• `/chat <問題>` — 💬 單次回答\n"
+        "• `/chat` — 對話模式（exit 離開）\n"
+        "• `/research` — 📚 上傳文件生成摘要\n"
+        "  上傳後輸入 `/rq` 產生報告"
+    ),
+    "help_watch": (
+        "⭐ *自選股 & 追蹤*\n\n"
         "• `/wadd <股號> [備註]` — 加入自選股\n"
         "• `/wdel <股號>` — 移除自選股\n"
-        "• `/wlist` — 查看自選股清單\n"
-        "• `/threads add <帳號>` — 🧵 訂閱 Threads 帳號\n"
+        "• `/wlist` — 查看清單\n"
+        "• `/threads add <帳號>` — 🧵 訂閱 Threads\n"
         "• `/threads remove <帳號>` — 取消訂閱\n"
-        "• `/threads list` — 查看訂閱清單\n"
-        "• `/threads check` — 立即檢查新貼文\n"
-        "• `/threads bootstrap <帳號>` — 記錄現有貼文\n\n"
-        "🏦 *持股查詢*\n"
+        "• `/threads list` — 訂閱清單\n"
+        "• `/threads check` — 檢查新貼文"
+    ),
+    "help_hold": (
+        "🏦 *持股查詢*\n\n"
         "• `/hold981` — 00981A 持股變化\n"
         "• `/hold981 2026-03-18` — 指定日期\n"
-        "• `/hold888` — 大額權證買超\n\n"
-        "📬 *訂閱管理*\n"
+        "• `/hold888` — 大額權證買超"
+    ),
+    "help_sub": (
+        "📬 *訂閱管理*\n\n"
         "• `/subscribe` — 訂閱每日推播\n"
-        "• `/unsubscribe` — 取消訂閱\n\n"
-        "📊 *UAnalyze / MEGA*\n"
-        "• `/ua <股號>` — 🔬 AI 多題分析\n"
-        "  例：`/ua 2330 2317`\n"
-        "• `/uask <股號> <問題>` — 💡 自訂問題\n"
-        "  例：`/uask 2330 近期營收？`\n"
-        "• `/umon` — 🔍 手動觸發 UAnalyze 報告檢查\n"
-        "• `/umon_bind` — 📌 綁定此聊天室為報告推播目標\n"
-        "• `/umon_unbind` — 🔕 取消此聊天室的報告推播\n"
-        "• `/mega y|n <關鍵字>` — 📥 MEGA 搜尋下載\n"
-        "  例：`/mega y 企劃`\n\n"
-        "⚙️ *其他*\n"
-        "• `/chatid` — 查看目前 Chat ID\n"
+        "• `/unsubscribe` — 取消訂閱"
+    ),
+    "help_ua": (
+        "🔬 *UAnalyze / MEGA*\n\n"
+        "• `/ua <股號>` — AI 多題分析\n"
+        "• `/uask <股號> <問題>` — 自訂問題\n"
+        "• `/umon` — 觸發報告檢查\n"
+        "• `/umon_bind` — 綁定推播目標\n"
+        "• `/umon_unbind` — 取消推播\n"
+        "• `/mega y|n <關鍵字>` — MEGA 搜尋下載"
+    ),
+    "help_misc": (
+        "⚙️ *其他*\n\n"
+        "• `/chatid` — 查看 Chat ID\n"
         "• `/menu` — 互動式指令選單"
-    )
-    await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
+    ),
+}
+
+
+async def help_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle help category button presses."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "help_back":
+        rows = []
+        for i in range(0, len(_HELP_CATEGORIES), 2):
+            row = [InlineKeyboardButton(t, callback_data=d) for t, d in _HELP_CATEGORIES[i:i + 2]]
+            rows.append(row)
+        await query.edit_message_text(
+            "📖 *指令說明 — 選擇分類：*",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup(rows),
+        )
+        return
+
+    if data in _HELP_PAGES:
+        back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 返回分類", callback_data="help_back")]])
+        await query.edit_message_text(
+            _HELP_PAGES[data],
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=back_kb,
+        )
 
 
 # --- Menu (InlineKeyboard) ---

@@ -14,9 +14,14 @@ Handler registration is in `analysis_bot/bot/main.py`.
 ---
 
 ### `/help`
-**Function:** `help_command()`
+**Function:** `help_command()` / `help_callback_handler()`
 
-**Description:** 顯示完整指令列表（Markdown 格式），依分類列出所有可用指令。
+**Description:** 顯示指令分類按鈕（InlineKeyboard），點選分類後展開該類別的指令說明，可返回分類選單。
+
+**架構：**
+- `_HELP_CATEGORIES` — 分類按鈕列表（10 類）
+- `_HELP_PAGES` — 各分類的指令說明文字
+- `help_callback_handler()` — 處理分類按鈕與返回按鈕
 
 ---
 
