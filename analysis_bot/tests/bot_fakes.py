@@ -17,8 +17,9 @@ class EditCall:
 
 
 class FakeMessage:
-    def __init__(self, text: str = "") -> None:
+    def __init__(self, text: str = "", message_thread_id: int | None = None) -> None:
         self.text = text
+        self.message_thread_id = message_thread_id
         self.reply_text_calls: list[ReplyCall] = []
 
     async def reply_text(self, text: str, **kwargs: Any) -> None:

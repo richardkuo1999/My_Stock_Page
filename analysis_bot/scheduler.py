@@ -963,43 +963,42 @@ async def intraday_spike_scan_job():
         # 5. 收集推播對象：訂閱者 + INTRADAY_SPIKE_CHAT_ID / TELEGRAM_CHAT_ID
         from .models.subscriber import Subscriber
 
-        def _load_ispike_subscribers() -> list[int]:
+        def _load_ispike_subscribers() -> list[tuple[int, int | None]]:
             with Session(engine) as session:
                 subs = session.exec(
                     select(Subscriber).where(
                         Subscriber.ispike_enabled == True,
                     )
                 ).all()
-                return [s.chat_id for s in subs]
+                return [(s.chat_id, s.topic_id) for s in subs]
 
-        chat_ids_set: set[int] = set(await asyncio.to_thread(_load_ispike_subscribers))
+        targets: list[tuple[int, int | None]] = await asyncio.to_thread(_load_ispike_subscribers)
         fallback_id = settings.INTRADAY_SPIKE_CHAT_ID or settings.TELEGRAM_CHAT_ID
         if fallback_id:
-            chat_ids_set.add(int(fallback_id))
-        chat_ids = list(chat_ids_set)
+            fid = int(fallback_id)
+            if not any(cid == fid and tid is None for cid, tid in targets):
+                targets.append((fid, None))
 
-        if not chat_ids:
+        if not targets:
             logger.info("盤中爆量：無推播對象（無訂閱者且未設定 INTRADAY_SPIKE_CHAT_ID）")
             return
 
         # 6. 推播給所有對象
         failed = 0
-        for cid in chat_ids:
+        for cid, tid in targets:
             try:
+                kwargs: dict = {"parse_mode": "HTML", "disable_web_page_preview": True}
+                if tid:
+                    kwargs["message_thread_id"] = tid
                 for m in msgs:
-                    await bot.send_message(
-                        chat_id=cid,
-                        text=m,
-                        parse_mode="HTML",
-                        disable_web_page_preview=True,
-                    )
+                    await bot.send_message(chat_id=cid, text=m, **kwargs)
                 await asyncio.sleep(0.3)
             except Exception as e:
                 logger.error(f"盤中爆量推播失敗 chat_id={cid}: {e}")
                 failed += 1
 
         if failed:
-            logger.warning("盤中爆量：%d/%d 推播失敗", failed, len(chat_ids))
+            logger.warning("盤中爆量：%d/%d 推播失敗", failed, len(targets))
 
         # 更新去重清單（即使部分推播失敗仍記錄，避免重複推播）
         notified.update(r.ticker for r in new_results)

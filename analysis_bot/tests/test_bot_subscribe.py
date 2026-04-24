@@ -19,44 +19,44 @@ def sub_engine(tmp_path, monkeypatch: pytest.MonkeyPatch):
     return engine
 
 
-# --- subscribe / unsubscribe ---
+# --- sub_news / unsub_news ---
 
 @pytest.mark.asyncio
-async def test_subscribe_new(sub_engine) -> None:
+async def test_sub_news_new(sub_engine) -> None:
     msg = FakeMessage()
     update = FakeUpdate(message=msg, chat_id=100)
-    await handlers.subscribe_command(update, FakeContext())
+    await handlers.sub_news_command(update, FakeContext())
     assert "已訂閱" in msg.reply_text_calls[-1].text
 
 
 @pytest.mark.asyncio
-async def test_subscribe_duplicate(sub_engine) -> None:
+async def test_sub_news_duplicate(sub_engine) -> None:
     msg1 = FakeMessage()
-    await handlers.subscribe_command(FakeUpdate(message=msg1, chat_id=100), FakeContext())
+    await handlers.sub_news_command(FakeUpdate(message=msg1, chat_id=100), FakeContext())
 
     msg2 = FakeMessage()
-    await handlers.subscribe_command(FakeUpdate(message=msg2, chat_id=100), FakeContext())
+    await handlers.sub_news_command(FakeUpdate(message=msg2, chat_id=100), FakeContext())
     assert "已經是訂閱者" in msg2.reply_text_calls[-1].text
 
 
 @pytest.mark.asyncio
-async def test_unsubscribe_then_resubscribe(sub_engine) -> None:
+async def test_unsub_news_then_resub(sub_engine) -> None:
     msg1 = FakeMessage()
-    await handlers.subscribe_command(FakeUpdate(message=msg1, chat_id=100), FakeContext())
+    await handlers.sub_news_command(FakeUpdate(message=msg1, chat_id=100), FakeContext())
 
     msg2 = FakeMessage()
-    await handlers.unsubscribe_command(FakeUpdate(message=msg2, chat_id=100), FakeContext())
+    await handlers.unsub_news_command(FakeUpdate(message=msg2, chat_id=100), FakeContext())
     assert "已取消" in msg2.reply_text_calls[-1].text
 
     msg3 = FakeMessage()
-    await handlers.subscribe_command(FakeUpdate(message=msg3, chat_id=100), FakeContext())
+    await handlers.sub_news_command(FakeUpdate(message=msg3, chat_id=100), FakeContext())
     assert "已恢復訂閱" in msg3.reply_text_calls[-1].text
 
 
 @pytest.mark.asyncio
-async def test_unsubscribe_not_found(sub_engine) -> None:
+async def test_unsub_news_not_found(sub_engine) -> None:
     msg = FakeMessage()
-    await handlers.unsubscribe_command(FakeUpdate(message=msg, chat_id=999), FakeContext())
+    await handlers.unsub_news_command(FakeUpdate(message=msg, chat_id=999), FakeContext())
     assert "尚未訂閱" in msg.reply_text_calls[-1].text
 
 
@@ -84,3 +84,47 @@ async def test_sub_then_unsub_ispike(sub_engine) -> None:
     msg2 = FakeMessage()
     await handlers.unsub_ispike_command(FakeUpdate(message=msg2, chat_id=300), FakeContext())
     assert "已取消盤中爆量" in msg2.reply_text_calls[-1].text
+
+
+# --- sub_senti / unsub_senti ---
+
+@pytest.mark.asyncio
+async def test_sub_senti(sub_engine) -> None:
+    msg = FakeMessage()
+    await handlers.sub_senti_command(FakeUpdate(message=msg, chat_id=400), FakeContext())
+    assert "已訂閱情緒警報" in msg.reply_text_calls[-1].text
+
+
+@pytest.mark.asyncio
+async def test_unsub_senti_not_subscribed(sub_engine) -> None:
+    msg = FakeMessage()
+    await handlers.unsub_senti_command(FakeUpdate(message=msg, chat_id=400), FakeContext())
+    assert "尚未訂閱" in msg.reply_text_calls[-1].text
+
+
+@pytest.mark.asyncio
+async def test_sub_then_unsub_senti(sub_engine) -> None:
+    msg1 = FakeMessage()
+    await handlers.sub_senti_command(FakeUpdate(message=msg1, chat_id=500), FakeContext())
+
+    msg2 = FakeMessage()
+    await handlers.unsub_senti_command(FakeUpdate(message=msg2, chat_id=500), FakeContext())
+    assert "已取消情緒警報" in msg2.reply_text_calls[-1].text
+
+
+# --- topic_id isolation ---
+
+@pytest.mark.asyncio
+async def test_sub_news_different_topics(sub_engine) -> None:
+    """Same chat_id but different topic_id should create separate subscriptions."""
+    msg1 = FakeMessage()
+    await handlers.sub_news_command(
+        FakeUpdate(message=msg1, chat_id=600), FakeContext()
+    )
+    assert "已訂閱" in msg1.reply_text_calls[-1].text
+
+    msg2 = FakeMessage(message_thread_id=42)
+    await handlers.sub_news_command(
+        FakeUpdate(message=msg2, chat_id=600), FakeContext()
+    )
+    assert "已訂閱" in msg2.reply_text_calls[-1].text  # new, not duplicate
