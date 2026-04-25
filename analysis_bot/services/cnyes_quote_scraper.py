@@ -11,7 +11,7 @@ import re
 import aiohttp
 from bs4 import BeautifulSoup
 
-from .http import create_session
+from .http import create_session, http_retry
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,7 @@ DEFAULT_HEADERS = {
 }
 
 
+@http_retry
 async def fetch_tw_quote(
     stock_id: str,
     session: aiohttp.ClientSession | None = None,

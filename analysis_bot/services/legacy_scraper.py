@@ -3,9 +3,8 @@ import re
 
 import aiohttp
 from bs4 import BeautifulSoup
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
-from .http import create_session
+from .http import create_session, http_retry
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +20,7 @@ GOODINFO_HEADERS = {
 }
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_fixed(2),
-    retry=retry_if_exception_type((aiohttp.ClientError, Exception)),
-)
+@http_retry
 async def fetch_webpage(
     session, url: str, headers: dict = DEFAULT_HEADERS, timeout: int = 10
 ) -> BeautifulSoup | None:

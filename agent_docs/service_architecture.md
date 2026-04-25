@@ -142,12 +142,23 @@ response = await ai.call(RequestType.TEXT, contents=prompt, use_search=True)
 
 **Usage:**
 ```python
-from .http import create_session
+from .http import create_session, http_retry
+
+@http_retry  # 3 attempts, 2s wait, skip 4xx
+async def fetch_data(session, url):
+    async with session.get(url) as resp:
+        resp.raise_for_status()
+        return await resp.json()
 
 async with create_session() as session:
-    async with session.get(url) as resp:
-        data = await resp.json()
+    data = await fetch_data(session, url)
 ```
+
+**Retry 策略（`http_retry` decorator）：**
+- 最多 3 次嘗試，間隔 2 秒
+- 重試：網路錯誤（`ClientError`, `OSError`, `TimeoutError`）、5xx 伺服器錯誤
+- 不重試：4xx 客戶端錯誤（`ClientResponseError` with status 400–499）
+- 套用於所有爬蟲的 HTTP 請求函式（9 個函式，6 個檔案）
 
 **被使用的 service：** `news_parser`, `price_fetcher`, `stock_analyzer`, `market_data_fetcher`, `blake_chips_scraper`, `cnyes_quote_scraper`, `eps_momentum_service`, `intraday_chart`, `legacy_scraper`, `stock_selector`, `uanalyze_ai`, `uanalyze_monitor`
 

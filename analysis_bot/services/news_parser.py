@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 from dateutil import parser as dateparser
 
 from ..config import get_settings
+from .http import http_retry
 
 settings = get_settings()
 
@@ -69,6 +70,7 @@ class NewsParser:
             tag.decompose()
         return temp_soup.get_text(separator="\n", strip=True)
 
+    @http_retry
     async def rss_parser(self, url: str) -> list[dict]:
         results = []
         try:
@@ -100,6 +102,7 @@ class NewsParser:
             self.logger.error(f"RSS parse error {url}: {e}")
         return results
 
+    @http_retry
     async def news_request(self, url: str, params: dict = None) -> BeautifulSoup:
         try:
             if not self.session or self.session.closed:

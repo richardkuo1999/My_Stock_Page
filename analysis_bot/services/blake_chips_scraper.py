@@ -13,7 +13,7 @@ from datetime import datetime
 import aiohttp
 from bs4 import BeautifulSoup
 
-from .http import create_session
+from .http import create_session, http_retry
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,7 @@ from ..config import get_settings
 DEFAULT_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
 
+@http_retry
 async def fetch_chips_data(
     date_str: str | None = None,
     session: aiohttp.ClientSession | None = None,
@@ -113,6 +114,7 @@ def _parse_page_888(html: str, date_str: str) -> str:
     return result or "（無資料）"
 
 
+@http_retry
 async def fetch_chips_data_888(
     date_str: str | None = None,
     session: aiohttp.ClientSession | None = None,

@@ -54,6 +54,8 @@ Most parsers follow a multi-layer fallback strategy:
 
 > **Note:** CSS-in-JS hash classes (e.g. `main.c1tt5pk2`, `div.dHnwX`) are avoided as they change on every deployment. `__NEXT_DATA__` JSON is preferred for Next.js sites.
 
+> **Retry:** 所有 HTTP 請求（`news_request`, `rss_parser`）套用 `http_retry`：3 次嘗試、2 秒間隔、5xx 重試、4xx 不重試。
+
 ### CNYES Parser (`cnyes_news_parser`)
 1. **Primary:** `__NEXT_DATA__` → `props.pageProps.newsDetail.content` (strip HTML if present)
 2. **Secondary:** DOM selectors — `div[itemprop='articleBody']`, `article`, `main`

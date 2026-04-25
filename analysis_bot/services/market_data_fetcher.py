@@ -14,7 +14,7 @@ import ssl
 
 import aiohttp
 
-from .http import create_session
+from .http import create_session, http_retry
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,7 @@ class MarketDataFetcher:
     """Fetches full-market daily closing data from TWSE and TPEx."""
 
     @staticmethod
+    @http_retry
     async def fetch_twse_daily(session: aiohttp.ClientSession | None = None) -> list[dict]:
         """Fetch all TWSE-listed stocks' daily closing data."""
         close_after = False
@@ -114,6 +115,7 @@ class MarketDataFetcher:
                 await session.close()
 
     @staticmethod
+    @http_retry
     async def fetch_tpex_daily(session: aiohttp.ClientSession | None = None) -> list[dict]:
         """Fetch all TPEx (OTC) stocks' daily closing data."""
         close_after = False

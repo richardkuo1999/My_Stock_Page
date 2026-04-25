@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 from natsort import natsorted
 from sqlmodel import Session, select
 
-from .http import create_session
+from .http import create_session, http_retry
 
 from ..database import engine
 from ..models.config import SystemConfig
@@ -28,6 +28,7 @@ class StockSelector:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4692.99 Safari/537.36"
         }
 
+    @http_retry
     async def fetch_webpage(self, session, url: str) -> BeautifulSoup:
         try:
             is_moneydj = "moneydj.com" in url
