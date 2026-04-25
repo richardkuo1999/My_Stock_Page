@@ -97,8 +97,8 @@ async def main():
 
     if send_to_telegram:
         settings = get_settings()
-        if not settings.TELEGRAM_TOKEN or not settings.TELEGRAM_CHAT_ID:
-            print("\n⚠️ 未設定 TELEGRAM_TOKEN / TELEGRAM_CHAT_ID，無法推送")
+        if not settings.TELEGRAM_TOKEN:
+            print("\n⚠️ 未設定 TELEGRAM_TOKEN，無法推送")
             return
 
         from analysis_bot.services.spike_pager import (
@@ -108,7 +108,10 @@ async def main():
         from telegram import Bot
 
         bot = Bot(token=settings.TELEGRAM_TOKEN)
-        chat_id = settings.TELEGRAM_CHAT_ID
+        chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+        if not chat_id:
+            print("\n⚠️ 未設定 TELEGRAM_CHAT_ID 環境變數，無法推送")
+            return
 
         hdr = build_spike_markdown_header(len(results), sort_by=sort_by)
         spike_msgs = build_spike_telegram_html_messages(results, hdr)

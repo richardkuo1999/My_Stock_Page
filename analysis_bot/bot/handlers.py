@@ -188,7 +188,13 @@ _HELP_PAGES = {
         "• `/sub_news` — 📰 訂閱新聞推播\n"
         "• `/unsub_news` — 取消新聞推播\n"
         "• `/sub_senti` — 🔔 訂閱情緒警報\n"
-        "• `/unsub_senti` — 取消情緒警報"
+        "• `/unsub_senti` — 取消情緒警報\n"
+        "• `/sub_daily` — 📊 訂閱每日分析\n"
+        "• `/unsub_daily` — 取消每日分析\n"
+        "• `/sub_spike` — 💥 訂閱收盤爆量\n"
+        "• `/unsub_spike` — 取消收盤爆量\n"
+        "• `/sub_vix` — ⚡ 訂閱 VIX 警報\n"
+        "• `/unsub_vix` — 取消 VIX 警報"
     ),
     "help_ua": (
         "🔬 *UAnalyze / MEGA*\n\n"
@@ -1240,6 +1246,126 @@ async def unsub_umon_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("✅ 已移除此聊天室的 UAnalyze 推播")
     else:
         await update.message.reply_text("ℹ️ 此聊天室未綁定")
+
+
+async def sub_daily_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """訂閱每日分析推播。"""
+    chat_id = update.effective_chat.id
+    topic_id = _get_topic_id(update)
+
+    def _do():
+        with Session(engine) as session:
+            sub = _find_subscriber(session, chat_id, topic_id)
+            if not sub:
+                sub = Subscriber(chat_id=chat_id, topic_id=topic_id)
+            sub.daily_analysis_enabled = True
+            session.add(sub)
+            session.commit()
+
+    await asyncio.to_thread(_do)
+    await update.message.reply_text("✅ 已訂閱每日分析推播！")
+
+
+async def unsub_daily_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """取消訂閱每日分析推播。"""
+    chat_id = update.effective_chat.id
+    topic_id = _get_topic_id(update)
+
+    def _do():
+        with Session(engine) as session:
+            sub = _find_subscriber(session, chat_id, topic_id)
+            if sub and sub.daily_analysis_enabled:
+                sub.daily_analysis_enabled = False
+                session.add(sub)
+                session.commit()
+                return True
+            return False
+
+    found = await asyncio.to_thread(_do)
+    if found:
+        await update.message.reply_text("❌ 已取消每日分析推播。")
+    else:
+        await update.message.reply_text("您尚未訂閱每日分析推播。")
+
+
+async def sub_spike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """訂閱收盤爆量推播。"""
+    chat_id = update.effective_chat.id
+    topic_id = _get_topic_id(update)
+
+    def _do():
+        with Session(engine) as session:
+            sub = _find_subscriber(session, chat_id, topic_id)
+            if not sub:
+                sub = Subscriber(chat_id=chat_id, topic_id=topic_id)
+            sub.spike_enabled = True
+            session.add(sub)
+            session.commit()
+
+    await asyncio.to_thread(_do)
+    await update.message.reply_text("✅ 已訂閱收盤爆量推播！")
+
+
+async def unsub_spike_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """取消訂閱收盤爆量推播。"""
+    chat_id = update.effective_chat.id
+    topic_id = _get_topic_id(update)
+
+    def _do():
+        with Session(engine) as session:
+            sub = _find_subscriber(session, chat_id, topic_id)
+            if sub and sub.spike_enabled:
+                sub.spike_enabled = False
+                session.add(sub)
+                session.commit()
+                return True
+            return False
+
+    found = await asyncio.to_thread(_do)
+    if found:
+        await update.message.reply_text("❌ 已取消收盤爆量推播。")
+    else:
+        await update.message.reply_text("您尚未訂閱收盤爆量推播。")
+
+
+async def sub_vix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """訂閱 VIX 警報推播。"""
+    chat_id = update.effective_chat.id
+    topic_id = _get_topic_id(update)
+
+    def _do():
+        with Session(engine) as session:
+            sub = _find_subscriber(session, chat_id, topic_id)
+            if not sub:
+                sub = Subscriber(chat_id=chat_id, topic_id=topic_id)
+            sub.vix_enabled = True
+            session.add(sub)
+            session.commit()
+
+    await asyncio.to_thread(_do)
+    await update.message.reply_text("✅ 已訂閱 VIX 警報推播！")
+
+
+async def unsub_vix_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """取消訂閱 VIX 警報推播。"""
+    chat_id = update.effective_chat.id
+    topic_id = _get_topic_id(update)
+
+    def _do():
+        with Session(engine) as session:
+            sub = _find_subscriber(session, chat_id, topic_id)
+            if sub and sub.vix_enabled:
+                sub.vix_enabled = False
+                session.add(sub)
+                session.commit()
+                return True
+            return False
+
+    found = await asyncio.to_thread(_do)
+    if found:
+        await update.message.reply_text("❌ 已取消 VIX 警報推播。")
+    else:
+        await update.message.reply_text("您尚未訂閱 VIX 警報推播。")
 
 
 # --- Research (Files) ---

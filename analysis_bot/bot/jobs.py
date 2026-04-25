@@ -52,11 +52,8 @@ _SOURCE_DISPLAY_NAME: dict[str, str] = {
 
 
 async def _broadcast_sentiment_alert(bot, message: str) -> None:
-    """推送情緒警報給管理員及情緒警報訂閱者。"""
-    from ..config import get_settings
+    """推送情緒警報給情緒警報訂閱者。"""
     from ..models.subscriber import Subscriber
-
-    admin_id = get_settings().TELEGRAM_CHAT_ID
 
     with Session(engine) as session:
         subs = session.exec(
@@ -66,8 +63,6 @@ async def _broadcast_sentiment_alert(bot, message: str) -> None:
         ).all()
 
     targets: list[tuple[int, int | None]] = [(s.chat_id, s.topic_id) for s in subs]
-    if admin_id and not any(cid == int(admin_id) and tid is None for cid, tid in targets):
-        targets.append((int(admin_id), None))
 
     for cid, tid in targets:
         try:

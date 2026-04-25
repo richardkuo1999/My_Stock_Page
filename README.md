@@ -85,7 +85,6 @@ pip install -r requirements.txt
 ```ini
 # Telegram
 TELEGRAM_TOKEN=your_bot_token
-TELEGRAM_CHAT_ID=your_admin_chat_id
 
 # AI Models (Gemini)
 GEMINI_API_KEY=your_gemini_key

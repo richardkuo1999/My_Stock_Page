@@ -12,7 +12,6 @@ if env_path.exists():
 
 def main():
     token = os.getenv("TELEGRAM_TOKEN", "").strip().strip('"')
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip().strip('"')
 
     print("=== Analysis Bot 診斷 ===\n")
 
@@ -22,13 +21,7 @@ def main():
         return 1
     print(f"✅ TELEGRAM_TOKEN 已設定（長度 {len(token)}）")
 
-    # 2. Chat ID
-    if not chat_id:
-        print("⚠️  TELEGRAM_CHAT_ID 未設定（排程推送會失敗，但 /spike 仍可手動用）")
-    else:
-        print(f"✅ TELEGRAM_CHAT_ID 已設定")
-
-    # 3. 測試 Bot API
+    # 2. 測試 Bot API
     try:
         import asyncio
         from telegram import Bot

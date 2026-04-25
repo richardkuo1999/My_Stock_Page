@@ -46,7 +46,7 @@ python -m pytest tests/ -v --cov=analysis_bot --cov-report=html  # 覆蓋率
 ```
 
 ### 環境變數
-- `TELEGRAM_TOKEN`, `TELEGRAM_CHAT_ID`: Bot 認證
+- `TELEGRAM_TOKEN`: Bot 認證
 - `GEMINI_API_KEY`: Gemini API 金鑰
 - `AI_PROVIDER`: `gemini` 或 `ollama`
 - `OLLAMA_BASE_URL`, `OLLAMA_MODEL`: Ollama 設定

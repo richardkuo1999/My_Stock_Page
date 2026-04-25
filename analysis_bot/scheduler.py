@@ -43,17 +43,9 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
 
         bot = Bot(token=settings.TELEGRAM_TOKEN)
 
-    chat_id = settings.TELEGRAM_CHAT_ID  # Admin/Main Group
     from .utils.pii import redact_telegram_id
 
     pii_salt = settings.LOG_PII_SALT or None
-
-    # Send Start Message
-    if chat_id:
-        try:
-            await bot.send_message(chat_id=chat_id, text="🚀 Daily Analysis Run Started...")
-        except Exception as e:
-            logger.error(f"Failed to send start msg: {e}")
 
     # 0. Load Active Tags
     from .services.stock_service import StockService
@@ -397,44 +389,41 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
         else:
             under_msg += "No stocks found below TL-SD."
 
-        async def send_daily_bundle(target_chat_id):
+        async def send_daily_bundle(target_chat_id, target_topic_id=None):
             try:
+                kwargs = {
+                    "chat_id": target_chat_id,
+                    "filename": zip_filename,
+                    "caption": "📊 Daily Analysis Reports",
+                    "read_timeout": 60,
+                    "write_timeout": 60,
+                    "connect_timeout": 60,
+                }
+                if target_topic_id:
+                    kwargs["message_thread_id"] = target_topic_id
                 with open(zip_filepath, "rb") as f:
-                    await bot.send_document(
-                        chat_id=target_chat_id,
-                        document=f,
-                        filename=zip_filename,
-                        caption="📊 Daily Analysis Reports",
-                        read_timeout=60,
-                        write_timeout=60,
-                        connect_timeout=60,
-                    )
-                await bot.send_message(
-                    chat_id=target_chat_id, text=under_msg, parse_mode="Markdown"
-                )
+                    kwargs["document"] = f
+                    await bot.send_document(**kwargs)
+                msg_kwargs = {"chat_id": target_chat_id, "text": under_msg, "parse_mode": "Markdown"}
+                if target_topic_id:
+                    msg_kwargs["message_thread_id"] = target_topic_id
+                await bot.send_message(**msg_kwargs)
             except Exception as e:
                 logger.error(
                     f"Failed to send bundle to {redact_telegram_id(target_chat_id, salt=pii_salt)}: {e}"
                 )
 
-        if chat_id:
-            try:
-                await bot.send_message(chat_id=chat_id, text="✅ Run Finished. Sending results...")
-            except Exception as e:
-                logger.warning("Failed to send run-finished msg: %s", e)
-            await send_daily_bundle(chat_id)
-
         from .models.subscriber import Subscriber
 
         def get_subscribers():
             with Session(engine) as session:
-                subs = session.exec(select(Subscriber).where(Subscriber.news_enabled)).all()
-                return [s.chat_id for s in subs]
+                subs = session.exec(select(Subscriber).where(Subscriber.daily_analysis_enabled)).all()
+                return [(s.chat_id, s.topic_id) for s in subs]
 
         subscribers = await asyncio.to_thread(get_subscribers)
 
-        for sub_id in subscribers:
-            await send_daily_bundle(sub_id)
+        for sub_cid, sub_tid in subscribers:
+            await send_daily_bundle(sub_cid, sub_tid)
 
     logger.info("Daily analysis job completed.")
 
@@ -462,7 +451,6 @@ async def daily_podcast_job():
 
         bot = Bot(token=settings.TELEGRAM_TOKEN)
 
-    chat_id = settings.TELEGRAM_CHAT_ID
     from .utils.pii import redact_telegram_id
 
     pii_salt = settings.LOG_PII_SALT or None
@@ -474,7 +462,7 @@ async def daily_podcast_job():
         def get_sub_ids():
             with Session(engine) as session:
                 subs = session.exec(select(Subscriber).where(Subscriber.news_enabled)).all()
-                return [s.chat_id for s in subs]
+                return [(s.chat_id, s.topic_id) for s in subs]
 
         sub_ids = await asyncio.to_thread(get_sub_ids)
 
@@ -484,37 +472,22 @@ async def daily_podcast_job():
 
             caption = f"🎙️ **{host}** - {title}\nSummary Generated."
 
-            # Send to Admin/Group
-            if chat_id:
+            for sub_cid, sub_tid in sub_ids:
                 try:
+                    kwargs = {
+                        "chat_id": sub_cid,
+                        "filename": file_path.name,
+                        "caption": caption,
+                        "parse_mode": "Markdown",
+                    }
+                    if sub_tid:
+                        kwargs["message_thread_id"] = sub_tid
                     with open(file_path, "rb") as f:
-                        await bot.send_document(
-                            chat_id=chat_id,
-                            document=f,
-                            filename=file_path.name,
-                            caption=caption,
-                            parse_mode="Markdown",
-                        )
-                    logger.info(
-                        f"Sent {title} to Main Chat {redact_telegram_id(chat_id, salt=pii_salt)}"
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to send to Main Chat: {e}")
-
-            # Send to Subscribers
-            for sub_id in sub_ids:
-                try:
-                    with open(file_path, "rb") as f:
-                        await bot.send_document(
-                            chat_id=sub_id,
-                            document=f,
-                            filename=file_path.name,
-                            caption=caption,
-                            parse_mode="Markdown",
-                        )
+                        kwargs["document"] = f
+                        await bot.send_document(**kwargs)
                 except Exception as e:
                     logger.error(
-                        f"Failed to send to subscriber {redact_telegram_id(sub_id, salt=pii_salt)}: {e}"
+                        f"Failed to send to subscriber {redact_telegram_id(sub_cid, salt=pii_salt)}: {e}"
                     )
 
             # Mark as processed in DB (so we don't process again)
@@ -562,7 +535,6 @@ async def daily_volume_spike_job():
 
         bot = Bot(token=settings.TELEGRAM_TOKEN)
 
-    chat_id = settings.TELEGRAM_CHAT_ID
     from .utils.pii import redact_telegram_id
 
     pii_salt = settings.LOG_PII_SALT or None
@@ -579,14 +551,6 @@ async def daily_volume_spike_job():
             await _save_ma20_snapshot(spike_scan.ma20_snapshot)
 
         if not results:
-            if chat_id:
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text=(
-                        "📊 無符合條件之爆量股（成交量 ≥ 1000 張，倍數 ≥ 1.5x）\n\n"
-                        f"📅 {spike_scan.data_date_caption}"
-                    ),
-                )
             logger.info("No volume spike stocks found.")
             return
 
@@ -606,66 +570,57 @@ async def daily_volume_spike_job():
         _spike_header = build_spike_markdown_header(len(results), sort_by=sort_by)
         spike_msgs = build_spike_telegram_html_messages(results, _spike_header)
 
-        async def send_to(target_id):
+        async def send_to(target_id, target_topic_id=None):
             try:
                 for m in spike_msgs:
-                    await bot.send_message(
-                        chat_id=target_id,
-                        text=m,
-                        parse_mode="HTML",
-                        disable_web_page_preview=True,
-                    )
+                    kwargs = {
+                        "chat_id": target_id,
+                        "text": m,
+                        "parse_mode": "HTML",
+                        "disable_web_page_preview": True,
+                    }
+                    if target_topic_id:
+                        kwargs["message_thread_id"] = target_topic_id
+                    await bot.send_message(**kwargs)
                     await asyncio.sleep(0.5)  # 避免 Telegram flood control
             except Exception as e:
                 logger.error(
                     f"Failed to send spike table to {redact_telegram_id(target_id, salt=pii_salt)}: {e}"
                 )
 
-        async def send_detail(target_id, text):
+        async def send_detail(target_id, text, target_topic_id=None):
             try:
-                await bot.send_message(
-                    chat_id=target_id,
-                    text=text,
-                    parse_mode="Markdown",
-                    disable_web_page_preview=True,
-                )
+                kwargs = {
+                    "chat_id": target_id,
+                    "text": text,
+                    "parse_mode": "Markdown",
+                    "disable_web_page_preview": True,
+                }
+                if target_topic_id:
+                    kwargs["message_thread_id"] = target_topic_id
+                await bot.send_message(**kwargs)
             except Exception as e:
                 logger.error(f"Failed to send spike detail: {e}")
 
-        if chat_id:
-            await send_to(chat_id)
-
-        for r in results[:1]:
-            if r.analysis and r.analysis != "近期無相關新聞":
-                detail = f"📈 *{r.name}*（{r.ticker}）{r.spike_ratio:.1f}x\n{r.analysis}"
-                if chat_id:
-                    await send_detail(chat_id, detail)
-            break
-
-        # 4. Send to subscribers
+        # Send to subscribers
         def get_sub_chat_ids():
             with Session(engine) as session:
-                subs = session.exec(select(Subscriber).where(Subscriber.news_enabled)).all()
-                return [s.chat_id for s in subs]
+                subs = session.exec(select(Subscriber).where(Subscriber.spike_enabled)).all()
+                return [(s.chat_id, s.topic_id) for s in subs]
 
         sub_ids = await asyncio.to_thread(get_sub_chat_ids)
 
-        for sub_id in sub_ids:
-            await send_to(sub_id)
+        for sub_cid, sub_tid in sub_ids:
+            await send_to(sub_cid, sub_tid)
             for r in results[:1]:
                 if r.analysis and r.analysis != "近期無相關新聞":
                     detail = f"📈 *{r.name}*（{r.ticker}）{r.spike_ratio:.1f}x\n{r.analysis}"
-                    await send_detail(sub_id, detail)
+                    await send_detail(sub_cid, detail, sub_tid)
                 break
             await asyncio.sleep(0.5)
 
     except Exception as e:
         logger.error(f"Volume spike job failed: {e}")
-        if chat_id:
-            try:
-                await bot.send_message(chat_id=chat_id, text=f"❌ 爆量偵測失敗：{str(e)[:100]}")
-            except Exception:
-                pass
 
     logger.info("Daily volume spike job completed.")
 
@@ -960,7 +915,7 @@ async def intraday_spike_scan_job():
         header = "[盤中] " + build_spike_markdown_header(len(new_results), sort_by=sort_by)
         msgs = build_spike_telegram_html_messages(new_results, header)
 
-        # 5. 收集推播對象：訂閱者 + INTRADAY_SPIKE_CHAT_ID / TELEGRAM_CHAT_ID
+        # 5. 收集推播對象：從 DB 查 ispike 訂閱者
         from .models.subscriber import Subscriber
 
         def _load_ispike_subscribers() -> list[tuple[int, int | None]]:
@@ -973,14 +928,9 @@ async def intraday_spike_scan_job():
                 return [(s.chat_id, s.topic_id) for s in subs]
 
         targets: list[tuple[int, int | None]] = await asyncio.to_thread(_load_ispike_subscribers)
-        fallback_id = settings.INTRADAY_SPIKE_CHAT_ID or settings.TELEGRAM_CHAT_ID
-        if fallback_id:
-            fid = int(fallback_id)
-            if not any(cid == fid and tid is None for cid, tid in targets):
-                targets.append((fid, None))
 
         if not targets:
-            logger.info("盤中爆量：無推播對象（無訂閱者且未設定 INTRADAY_SPIKE_CHAT_ID）")
+            logger.info("盤中爆量：無推播對象（無訂閱者）")
             return
 
         # 6. 推播給所有對象
@@ -1063,15 +1013,15 @@ async def vix_check_job():
     """定時檢查 VIX，有警報才推播。去重：同等級 4 小時內只推一次（重啟後仍有效）。"""
     from datetime import datetime, timedelta
 
+    from sqlmodel import Session, select
+
     from . import main as _main_mod
     from .config import get_settings
+    from .database import engine
+    from .models.subscriber import Subscriber
     from .services.vix_fetcher import fetch_vix_snapshot, format_vix_message
 
     settings = get_settings()
-    # VIX 可設獨立 chat_id，否則 fallback 到預設
-    chat_id = settings.TELEGRAM_VIX_CHAT_ID or settings.TELEGRAM_CHAT_ID
-    if not chat_id:
-        return
 
     if getattr(_main_mod, "bot_app", None) and _main_mod.bot_app.bot:
         bot = _main_mod.bot_app.bot
@@ -1104,14 +1054,30 @@ async def vix_check_job():
         except ValueError:
             pass
 
-    try:
-        kwargs = {"chat_id": chat_id, "text": format_vix_message(snap)}
-        if settings.TELEGRAM_VIX_TOPIC_ID:
-            kwargs["message_thread_id"] = settings.TELEGRAM_VIX_TOPIC_ID
-        await bot.send_message(**kwargs)
+    def _load_vix_subscribers() -> list[tuple[int, int | None]]:
+        with Session(engine) as session:
+            subs = session.exec(select(Subscriber).where(Subscriber.vix_enabled == True)).all()
+            return [(s.chat_id, s.topic_id) for s in subs]
+
+    targets = await asyncio.to_thread(_load_vix_subscribers)
+    if not targets:
+        logger.info("VIX alert: 無推播對象（無訂閱者）")
+        return
+
+    msg_text = format_vix_message(snap)
+    failed = 0
+    for cid, tid in targets:
+        try:
+            kwargs: dict = {"chat_id": cid, "text": msg_text}
+            if tid:
+                kwargs["message_thread_id"] = tid
+            await bot.send_message(**kwargs)
+        except Exception as e:
+            logger.error(f"VIX alert send to {cid} failed: {e}")
+            failed += 1
+
+    if failed < len(targets):
         await asyncio.to_thread(_save_vix_last_alert, snap.level, now.isoformat())
-    except Exception as e:
-        logger.error(f"VIX alert send failed: {e}")
 
 
 def start_scheduler():

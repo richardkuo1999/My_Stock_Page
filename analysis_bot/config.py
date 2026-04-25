@@ -9,7 +9,6 @@ class Settings(BaseSettings):
 
     # Telegram
     TELEGRAM_TOKEN: str = ""
-    TELEGRAM_CHAT_ID: str = ""
 
     # Database
     DATABASE_URL: str = "sqlite:///./stock_data.db"
@@ -42,10 +41,6 @@ class Settings(BaseSettings):
     # Web API
     WEB_API_KEY: str | None = None
 
-    # VIX 通知目標（不設定則 fallback 到 TELEGRAM_CHAT_ID）
-    TELEGRAM_VIX_CHAT_ID: str = ""   # VIX 專用 chat_id（可填不同群組）
-    TELEGRAM_VIX_TOPIC_ID: int | None = None  # VIX 通知的 Topic ID（Forum 群組用）
-
     # Logging / Privacy
     # Optional salt for redacting Telegram IDs (chat_id/user_id) in logs.
     # If empty, logs will use masked form (keeps only last 4 chars).
@@ -65,7 +60,6 @@ class Settings(BaseSettings):
     INTRADAY_SPIKE_ENABLED: bool = True
     INTRADAY_SPIKE_MIN_LOTS: int = 200           # 最低成交量門檻（張），高於收盤掃描避免誤報
     INTRADAY_SPIKE_BASE_RATIO: float = 1.5       # 基礎爆量閾值（依時段動態調整）
-    INTRADAY_SPIKE_CHAT_ID: str = ""             # 推播 chat_id，空值 fallback 到 TELEGRAM_CHAT_ID
 
     # Vocus 追蹤帳號
     VOCUS_USERS: list[str] = ["@ieobserve", "@miula", "65ab564cfd897800018a88cc"]

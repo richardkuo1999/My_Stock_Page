@@ -53,6 +53,12 @@ from .handlers import (
     umon_command,
     sub_umon_command,
     unsub_umon_command,
+    sub_daily_command,
+    unsub_daily_command,
+    sub_spike_command,
+    unsub_spike_command,
+    sub_vix_command,
+    unsub_vix_command,
     unsub_ispike_command,
     unsub_senti_command,
     unsub_news_command,
@@ -120,6 +126,12 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("umon", umon_command, filters=f))
     application.add_handler(CommandHandler("sub_umon", sub_umon_command, filters=f))
     application.add_handler(CommandHandler("unsub_umon", unsub_umon_command, filters=f))
+    application.add_handler(CommandHandler("sub_daily", sub_daily_command, filters=f))
+    application.add_handler(CommandHandler("unsub_daily", unsub_daily_command, filters=f))
+    application.add_handler(CommandHandler("sub_spike", sub_spike_command, filters=f))
+    application.add_handler(CommandHandler("unsub_spike", unsub_spike_command, filters=f))
+    application.add_handler(CommandHandler("sub_vix", sub_vix_command, filters=f))
+    application.add_handler(CommandHandler("unsub_vix", unsub_vix_command, filters=f))
     application.add_handler(CommandHandler("mega", mega_command, filters=f))
     application.add_handler(CommandHandler("senti", sentiment_command, filters=f))
 

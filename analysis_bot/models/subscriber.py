@@ -21,3 +21,6 @@ class Subscriber(SQLModel, table=True):
     ispike_enabled: bool = Field(default=False)  # 訂閱盤中爆量通知
     sentiment_alert_enabled: bool = Field(default=False)  # 訂閱情緒警報
     umon_enabled: bool = Field(default=False)  # 訂閱 UAnalyze 報告推播
+    daily_analysis_enabled: bool = Field(default=False)  # 訂閱每日分析推播
+    spike_enabled: bool = Field(default=False)  # 訂閱收盤爆量推播
+    vix_enabled: bool = Field(default=False)  # 訂閱 VIX 警報推播

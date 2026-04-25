@@ -58,6 +58,9 @@ def create_db_and_tables():
                 "ALTER TABLE watchlist_entry ADD COLUMN added_price REAL",
                 "ALTER TABLE watchlist_entry ADD COLUMN user_name TEXT",
                 "ALTER TABLE watchlist_entry ADD COLUMN note TEXT",
+                "ALTER TABLE subscriber ADD COLUMN daily_analysis_enabled INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE subscriber ADD COLUMN spike_enabled INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE subscriber ADD COLUMN vix_enabled INTEGER NOT NULL DEFAULT 0",
             ]:
                 try:
                     conn.execute(text(ddl))

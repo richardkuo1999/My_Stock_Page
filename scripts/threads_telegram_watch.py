@@ -69,7 +69,7 @@ async def send_posts(
 
 
 def resolve_chat_id() -> str:
-    return (os.environ.get("THREADS_TELEGRAM_CHAT_ID") or os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+    return (os.environ.get("THREADS_TELEGRAM_CHAT_ID") or "").strip()
 
 
 def main() -> int:
@@ -116,7 +116,7 @@ def main() -> int:
             logger.error("缺少 TELEGRAM_TOKEN")
             return 2
         if not chat_id:
-            logger.error("缺少 TELEGRAM_CHAT_ID 或 THREADS_TELEGRAM_CHAT_ID")
+            logger.error("缺少 THREADS_TELEGRAM_CHAT_ID")
             return 2
 
     try:

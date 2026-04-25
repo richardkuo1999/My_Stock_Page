@@ -128,3 +128,81 @@ async def test_sub_news_different_topics(sub_engine) -> None:
         FakeUpdate(message=msg2, chat_id=600), FakeContext()
     )
     assert "已訂閱" in msg2.reply_text_calls[-1].text  # new, not duplicate
+
+
+# --- sub_daily / unsub_daily ---
+
+@pytest.mark.asyncio
+async def test_sub_daily(sub_engine) -> None:
+    msg = FakeMessage()
+    await handlers.sub_daily_command(FakeUpdate(message=msg, chat_id=700), FakeContext())
+    assert "已訂閱每日分析" in msg.reply_text_calls[-1].text
+
+
+@pytest.mark.asyncio
+async def test_unsub_daily_not_subscribed(sub_engine) -> None:
+    msg = FakeMessage()
+    await handlers.unsub_daily_command(FakeUpdate(message=msg, chat_id=700), FakeContext())
+    assert "尚未訂閱" in msg.reply_text_calls[-1].text
+
+
+@pytest.mark.asyncio
+async def test_sub_then_unsub_daily(sub_engine) -> None:
+    msg1 = FakeMessage()
+    await handlers.sub_daily_command(FakeUpdate(message=msg1, chat_id=800), FakeContext())
+
+    msg2 = FakeMessage()
+    await handlers.unsub_daily_command(FakeUpdate(message=msg2, chat_id=800), FakeContext())
+    assert "已取消每日分析" in msg2.reply_text_calls[-1].text
+
+
+# --- sub_spike / unsub_spike ---
+
+@pytest.mark.asyncio
+async def test_sub_spike(sub_engine) -> None:
+    msg = FakeMessage()
+    await handlers.sub_spike_command(FakeUpdate(message=msg, chat_id=900), FakeContext())
+    assert "已訂閱收盤爆量" in msg.reply_text_calls[-1].text
+
+
+@pytest.mark.asyncio
+async def test_unsub_spike_not_subscribed(sub_engine) -> None:
+    msg = FakeMessage()
+    await handlers.unsub_spike_command(FakeUpdate(message=msg, chat_id=900), FakeContext())
+    assert "尚未訂閱" in msg.reply_text_calls[-1].text
+
+
+@pytest.mark.asyncio
+async def test_sub_then_unsub_spike(sub_engine) -> None:
+    msg1 = FakeMessage()
+    await handlers.sub_spike_command(FakeUpdate(message=msg1, chat_id=1000), FakeContext())
+
+    msg2 = FakeMessage()
+    await handlers.unsub_spike_command(FakeUpdate(message=msg2, chat_id=1000), FakeContext())
+    assert "已取消收盤爆量" in msg2.reply_text_calls[-1].text
+
+
+# --- sub_vix / unsub_vix ---
+
+@pytest.mark.asyncio
+async def test_sub_vix(sub_engine) -> None:
+    msg = FakeMessage()
+    await handlers.sub_vix_command(FakeUpdate(message=msg, chat_id=1100), FakeContext())
+    assert "已訂閱 VIX" in msg.reply_text_calls[-1].text
+
+
+@pytest.mark.asyncio
+async def test_unsub_vix_not_subscribed(sub_engine) -> None:
+    msg = FakeMessage()
+    await handlers.unsub_vix_command(FakeUpdate(message=msg, chat_id=1100), FakeContext())
+    assert "尚未訂閱" in msg.reply_text_calls[-1].text
+
+
+@pytest.mark.asyncio
+async def test_sub_then_unsub_vix(sub_engine) -> None:
+    msg1 = FakeMessage()
+    await handlers.sub_vix_command(FakeUpdate(message=msg1, chat_id=1200), FakeContext())
+
+    msg2 = FakeMessage()
+    await handlers.unsub_vix_command(FakeUpdate(message=msg2, chat_id=1200), FakeContext())
+    assert "已取消 VIX" in msg2.reply_text_calls[-1].text
