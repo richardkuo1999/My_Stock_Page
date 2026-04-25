@@ -66,15 +66,18 @@ class Goodinfo:
 
             info_dict = {}
 
-            raw_keys = soup.find_all("th", {"class": "bg_h1"})
-            raw_values = soup.find_all("td", {"bgcolor": "white"})
-
-            logger.info(f"Found {len(raw_keys)} keys and {len(raw_values)} values for {stock_id}")
-
-            for k, v in zip(raw_keys, raw_values, strict=False):
-                key = k.get_text(strip=True)
-                val = v.get_text(strip=True)
-                info_dict[key] = val
+            for tr in soup.find_all("tr"):
+                cells = tr.find_all(["th", "td"])
+                i = 0
+                while i < len(cells) - 1:
+                    if cells[i].name == "th" and cells[i + 1].name == "td" and cells[i + 1].get("bgcolor") == "white":
+                        key = cells[i].get_text(strip=True)
+                        val = cells[i + 1].get_text(strip=True)
+                        if key:
+                            info_dict[key] = val
+                        i += 2
+                    else:
+                        i += 1
 
             logger.info(f"Parsed info keys: {list(info_dict.keys())}")
             return info_dict
@@ -112,20 +115,24 @@ class LegacyMoneyDJ:
         if not soup:
             return stock_name, None
 
-        # Logic: find td with string=company_name
-        # section_title = soup.find("td", string=company_name)
-        # BS4 string argument matches exact string.
-        section_title = soup.find("td", string=company_name)
+        # Fuzzy match: find td containing company_name (normalize for whitespace/punctuation)
+        def _fuzzy_match(text):
+            if not text:
+                return False
+            norm = re.sub(r"\s+", "", text)
+            return company_name in norm or company_name_clean in norm
+
+        section_title = soup.find("td", string=_fuzzy_match)
 
         company_url = None
         if section_title:
-            link = section_title.select_one("a")
+            # string= matched td won't have child elements; check parent tr for link
+            tr = section_title.find_parent("tr")
+            link = tr.find("a", href=True) if tr else None
+            if not link:
+                link = section_title.find_next("a", href=True)
             if link:
                 href = link.get("href")
-                # href usually starts with ../wiki/.... , prefix is https://www.moneydj.com/kmdj/
-                # if href is relative like ../, we need to handle it.
-                # Old code: company_url = self.prefix_url + company_url[2:]
-                # implicating href is `../wiki/...`
                 if href.startswith(".."):
                     company_url = self.prefix_url + href[3:]  # skip ../
                 else:
@@ -145,7 +152,6 @@ class LegacyMoneyDJ:
             if not soup:
                 return stock_name, None
 
-            # data = soup.find('div', class_='UserDefined') # Old commented out
             data = soup.find("article")
 
             if data:

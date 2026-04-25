@@ -18,7 +18,7 @@ The `NewsParser` class supports multiple news sources with dedicated fetchers an
 | UDN (聯合新聞網) | `get_udn_report()` | `udn_news_parser()` | RSS |
 | UAnalyze | `get_uanalyze_report()` | `uanalyze_news_parser()` | HTML |
 | Fugle | `get_fugle_report()` | `fugle_news_parser()` | HTML |
-| Vocus (方格子) | `get_vocus_articles()` | `vocus_news_parser()` | Next.js SSR |
+| Vocus (方格子) | `get_vocus_articles()` | `vocus_news_parser()` | Next.js SSR (__NEXT_DATA__ JSON) |
 | MacroMicro (財經M平方) | `get_macromicro_report()` | `macromicro_news_parser()` | RSS (morss proxy) |
 | FinGuider | `get_finguider_report()` | `finguider_news_parser()` | JSON API |
 | Fintastic | `get_fintastic_report()` | `fintastic_news_parser()` | RSS (morss proxy) |
@@ -45,6 +45,28 @@ parser_dict = {
 1. Check if URL matches a specific parser key
 2. Apply site-specific parser
 3. Fall back to `_generic_news_parser()` if specific parser fails
+
+**Fallback Chain (per parser):**
+Most parsers follow a multi-layer fallback strategy:
+1. `__NEXT_DATA__` JSON extraction (for Next.js sites like CNYES, Vocus, Fugle, SinoTrade)
+2. Semantic HTML selectors (`article`, `div[itemprop='articleBody']`, `main`)
+3. `og:description` / `meta[name=description]` as last resort
+
+> **Note:** CSS-in-JS hash classes (e.g. `main.c1tt5pk2`, `div.dHnwX`) are avoided as they change on every deployment. `__NEXT_DATA__` JSON is preferred for Next.js sites.
+
+### CNYES Parser (`cnyes_news_parser`)
+1. **Primary:** `__NEXT_DATA__` → `props.pageProps.newsDetail.content` (strip HTML if present)
+2. **Secondary:** DOM selectors — `div[itemprop='articleBody']`, `article`, `main`
+3. **Fallback:** `og:description` meta tag
+
+### Vocus Parser (`vocus_news_parser`)
+1. **Primary:** `__NEXT_DATA__` → `props.pageProps.parsedArticle.content` (strip HTML if present)
+2. **Secondary:** `__NEXT_DATA__` → `props.pageProps.fallback` → nested article content
+3. **Fallback:** `og:description` meta tag
+
+### Vocus Article List (`get_vocus_articles`)
+1. **Primary:** `__NEXT_DATA__` → `props.pageProps.articles` or `articleList`
+2. **Fallback:** Scan `a[href*="/article/"]` links from rendered HTML
 
 ## Deduplication Logic
 

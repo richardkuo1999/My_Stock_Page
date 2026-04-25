@@ -64,13 +64,44 @@ def _parse_quote_page(html: str, stock_id: str) -> dict | None:
     """解析鉅亨個股頁面，提取股名、價格、漲跌。"""
     soup = BeautifulSoup(html, "html.parser")
 
-    # 股名：## 台積電2330 或 ## 信驊5274
+    # Try __NEXT_DATA__ first (most reliable for Next.js SPA)
+    import json as _json
+
+    nd = soup.find("script", id="__NEXT_DATA__")
+    if nd and nd.string:
+        try:
+            data = _json.loads(nd.string)
+            props = data.get("props", {}).get("pageProps", {})
+            quote = props.get("quote") or props.get("stock") or {}
+            if isinstance(quote, dict):
+                q_name = quote.get("name") or quote.get("stkName") or stock_id
+                q_price = quote.get("price") or quote.get("lastPrice")
+                q_change = quote.get("change") or quote.get("priceChange")
+                q_pct = quote.get("changePercent") or quote.get("priceChangePercent")
+                if q_price is not None:
+                    try:
+                        return {
+                            "name": str(q_name),
+                            "price": float(q_price),
+                            "change": float(q_change) if q_change is not None else None,
+                            "change_pct": float(q_pct) if q_pct is not None else None,
+                        }
+                    except (ValueError, TypeError):
+                        pass
+        except (ValueError, KeyError):
+            pass
+
+    # Fallback: heuristic h1/h2/h3 parsing
     name = None
     for h in soup.find_all(["h1", "h2"]):
         t = (h.get_text() or "").strip()
         if stock_id in t:
             name = re.sub(r"\d{4,5}.*$", "", t).strip() or t
             break
+    if not name:
+        og_title = soup.find("meta", property="og:title")
+        if og_title and og_title.get("content") and stock_id in og_title["content"]:
+            name = re.sub(r"\d{4,5}.*$", "", og_title["content"]).strip() or stock_id
     if not name:
         name = stock_id
 

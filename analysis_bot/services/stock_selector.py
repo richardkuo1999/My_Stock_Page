@@ -138,12 +138,27 @@ class StockSelector:
             return []
 
         stocks = []
-        # Every 6th element in .w58 seems to be stock code based on old code
-        spans = soup.find_all("span", class_="w58")
-        for element in spans[::6]:
-            code = element.text.strip()
-            if self.is_ordinary_stock(code):
-                stocks.append(code)
+        seen = set()
+
+        # Primary: look for links with stock code in href (e.g. /stock/1234)
+        for a in soup.find_all("a", href=True):
+            m = re.search(r"/stock/(\d{4,5})(?:\b|$)", a["href"])
+            if m:
+                code = m.group(1)
+                if self.is_ordinary_stock(code) and code not in seen:
+                    stocks.append(code)
+                    seen.add(code)
+
+        # Fallback: table rows with stock code in first cell
+        if not stocks:
+            for tr in soup.find_all("tr"):
+                tds = tr.find_all("td")
+                if not tds:
+                    continue
+                code = tds[0].get_text(strip=True)
+                if self.is_ordinary_stock(code) and code not in seen:
+                    stocks.append(code)
+                    seen.add(code)
 
         return stocks
 

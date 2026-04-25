@@ -128,7 +128,8 @@ class NewsParser:
                 p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True)
             )
             return content
-        except Exception:
+        except Exception as e:
+            self.logger.warning("moneyDJ_news_parser failed: %s", e)
             return ""
 
     def udn_news_parser(self, soup) -> str:
@@ -144,18 +145,46 @@ class NewsParser:
                 p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True)
             )
             return content
-        except Exception:
+        except Exception as e:
+            self.logger.warning("udn_news_parser failed: %s", e)
             return ""
 
     def cnyes_news_parser(self, soup) -> str:
         try:
-            # CNYES layouts vary; try common content containers
-            for sel in ("main.c1tt5pk2", "div[itemprop='articleBody']", "article"):
+            import json as _json
+
+            # Primary: __NEXT_DATA__ JSON (most reliable for Next.js sites)
+            nd = soup.find("script", id="__NEXT_DATA__")
+            if nd and nd.string:
+                try:
+                    data = _json.loads(nd.string)
+                    props = data.get("props", {}).get("pageProps", {})
+                    detail = props.get("newsDetail") or props.get("article") or {}
+                    content = detail.get("content", "")
+                    if content and len(content) > 50:
+                        if "<" in content:
+                            return BeautifulSoup(content, "html.parser").get_text(
+                                separator="\n", strip=True
+                            )
+                        return content
+                except (ValueError, KeyError):
+                    pass
+
+            # Secondary: common content containers (avoid CSS-in-JS hash classes)
+            for sel in ("div[itemprop='articleBody']", "article", "main"):
                 el = soup.select_one(sel)
                 if el:
-                    return el.get_text(separator="\n", strip=True)
+                    text = el.get_text(separator="\n", strip=True)
+                    if len(text) > 100:
+                        return text
+
+            # Fallback: og:description
+            og = soup.find("meta", property="og:description")
+            if og and og.get("content"):
+                return og["content"]
             return ""
-        except Exception:
+        except Exception as e:
+            self.logger.warning("cnyes_news_parser failed: %s", e)
             return ""
 
     def uanalyze_news_parser(self, soup) -> str:
@@ -190,7 +219,8 @@ class NewsParser:
             if og and og.get("content"):
                 return og["content"]
             return ""
-        except Exception:
+        except Exception as e:
+            self.logger.warning("uanalyze_news_parser failed: %s", e)
             return ""
 
     def fugle_news_parser(self, soup) -> str:
@@ -226,7 +256,8 @@ class NewsParser:
             if og and og.get("content"):
                 return og["content"]
             return ""
-        except Exception:
+        except Exception as e:
+            self.logger.warning("fugle_news_parser failed: %s", e)
             return ""
 
     def vocus_news_parser(self, soup) -> str:
@@ -270,7 +301,8 @@ class NewsParser:
             if og and og.get("content"):
                 return og["content"]
             return ""
-        except Exception:
+        except Exception as e:
+            self.logger.warning("vocus_news_parser failed: %s", e)
             return ""
 
     def sinotrade_news_parser(self, soup) -> str:
@@ -302,7 +334,8 @@ class NewsParser:
             if desc and desc.get("content"):
                 return desc["content"]
             return ""
-        except Exception:
+        except Exception as e:
+            self.logger.warning("sinotrade_news_parser failed: %s", e)
             return ""
 
     def pocket_news_parser(self, soup) -> str:
@@ -336,7 +369,8 @@ class NewsParser:
             if desc and desc.get("content"):
                 return desc["content"]
             return ""
-        except Exception:
+        except Exception as e:
+            self.logger.warning("pocket_news_parser failed: %s", e)
             return ""
 
     def yahoo_tw_news_parser(self, soup) -> str:
@@ -360,7 +394,8 @@ class NewsParser:
             if og and og.get("content"):
                 return og["content"]
             return ""
-        except Exception:
+        except Exception as e:
+            self.logger.warning("yahoo_tw_news_parser failed: %s", e)
             return ""
 
     def newsdigestai_news_parser(self, soup) -> str:
@@ -387,7 +422,8 @@ class NewsParser:
             if desc and desc.get("content"):
                 return desc["content"]
             return ""
-        except Exception:
+        except Exception as e:
+            self.logger.warning("newsdigestai_news_parser failed: %s", e)
             return ""
 
     def macromicro_news_parser(self, soup) -> str:
@@ -414,7 +450,8 @@ class NewsParser:
             if desc and desc.get("content"):
                 return desc["content"]
             return ""
-        except Exception:
+        except Exception as e:
+            self.logger.warning("macromicro_news_parser failed: %s", e)
             return ""
 
     def finguider_news_parser(self, soup) -> str:
@@ -432,7 +469,8 @@ class NewsParser:
             if desc and desc.get("content"):
                 return desc["content"]
             return ""
-        except Exception:
+        except Exception as e:
+            self.logger.warning("finguider_news_parser failed: %s", e)
             return ""
 
     def fintastic_news_parser(self, soup) -> str:
@@ -452,7 +490,8 @@ class NewsParser:
             if desc and desc.get("content"):
                 return desc["content"]
             return ""
-        except Exception:
+        except Exception as e:
+            self.logger.warning("fintastic_news_parser failed: %s", e)
             return ""
 
     def forecastock_news_parser(self, soup) -> str:
@@ -478,7 +517,8 @@ class NewsParser:
             if desc and desc.get("content"):
                 return desc["content"]
             return ""
-        except Exception:
+        except Exception as e:
+            self.logger.warning("forecastock_news_parser failed: %s", e)
             return ""
 
     def _generic_news_parser(self, soup) -> str:
@@ -526,7 +566,8 @@ class NewsParser:
             if desc and desc.get("content"):
                 return desc["content"]
             return ""
-        except Exception:
+        except Exception as e:
+            self.logger.warning("_generic_news_parser failed: %s", e)
             return ""
 
     async def _fetch_finguider_content(self, url: str) -> str | None:
@@ -745,15 +786,43 @@ class NewsParser:
                 text = await resp.text()
             soup = BeautifulSoup(text, "html.parser")
             link_prefix = "https://vocus.cc"
-            articles = soup.find_all("div", attrs={"class": ["dHnwX", "dDuosN"]})
             reports = []
-            for article in articles:
-                title_elem = article.select_one("span")
-                link_elem = article.select_one("a")
-                if title_elem and link_elem:
-                    title = title_elem.get_text(strip=True)
-                    link = link_prefix + link_elem["href"]
-                    reports.append({"title": title, "url": link})
+
+            # Primary: __NEXT_DATA__ JSON
+            import json as _json
+
+            nd = soup.find("script", id="__NEXT_DATA__")
+            if nd and nd.string:
+                try:
+                    data = _json.loads(nd.string)
+                    props = data.get("props", {}).get("pageProps", {})
+                    articles = props.get("articles") or props.get("articleList") or []
+                    if isinstance(articles, dict):
+                        articles = articles.get("items") or articles.get("data") or []
+                    for art in articles:
+                        if not isinstance(art, dict):
+                            continue
+                        title = art.get("title", "")
+                        slug = art.get("slug") or art.get("_id") or art.get("id", "")
+                        if title and slug:
+                            url_path = f"/article/{slug}" if "/" not in slug else slug
+                            reports.append({"title": title, "url": link_prefix + url_path})
+                except (ValueError, KeyError):
+                    pass
+
+            # Fallback: find article links from any a[href*="/article/"]
+            if not reports:
+                for a in soup.find_all("a", href=True):
+                    href = a["href"]
+                    if "/article/" not in href:
+                        continue
+                    title = a.get_text(strip=True)
+                    if not title or len(title) < 4:
+                        continue
+                    full_url = href if href.startswith("http") else link_prefix + href
+                    if full_url not in [r["url"] for r in reports]:
+                        reports.append({"title": title, "url": full_url})
+
             return reports
         except Exception as e:
             self.logger.error(f"Vocus error for {user_id}: {e}")
@@ -1063,7 +1132,8 @@ class NewsParser:
             if og and og.get("content"):
                 return og["content"]
             return ""
-        except Exception:
+        except Exception as e:
+            self.logger.warning("oaktree_memo_parser failed: %s", e)
             return ""
 
     async def fetch_howard_marks_content(self, url: str) -> str:
