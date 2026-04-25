@@ -6,7 +6,7 @@
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlmodel import Session, select
 

@@ -4,10 +4,8 @@ import html
 import json
 import logging
 import re
-import shutil
 import unicodedata
-from contextlib import suppress
-from datetime import datetime, timedelta
+from datetime import timedelta
 from urllib.parse import urlparse
 
 from sqlmodel import Session, col, select
@@ -25,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 # Constants
 MAX_ALIAS_LENGTH = 64
-TICKER_MATCH_THRESHOLD = 0.85
 MAX_SEND_ARTICLES = 5
 
 _WORD_CHARS_RE = re.compile(r"[A-Z0-9]")
@@ -74,48 +71,7 @@ async def _broadcast_sentiment_alert(bot, message: str) -> None:
             logger.warning("Sentiment alert to %s/%s failed: %s", cid, tid, e)
 
 
-# --- Cursor Agent Summary Helpers ---
-
-
-async def _run_cursor_agent_summary(prompt: str, timeout: float = 30.0) -> str | None:
-    """
-    Call cursor agent (headless) to summarize text. Returns None on failure.
-    """
-    if not shutil.which("cursor"):
-        logger.warning("cursor CLI 未安裝或不在 PATH，略過摘要。")
-        return None
-
-    proc = None
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "cursor",
-            "agent",
-            "--print",
-            "--output-format",
-            "text",
-            prompt,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        if proc.returncode == 0:
-            return stdout.decode().strip()
-        logger.warning(
-            "cursor agent 摘要失敗 (code=%s): %s",
-            proc.returncode,
-            (stderr.decode().strip() if stderr else ""),
-        )
-    except TimeoutError:
-        logger.warning("cursor agent 摘要逾時，已中止。")
-        if proc:
-            proc.kill()
-            with suppress(Exception):
-                await proc.communicate()
-    except FileNotFoundError:
-        logger.warning("找不到 cursor 可執行檔，略過摘要。")
-    except Exception as e:
-        logger.error(f"cursor agent 摘要例外: {e}")
-    return None
+# --- AI Summary Helper ---
 
 
 from ..services.ai_service import AIService, RequestType
@@ -753,10 +709,6 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
                                             in f"{news_data['title_norm']}\n{news_data['url_norm']}"
                                         ):
                                             hits.add(name_norm)
-                                step_hits = list(hits)  # Workaround to use in set
-                                for _step_hit in step_hits:
-                                    # Not sure why the original loop was slightly weird, simplifying the `user_hits[uid] = set()`
-                                    pass
                                 if hits:
                                     user_hits.setdefault(uid, set()).update(hits)
 

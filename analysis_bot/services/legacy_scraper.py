@@ -39,9 +39,7 @@ async def fetch_webpage(
         ) as response:
             response.raise_for_status()
             text = await response.text(encoding="utf-8")
-            return BeautifulSoup(
-                text, "html.parser"
-            )  # html5lib might not be installed, using html.parser
+            return BeautifulSoup(text, "html.parser")
     except Exception as e:
         logger.error(f"Error fetching {url}: {e}")
         raise
@@ -51,7 +49,6 @@ class Goodinfo:
     COMPANY_INFO_BASE_URL = "https://goodinfo.tw/tw/BasicInfo.asp?STOCK_ID={}"
 
     async def fetch_data(self, session, stock_id: str):
-        # We only need company info for MoneyDJ url construction in the legacy logic
         company_info = await self.get_company_info(session, stock_id)
         return {"company_info": company_info}
 

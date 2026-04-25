@@ -13,7 +13,7 @@ from .volume_spike_formatter import (
     format_spike_row,
     get_table_header,
 )
-from .volume_spike_scanner import VolumeSpikeResult, SpikeSortBy
+from .volume_spike_scanner import VolumeSpikeResult
 
 
 def build_spike_markdown_header(total: int, sort_by=None) -> str:

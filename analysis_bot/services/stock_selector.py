@@ -2,8 +2,6 @@ import asyncio
 import logging
 import re
 from collections import Counter
-
-import aiohttp
 import pandas as pd
 from bs4 import BeautifulSoup
 from natsort import natsorted

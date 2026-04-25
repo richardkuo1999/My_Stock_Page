@@ -2,7 +2,6 @@ import logging
 from datetime import datetime
 from typing import Any
 
-import aiohttp
 from sqlmodel import Session, col, select
 
 from ..database import engine

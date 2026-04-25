@@ -3,10 +3,8 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 
-import aiohttp
 import pandas as pd
 
-from ..config import get_settings
 from ..utils.ticker_utils import is_taiwan_ticker
 from .anue_scraper import AnueScraper
 from .data_fetcher import DataFetcher
@@ -15,7 +13,6 @@ from .finmind_fetcher import FinMindFetcher
 from .http import create_session
 from .math_utils import MathUtils
 
-settings = get_settings()
 logger = logging.getLogger(__name__)
 
 

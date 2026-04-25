@@ -10,7 +10,6 @@ import logging
 import multiprocessing
 import os
 import tempfile
-from datetime import datetime, timedelta
 from string import Template
 
 import pandas as pd

@@ -10,7 +10,6 @@
 import asyncio
 import logging
 
-import aiohttp
 import yfinance as yf
 
 from ..utils.ticker_utils import get_tw_search_tickers, is_taiwan_ticker
@@ -37,18 +36,6 @@ def _format_news_section(news_list: list[dict]) -> str:
     if not lines:
         return ""
     return "\n\n📰 相關新聞\n" + "\n".join(lines)
-
-
-async def _append_news(price_text: str, ticker: str, name: str, is_tw: bool = True) -> str:
-    """在股價訊息後附加相關新聞。"""
-    try:
-        from .stock_news_fetcher import fetch_stock_news
-
-        news_list = await fetch_stock_news(ticker, name, limit=5, is_tw=is_tw)
-        return price_text + _format_news_section(news_list)
-    except Exception as e:
-        logger.debug("Stock news fetch: %s", e)
-        return price_text
 
 
 async def fetch_price(ticker: str) -> str:

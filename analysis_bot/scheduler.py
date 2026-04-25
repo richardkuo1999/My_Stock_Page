@@ -1104,14 +1104,12 @@ def start_scheduler():
 
     # NOTE: Podcast job 先暫停（跑太久）。需要再啟用時，把下面區塊取消註解即可。
     #
-    # # Run every 60 minutes
     # podcast_interval = IntervalTrigger(minutes=60)
     # scheduler.add_job(
     #     daily_podcast_job,
     #     trigger=podcast_interval,
     #     id="daily_podcast",
     #     replace_existing=True,
-    #     # next_run_time=datetime.now()  # 若要啟動後立刻跑，再打開這行
     # )
 
     # NOTE: 盤前 vol19 掃描暫停（盤中爆量偵測已關閉，vol19 不需要跑）
@@ -1139,9 +1137,7 @@ def start_scheduler():
             replace_existing=True,
         )
 
-    # Add News Check Job (Every 10 mins)
-    # 註: check_news_job 已交由 telegram.ext.Application.job_queue 排程 (bot/main.py)
-    # 為避免產生 ConflictError (雙 Bot 實例衝突)，這裡不再透過 apscheduler 排程。
+    # check_news_job 已交由 telegram.ext.Application.job_queue 排程 (bot/main.py)
 
     # UAnalyze 報告監控：每 60 秒檢查一次
     async def _uanalyze_monitor_job():

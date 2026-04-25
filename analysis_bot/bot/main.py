@@ -19,7 +19,6 @@ from .handlers import (
     cancel,
     chat_command,
     chat_handle,
-    chat_start,
     chatid_command,
     esti_command,
     google_command,

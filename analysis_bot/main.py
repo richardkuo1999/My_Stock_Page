@@ -13,15 +13,10 @@ from .services.ai_service import AIService, ensure_ollama
 from .services.news_parser import NewsParser
 
 settings = get_settings()
-_bot_app_lock = None  # initialized in lifespan to ensure event loop is running
 bot_app = None
 
 import logging
 
-# Configure logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
 logger = logging.getLogger(__name__)
 
 
@@ -30,8 +25,7 @@ async def lifespan(app: FastAPI):
     import asyncio as _aio
     from concurrent.futures import ThreadPoolExecutor
 
-    global bot_app, _bot_app_lock
-    _bot_app_lock = _aio.Lock()
+    global bot_app
 
     # Increase default thread pool so yfinance batch downloads don't starve other tasks
     _aio.get_event_loop().set_default_executor(ThreadPoolExecutor(max_workers=32))

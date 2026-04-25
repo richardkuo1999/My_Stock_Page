@@ -939,7 +939,6 @@ async def intraday_spike_command(update: Update, context: ContextTypes.DEFAULT_T
         )
 
         if not results:
-            now = datetime.now(ZoneInfo("Asia/Taipei"))
             elapsed = scanner.get_elapsed_minutes()
             if elapsed < 30:
                 msg = f"⏳ 開盤尚未滿 30 分鐘（{elapsed} 分鐘），等待訊號穩定"

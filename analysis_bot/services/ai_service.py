@@ -2,7 +2,6 @@ import logging
 import random
 import shutil
 import subprocess
-import sys
 from enum import Enum
 from pathlib import Path
 from typing import Any

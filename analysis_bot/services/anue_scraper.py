@@ -140,7 +140,6 @@ class AnueScraper:
                     logger.debug("Search failed with status %s", resp.status)
                     return None
                 text = await resp.text()
-                # print(f"DEBUG: Search result text length: {len(text)}")
                 soup = BeautifulSoup(text, "html.parser")
 
             # Parse search results

@@ -9,7 +9,6 @@ from datetime import datetime
 import matplotlib
 
 matplotlib.use("Agg")
-import aiohttp
 import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import yfinance as yf
