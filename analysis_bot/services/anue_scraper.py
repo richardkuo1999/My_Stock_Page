@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 logger = logging.getLogger(__name__)
 
 CNYEA_URL_PART = "news.cnyes.com/news/id"
+CNYES_EPS_API = "https://marketinfo.api.cnyes.com/mi/api/v1/financialIndicator/estimateProfit/TWS:{stock_id}:STOCK?type=eps"
 
 
 class AnueScraper:
@@ -17,13 +18,109 @@ class AnueScraper:
     def __init__(self, level: int = 4):
         self.level = level  # legacy parameter for EPS table row index?
 
+    # ── CNYES JSON API (primary) ─────────────────────────────────────────
+
+    async def _fetch_eps_from_api(
+        self, session: aiohttp.ClientSession, stock_id: str
+    ) -> dict | None:
+        """Fetch EPS estimates from CNYES marketinfo API (FactSet data)."""
+        url = CNYES_EPS_API.format(stock_id=stock_id)
+        try:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    return None
+                payload = await resp.json(content_type=None)
+
+            items = payload.get("data")
+            if not items:
+                return None
+
+            # Find current year and next year entries
+            now = datetime.now()
+            current_year = now.year
+            by_year = {it["financialYear"]: it for it in items if isinstance(it, dict)}
+
+            cur = by_year.get(current_year)
+            nxt = by_year.get(current_year + 1)
+            if not cur:
+                return None
+
+            this_eps = cur.get("feMedian") or cur.get("feMean")
+            if this_eps is None:
+                return None
+
+            next_eps = (nxt.get("feMedian") or nxt.get("feMean")) if nxt else this_eps
+            tm_yday = float(now.timetuple().tm_yday)
+            weighted_eps = ((366 - tm_yday) / 366) * this_eps + (tm_yday / 366) * next_eps
+
+            return {
+                "est_price": None,
+                "est_eps": round(weighted_eps, 2),
+                "url": f"https://invest.cnyes.com/twstock/{stock_id}",
+                "date": (cur.get("rateDate") or now.isoformat()),
+            }
+        except Exception as e:
+            logger.debug("CNYES EPS API failed for %s: %s", stock_id, e)
+            return None
+
+    async def _fetch_all_from_api(
+        self, session: aiohttp.ClientSession, stock_id: str
+    ) -> list[dict]:
+        """Fetch per-year EPS snapshots from CNYES API for momentum tracking."""
+        url = CNYES_EPS_API.format(stock_id=stock_id)
+        try:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    return []
+                payload = await resp.json(content_type=None)
+
+            items = payload.get("data")
+            if not items:
+                return []
+
+            results = []
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                eps = it.get("feMedian") or it.get("feMean")
+                if eps is None:
+                    continue
+                results.append({
+                    "est_price": None,
+                    "est_eps": round(eps, 2),
+                    "url": f"https://invest.cnyes.com/twstock/{stock_id}",
+                    "date": it.get("rateDate") or datetime.now().isoformat(),
+                })
+
+            results.sort(key=lambda x: x["date"], reverse=True)
+            return results
+        except Exception as e:
+            logger.debug("CNYES EPS API (all) failed for %s: %s", stock_id, e)
+            return []
+
+    # ── Public interface ─────────────────────────────────────────────────
+
     async def fetch_estimated_data(
         self, session: aiohttp.ClientSession, stock_id: str, stock_name: str
     ) -> dict | None:
         """
         Attempts to find estimate report for the stock.
-        Returns dict with {est_price, weighted_eps, date, url} or None.
+        Returns dict with {est_price, est_eps, date, url} or None.
+        Primary: CNYES JSON API. Fallback: Yahoo search + HTML scraping.
         """
+        # Primary: CNYES API
+        result = await self._fetch_eps_from_api(session, stock_id)
+        if result and result.get("est_eps"):
+            logger.debug("EPS from CNYES API for %s: %s", stock_id, result["est_eps"])
+            return result
+
+        # Fallback: Yahoo search + HTML scraping
+        return await self._fetch_eps_from_search(session, stock_id, stock_name)
+
+    async def _fetch_eps_from_search(
+        self, session: aiohttp.ClientSession, stock_id: str, stock_name: str
+    ) -> dict | None:
+        """Fallback: search Yahoo for CNYES FactSet articles and scrape EPS table."""
         search_query = (
             f"鉅亨速報 - Factset 最新調查：{stock_name}({stock_id}-TW)EPS預估+site:news.cnyes.com"
         )
@@ -111,8 +208,15 @@ class AnueScraper:
         """
         Fetch ALL available FactSet EPS estimate articles (not just the latest).
         Used by EpsMomentumService to build historical EPS timeline.
+        Primary: CNYES API (one snapshot per year). Fallback: Yahoo search + HTML scraping.
         Returns list of dicts sorted by date descending.
         """
+        # Primary: CNYES API — returns per-year estimates as individual snapshots
+        api_result = await self._fetch_all_from_api(session, stock_id)
+        if api_result:
+            return api_result
+
+        # Fallback: Yahoo search + HTML scraping
         search_query = (
             f"鉅亨速報 - Factset 最新調查：{stock_name}({stock_id}-TW)EPS預估+site:news.cnyes.com"
         )
@@ -168,20 +272,35 @@ class AnueScraper:
                 text = await resp.text()
                 soup = BeautifulSoup(text, "html.parser")
 
+            import json as _json
+
             # Logic ported from legacy __process_page
-            # 1. Check title
-            article_div = soup.find(id="article-container")  # Legacy ID
-            if not article_div:
-                # Try finding h1 if id changed
-                h1 = soup.find("h1")
-                if h1:
-                    title_text = h1.text
-                else:
-                    return None
-            else:
-                title_text = (
-                    article_div.text
-                )  # This gets full text? Legacy said "webtitle = article.text"
+            # 1. Check title — try __NEXT_DATA__ first, then DOM selectors
+            title_text = ""
+
+            nd = soup.find("script", id="__NEXT_DATA__")
+            if nd and nd.string:
+                try:
+                    data = _json.loads(nd.string)
+                    props = data.get("props", {}).get("pageProps", {})
+                    detail = props.get("newsDetail") or props.get("article") or {}
+                    title_text = detail.get("content", "") or detail.get("title", "")
+                except (ValueError, KeyError):
+                    pass
+
+            if not title_text:
+                for sel_fn in [
+                    lambda s: s.find(id="article-container"),
+                    lambda s: s.select_one("div[itemprop='articleBody']"),
+                    lambda s: s.find("article"),
+                    lambda s: s.find("h1"),
+                ]:
+                    el = sel_fn(soup)
+                    if el:
+                        title_text = el.get_text()
+                        break
+            if not title_text:
+                return None
 
             # Check if title strictly matches format "Name(ID-TW)..."
             if str(stock_id) not in title_text:
@@ -198,29 +317,27 @@ class AnueScraper:
 
             # 3. Extract EPS Table
             weighted_eps = None
-            table = soup.find("table")
+            # Find EPS table: look for table containing "預估值"
+            table = None
+            for t in soup.find_all("table"):
+                if "預估值" in t.get_text():
+                    table = t
+                    break
             if table:
                 rows = table.find_all("tr")
                 if len(rows) > 1:
                     headers = [td.get_text(strip=True) for td in rows[0].find_all("td")]
-                    # Check "預估值" in header
-                    if headers and "預估值" in headers[0]:
-                        # Legacy uses self.level to pick a row (default 4 -> "Medium" estimate?)
-                        # Legacy index safety check
-                        # self.level is 4 (Median). Table has 5 rows (Header + 4 data).
-                        # rows[0] is Header. rows[1]..rows[4] are data.
-                        # So rows[self.level] should be the target row.
+                    if headers and any("預估值" in h for h in headers):
                         target_row_idx = self.level
                         if target_row_idx < len(rows):
                             row = rows[target_row_idx]
                             cols = [td.get_text(strip=True) for td in row.find_all("td")]
+                            if not cols or len(cols) < len(headers):
+                                cols = []  # skip malformed row
 
-                            # Calculate weighted EPS
                             current_year = str(datetime.now().year)
-                            # Find column for current year
                             for idx, h in enumerate(headers):
-                                if current_year in h:
-                                    # Logic: Weighted average of this year and next year
+                                if current_year in h and idx < len(cols):
                                     try:
                                         this_year_eps = float(cols[idx].split("(")[0])
                                         next_year_eps = this_year_eps

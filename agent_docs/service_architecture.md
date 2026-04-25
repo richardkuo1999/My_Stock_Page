@@ -119,7 +119,17 @@ response = await ai.call(RequestType.TEXT, contents=prompt, use_search=True)
 ### AnueScraper (`anue_scraper.py`)
 **Location:** `analysis_bot/services/anue_scraper.py`
 
-**Responsibility:** Scrape estimated EPS and target price from Anue (鉅亨網 FactSet reports).
+**Responsibility:** Fetch estimated EPS and target price from Anue (鉅亨網 FactSet reports).
+
+**Data Sources (priority order):**
+1. **CNYES marketinfo JSON API** (`estimateProfit` endpoint) — 直接取得 FactSet 各年度 EPS 預估（feMedian/feMean），計算加權 EPS
+2. **Yahoo search + HTML scraping** (fallback) — 搜尋鉅亨速報文章，解析 EPS 表格
+
+**Key Methods:**
+- `fetch_estimated_data()` — 取得最新加權 EPS（API → search fallback）
+- `fetch_all_estimates()` — 取得所有年度 EPS 快照（用於 EPS momentum）
+- `_fetch_eps_from_api()` / `_fetch_all_from_api()` — CNYES JSON API
+- `_fetch_eps_from_search()` / `_process_article()` — Yahoo search + HTML fallback
 
 ---
 

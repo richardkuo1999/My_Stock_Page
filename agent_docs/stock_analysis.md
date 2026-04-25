@@ -62,6 +62,8 @@ for i in range(1, 4):
 1. **Yahoo Finance** - Price history, basic info (PE, PB, EPS, sector)
 2. **FinMind API** - Historical PER/PBR for Taiwan stocks
 3. **Anue (鉅亨網)** - FactSet estimated EPS and target price
+   - **Primary:** CNYES marketinfo JSON API (`estimateProfit` endpoint, per-year feMedian)
+   - **Fallback:** Yahoo search → CNYES article HTML scraping
 
 ## Analysis Result Structure
 
