@@ -116,67 +116,53 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
 
     final_tickers_map = {}  # Ticker -> Set of Tags
 
-    import aiohttp
     from .services.http import create_session
 
+    def _merge(stocks, tag):
+        for s in stocks:
+            final_tickers_map.setdefault(s, set()).add(tag)
+
     async with create_session() as http_session:
-        # --- Tag: ETF ---
+        # Parallel fetch: ETF constituents + other tags
+        tag_tasks = []
+
         if "ETF" in active_tags:
-            try:
-                targets = await selector.get_target_etfs()  # List of '0050', '0056'
-                logger.info(f"Processing Target ETFs: {targets}")
-                for etf_code in targets:
-                    constituents = await selector.fetch_etf_constituents(http_session, etf_code)
-                    for c in constituents:
-                        if c not in final_tickers_map:
-                            final_tickers_map[c] = set()
-                        final_tickers_map[c].add(f"ETF_{etf_code}")
-            except Exception as e:
-                logger.error(f"Error processing ETF tag: {e}")
+            async def _fetch_etf():
+                targets = await selector.get_target_etfs()
+                logger.info("Processing Target ETFs: %s", targets)
+                etf_results = await asyncio.gather(
+                    *[selector.fetch_etf_constituents(http_session, c) for c in targets],
+                    return_exceptions=True,
+                )
+                for etf_code, res in zip(targets, etf_results):
+                    if isinstance(res, list):
+                        _merge(res, f"ETF_{etf_code}")
+            tag_tasks.append(_fetch_etf())
 
-        # --- Tag: ETF_Rank ---
         if "ETF_Rank" in active_tags:
-            try:
-                stocks = await selector.fetch_etf_rank_stocks(http_session)
-                for s in stocks:
-                    if s not in final_tickers_map:
-                        final_tickers_map[s] = set()
-                    final_tickers_map[s].add("ETF_Rank")
-            except Exception as e:
-                logger.error(f"Error processing ETF_Rank: {e}")
+            async def _fetch_rank():
+                _merge(await selector.fetch_etf_rank_stocks(http_session), "ETF_Rank")
+            tag_tasks.append(_fetch_rank())
 
-        # --- Tag: Institutional_TOP50 ---
         if "Institutional_TOP50" in active_tags:
-            try:
-                stocks = await selector.fetch_institutional_top50(http_session)
-                for s in stocks:
-                    if s not in final_tickers_map:
-                        final_tickers_map[s] = set()
-                    final_tickers_map[s].add("Institutional")
-            except Exception as e:
-                logger.error(f"Error processing Institutional: {e}")
+            async def _fetch_inst():
+                _merge(await selector.fetch_institutional_top50(http_session), "Institutional")
+            tag_tasks.append(_fetch_inst())
 
-        # --- Tag: Invest Anchors ---
         if "investanchors" in active_tags:
-            try:
-                stocks = await selector.get_invest_anchors()
-                for s in stocks:
-                    if s not in final_tickers_map:
-                        final_tickers_map[s] = set()
-                    final_tickers_map[s].add("InvestAnchor")
-            except Exception as e:
-                logger.error(f"Error processing Anchors: {e}")
+            async def _fetch_anchors():
+                _merge(await selector.get_invest_anchors(), "InvestAnchor")
+            tag_tasks.append(_fetch_anchors())
 
-        # --- Tag: User Choice ---
         if "User_Choice" in active_tags:
-            try:
-                stocks = await selector.get_user_choice()
-                for s in stocks:
-                    if s not in final_tickers_map:
-                        final_tickers_map[s] = set()
-                    final_tickers_map[s].add("User_Choice")
-            except Exception as e:
-                logger.error(f"Error processing User Choice: {e}")
+            async def _fetch_user():
+                _merge(await selector.get_user_choice(), "User_Choice")
+            tag_tasks.append(_fetch_user())
+
+        results = await asyncio.gather(*tag_tasks, return_exceptions=True)
+        for r in results:
+            if isinstance(r, Exception):
+                logger.error("Tag fetch error: %s", r)
 
     # 2. Update DB Tags (Merge with existing or Create new)
     def update_db_tags(final_map, managed_tags):

@@ -160,6 +160,12 @@ class FakeNewsParser:
         self.calls.append({"method": "get_vocus_articles", "v_user": v_user})
         return self._get(f"vocus:{v_user}")
 
+    async def get_buffett_letters(self) -> list[dict[str, str]]:
+        return self._get("buffett")
+
+    async def get_howard_marks_memos(self, limit: int = 10) -> list[dict[str, str]]:
+        return self._get("howard_marks")
+
     async def fetch_news_content(self, url: str, ai_service: Any = None) -> str:
         self.calls.append({"method": "fetch_news_content", "url": url})
         # Try to find if we have a string result for this URL

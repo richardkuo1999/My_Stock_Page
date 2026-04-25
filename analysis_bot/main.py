@@ -157,6 +157,11 @@ async def lifespan(app: FastAPI):
         print("Bot stopped.")
 
     shutdown_scheduler()
+
+    # Close shared HTTP session
+    from .services.http import close_session
+    await close_session()
+
     print("Shutting down...")
 
 

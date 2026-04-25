@@ -9,6 +9,8 @@ from telegram.ext import (
     filters,
 )
 
+from telegram.ext import AIORateLimiter
+
 from ..config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -82,6 +84,7 @@ def create_bot_application() -> Application:
         Application.builder()
         .token(settings.TELEGRAM_TOKEN)
         .concurrent_updates(True)
+        .rate_limiter(AIORateLimiter())
         .connect_timeout(60.0)
         .read_timeout(60.0)
         .write_timeout(60.0)

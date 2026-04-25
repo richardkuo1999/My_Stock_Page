@@ -1,5 +1,6 @@
 """Shared aiohttp helpers with proper SSL configuration."""
 
+import logging
 import ssl
 
 import aiohttp
@@ -7,14 +8,35 @@ import certifi
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_fixed
 
 _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+_session: aiohttp.ClientSession | None = None
+_logger = logging.getLogger(__name__)
 
 
 def create_session(**kwargs) -> aiohttp.ClientSession:
-    """Create an aiohttp.ClientSession with certifi SSL context."""
+    """Create a new aiohttp.ClientSession (for callers that need a dedicated session)."""
     connector = kwargs.pop("connector", None)
     if connector is None:
         connector = aiohttp.TCPConnector(ssl=_SSL_CTX)
     return aiohttp.ClientSession(connector=connector, **kwargs)
+
+
+def get_session() -> aiohttp.ClientSession:
+    """Return the shared singleton session (lazy-created)."""
+    global _session
+    if _session is None or _session.closed:
+        connector = aiohttp.TCPConnector(ssl=_SSL_CTX, limit=100)
+        _session = aiohttp.ClientSession(connector=connector)
+        _logger.debug("Created shared aiohttp session")
+    return _session
+
+
+async def close_session() -> None:
+    """Close the shared singleton session (call on app shutdown)."""
+    global _session
+    if _session and not _session.closed:
+        await _session.close()
+        _logger.debug("Closed shared aiohttp session")
+    _session = None
 
 
 def _is_retryable(exc: BaseException) -> bool:

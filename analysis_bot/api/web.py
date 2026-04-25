@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -56,7 +57,7 @@ templates = Jinja2Templates(directory="analysis_bot/templates")
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     """Dashboard: List all validation stocks."""
-    stocks = StockService.get_tracked_stocks()
+    stocks = await asyncio.to_thread(StockService.get_tracked_stocks)
     return templates.TemplateResponse("index.html", {"request": request, "stocks": stocks})
 
 
@@ -114,7 +115,7 @@ async def stock_detail(request: Request, ticker: str):
             "index.html",
             {
                 "request": request,
-                "stocks": StockService.get_tracked_stocks(),
+                "stocks": await asyncio.to_thread(StockService.get_tracked_stocks),
                 "error": f"Could not load data for {ticker}",
             },
         )
@@ -198,7 +199,7 @@ async def hold888_api(date: str | None = None):
 @router.get("/news", response_class=HTMLResponse)
 async def news_page(request: Request):
     """News page."""
-    news_items = StockService.get_recent_news()
+    news_items = await asyncio.to_thread(StockService.get_recent_news)
     return templates.TemplateResponse("news.html", {"request": request, "news_items": news_items})
 
 
@@ -235,10 +236,10 @@ async def export_data(session=Depends(get_session)):
 @router.get("/settings/config")
 async def get_settings_config():
     """Get current configuration (Active Tags + List Content)."""
-    active_tags = StockService.get_daily_tags()
-    investanchors = StockService.get_system_config("investanchors")
-    user_choice = StockService.get_system_config("user_choice")
-    target_etfs = StockService.get_system_config("target_etfs")
+    active_tags = await asyncio.to_thread(StockService.get_daily_tags)
+    investanchors = await asyncio.to_thread(StockService.get_system_config, "investanchors")
+    user_choice = await asyncio.to_thread(StockService.get_system_config, "user_choice")
+    target_etfs = await asyncio.to_thread(StockService.get_system_config, "target_etfs")
 
     return {
         "active_tags": active_tags,
@@ -253,12 +254,12 @@ async def get_settings_config():
 @router.post("/settings/tags/toggle")
 async def toggle_tag(payload: TagToggleRequest):
     """Toggle a daily tag."""
-    StockService.toggle_daily_tag(payload.tag, payload.enable)
+    await asyncio.to_thread(StockService.toggle_daily_tag, payload.tag, payload.enable)
     return {"status": "ok"}
 
 
 @router.post("/settings/lists/update")
 async def update_list(payload: ListUpdateRequest):
     """Update content of a custom list."""
-    StockService.set_system_config(payload.key, payload.value)
+    await asyncio.to_thread(StockService.set_system_config, payload.key, payload.value)
     return {"status": "ok"}

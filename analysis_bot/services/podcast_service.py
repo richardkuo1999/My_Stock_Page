@@ -60,7 +60,8 @@ class PodcastService:
             async with session.get(url) as resp:
                 resp.raise_for_status()
                 async with aiofiles.open(filepath, "wb") as f:
-                    await f.write(await resp.read())
+                    async for chunk in resp.content.iter_chunked(65536):
+                        await f.write(chunk)
 
             logger.info(f"Downloaded: {filename}")
             return filepath

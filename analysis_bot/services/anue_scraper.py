@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime
 from urllib.parse import unquote
@@ -174,11 +175,11 @@ class AnueScraper:
 
             candidates = []
 
-            for article_url in target_urls:
-                logger.debug("Processing article: %s", article_url)
-                result = await self._process_article(session, article_url, stock_id, tm_yday)
-                if result:
-                    candidates.append(result)
+            results = await asyncio.gather(
+                *[self._process_article(session, url, stock_id, tm_yday) for url in target_urls],
+                return_exceptions=True,
+            )
+            candidates = [r for r in results if r and not isinstance(r, BaseException)]
 
             if not candidates:
                 return None
@@ -249,11 +250,11 @@ class AnueScraper:
                 return []
 
             tm_yday = float(datetime.now().timetuple().tm_yday)
-            candidates = []
-            for article_url in target_urls:
-                result = await self._process_article(session, article_url, stock_id, tm_yday)
-                if result:
-                    candidates.append(result)
+            results = await asyncio.gather(
+                *[self._process_article(session, url, stock_id, tm_yday) for url in target_urls],
+                return_exceptions=True,
+            )
+            candidates = [r for r in results if r and not isinstance(r, BaseException)]
 
             candidates.sort(key=lambda x: x["date"], reverse=True)
             return candidates

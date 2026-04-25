@@ -138,7 +138,12 @@ response = await ai.call(RequestType.TEXT, contents=prompt, use_search=True)
 
 **Responsibility:** 提供統一的 `aiohttp.ClientSession` 工廠函式，內建 certifi SSL 憑證。
 
-**背景：** 所有 service 原本各自建立 `aiohttp.ClientSession()`，在某些環境（macOS、Docker）會遇到 SSL 憑證問題。統一改用 `create_session()` 確保所有 HTTP 請求使用 certifi 的 CA bundle。
+**Session 管理：**
+- `get_session()` — 回傳全域 singleton session（lazy-created, limit=100 connections）
+- `close_session()` — 關閉 singleton session（app shutdown 時呼叫）
+- `create_session(**kwargs)` — 建立獨立 session（需要自訂 headers/timeout 的場景）
+
+**背景：** 所有 service 原本各自建立 `aiohttp.ClientSession()`，在某些環境（macOS、Docker）會遇到 SSL 憑證問題。統一改用 `create_session()` / `get_session()` 確保所有 HTTP 請求使用 certifi 的 CA bundle。
 
 **Usage:**
 ```python

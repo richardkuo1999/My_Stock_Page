@@ -308,165 +308,61 @@ async def check_news_job(context: ContextTypes.DEFAULT_TYPE = None, bot=None):
             except Exception as e:
                 logger.error(f"Error fetching news from {source['name']}: {e}")
 
-        # 2. Fetch from UAnalyze, Fugle, Vocus
-
-        # UAnalyze
-        try:
-            ua_articles = await news_parser.get_uanalyze_report()
-            if ua_articles:
-                for a in ua_articles:
-                    a["source_name"] = "UAnalyze"
-                new_articles.extend(ua_articles)
-        except Exception as e:
-            logger.error(f"Error fetching UAnalyze: {e}")
-
-        # Fugle
-        try:
-            fugle_articles = await news_parser.get_fugle_report("https://blog.fugle.tw/")
-            if fugle_articles:
-                for a in fugle_articles:
-                    a["source_name"] = "Fugle"
-                new_articles.extend(fugle_articles)
-        except Exception as e:
-            logger.error(f"Error fetching Fugle: {e}")
-
-        # Vocus
-        try:
-            vocus_users = get_settings().VOCUS_USERS
-
-            async def fetch_vocus(user):
-                try:
-                    articles = await news_parser.get_vocus_articles(user)
-                    if articles:
-                        for a in articles:
-                            a["source_name"] = f"Vocus ({user})"
-                        return articles
-                except Exception as e:
-                    logger.error(f"Error fetching Vocus user {user}: {e}")
-                return []
-
-            vocus_results = await asyncio.gather(
-                *[fetch_vocus(u) for u in vocus_users], return_exceptions=True
-            )
-            for res in vocus_results:
-                if isinstance(res, list):
-                    new_articles.extend(res)
-        except Exception as e:
-            logger.error(f"Error Vocus main block: {e}")
-
-        # 2.5. Additional Sources (SinoTrade / Pocket)
-        try:
-            st_res = await news_parser.get_sinotrade_industry_report(limit=20)
-            if st_res:
-                for a in st_res:
-                    a["source_name"] = "SinoTradeIndustry"
-                new_articles.extend(st_res)
-        except Exception as e:
-            logger.error(f"Error fetching SinoTradeIndustry: {e}")
-
-        try:
-            pk_res = await news_parser.get_pocket_school_report(limit=20)
-            if pk_res:
-                for a in pk_res:
-                    a["source_name"] = "PocketReport"
-                new_articles.extend(pk_res)
-        except Exception as e:
-            logger.error(f"Error fetching PocketReport: {e}")
-
-        # 3. Fetch from Additional Ported Sources (UDN, Yahoo, Others)
+        # 2. Fetch from all additional sources in parallel
 
         settings = get_settings()
 
-        # UDN
+        async def _fetch_source(coro, name):
+            try:
+                res = await coro
+                if res:
+                    for a in res:
+                        a["source_name"] = name
+                    return res
+            except Exception as e:
+                logger.error("Error fetching %s: %s", name, e)
+            return []
+
+        # Vocus: fan-out per user
+        vocus_users = settings.VOCUS_USERS
+
+        async def _fetch_all_vocus():
+            results = await asyncio.gather(
+                *[_fetch_source(news_parser.get_vocus_articles(u), f"Vocus ({u})") for u in vocus_users],
+                return_exceptions=True,
+            )
+            out = []
+            for r in results:
+                if isinstance(r, list):
+                    out.extend(r)
+            return out
+
+        # Build task list (conditionally include UDN/Yahoo based on settings)
+        tasks: list[tuple] = [
+            (_fetch_source(news_parser.get_uanalyze_report(), "UAnalyze"), "UAnalyze"),
+            (_fetch_source(news_parser.get_fugle_report("https://blog.fugle.tw/"), "Fugle"), "Fugle"),
+            (_fetch_all_vocus(), "Vocus"),
+            (_fetch_source(news_parser.get_sinotrade_industry_report(limit=20), "SinoTradeIndustry"), "SinoTrade"),
+            (_fetch_source(news_parser.get_pocket_school_report(limit=20), "PocketReport"), "Pocket"),
+            (_fetch_source(news_parser.get_news_digest_ai_report(), "NewsDigestAI"), "NDAI"),
+            (_fetch_source(news_parser.get_macromicro_report(), "Macromicro"), "MM"),
+            (_fetch_source(news_parser.get_finguider_report(), "FinGuider"), "FG"),
+            (_fetch_source(news_parser.get_fintastic_report(), "Fintastic"), "FT"),
+            (_fetch_source(news_parser.get_forecastock_report(), "Forecastock"), "FC"),
+            (_fetch_source(news_parser.get_buffett_letters(), "BuffettLetter"), "Buffett"),
+            (_fetch_source(news_parser.get_howard_marks_memos(limit=5), "HowardMarksMemo"), "HM"),
+        ]
         if settings.ENABLE_UDN_NEWS:
-            try:
-                udn_res = await news_parser.get_udn_report()
-                if udn_res:
-                    for a in udn_res:
-                        a["source_name"] = "UDN"
-                    new_articles.extend(udn_res)
-            except Exception as e:
-                logger.error(f"Error fetching UDN: {e}")
-
-        # Yahoo TW
+            tasks.append((_fetch_source(news_parser.get_udn_report(), "UDN"), "UDN"))
         if settings.ENABLE_YAHOO_NEWS:
-            try:
-                yahoo_res = await news_parser.get_yahoo_tw_report()
-                if yahoo_res:
-                    for a in yahoo_res:
-                        a["source_name"] = "YahooTW"
-                    new_articles.extend(yahoo_res)
-            except Exception as e:
-                logger.error(f"Error fetching YahooTW: {e}")
+            tasks.append((_fetch_source(news_parser.get_yahoo_tw_report(), "YahooTW"), "Yahoo"))
 
-        # News Digest AI
-        try:
-            ndai_res = await news_parser.get_news_digest_ai_report()
-            if ndai_res:
-                for a in ndai_res:
-                    a["source_name"] = "NewsDigestAI"
-                new_articles.extend(ndai_res)
-        except Exception as e:
-            logger.error(f"Error fetching NewsDigestAI: {e}")
-
-        # Fallbacks (Macromicro, FinGuider, Fintastic, Forecastock)
-        # We wrap each in try-except individually for robustness
-
-        try:
-            mm_res = await news_parser.get_macromicro_report()
-            if mm_res:
-                for a in mm_res:
-                    a["source_name"] = "Macromicro"
-                new_articles.extend(mm_res)
-        except Exception as e:
-            logger.error(f"Macromicro fetch error: {e}")
-
-        try:
-            fg_res = await news_parser.get_finguider_report()
-            if fg_res:
-                for a in fg_res:
-                    a["source_name"] = "FinGuider"
-                new_articles.extend(fg_res)
-        except Exception as e:
-            logger.error(f"FinGuider fetch error: {e}")
-
-        try:
-            ft_res = await news_parser.get_fintastic_report()
-            if ft_res:
-                for a in ft_res:
-                    a["source_name"] = "Fintastic"
-                new_articles.extend(ft_res)
-        except Exception as e:
-            logger.error(f"Fintastic fetch error: {e}")
-
-        try:
-            fc_res = await news_parser.get_forecastock_report()
-            if fc_res:
-                for a in fc_res:
-                    a["source_name"] = "Forecastock"
-                new_articles.extend(fc_res)
-        except Exception as e:
-            logger.error(f"Forecastock fetch error: {e}")
-
-        # Buffett Shareholder Letters (annual, from berkshirehathaway.com)
-        try:
-            buf_res = await news_parser.get_buffett_letters()
-            if buf_res:
-                for a in buf_res:
-                    a["source_name"] = "BuffettLetter"
-                new_articles.extend(buf_res)
-        except Exception as e:
-            logger.error(f"BuffettLetter fetch error: {e}")
-
-        # Howard Marks Memos (from oaktreecapital.com)
-        try:
-            hm_res = await news_parser.get_howard_marks_memos(limit=5)
-            if hm_res:
-                for a in hm_res:
-                    a["source_name"] = "HowardMarksMemo"
-                new_articles.extend(hm_res)
-        except Exception as e:
-            logger.error(f"HowardMarksMemo fetch error: {e}")
+        gather_results = await asyncio.gather(
+            *[t[0] for t in tasks], return_exceptions=True,
+        )
+        for res in gather_results:
+            if isinstance(res, list):
+                new_articles.extend(res)
 
         if not new_articles:
             return

@@ -17,25 +17,24 @@ logger = logging.getLogger(__name__)
 class StockService:
     @staticmethod
     def get_recent_news(limit_per_source: int = 15) -> list[News]:
-        """Fetch news ensuring diversity of sources."""
+        """Fetch news ensuring diversity of sources (single query)."""
         with Session(engine) as session:
-            # 1. Get all distinct sources
-            sources = session.exec(select(News.source).distinct()).all()
+            # Single query: fetch recent news ordered by date
+            all_rows = session.exec(
+                select(News).order_by(News.created_at.desc()).limit(limit_per_source * 30)
+            ).all()
 
-            all_news = []
-            for src in sources:
-                # Get Top N per source
-                news = session.exec(
-                    select(News)
-                    .where(News.source == src)
-                    .order_by(News.created_at.desc())
-                    .limit(limit_per_source)
-                ).all()
-                all_news.extend(news)
+            # Group by source, keep top N per source
+            by_source: dict[str, list[News]] = {}
+            for n in all_rows:
+                src = n.source or ""
+                bucket = by_source.setdefault(src, [])
+                if len(bucket) < limit_per_source:
+                    bucket.append(n)
 
-            # Sort final list by date desc
-            all_news.sort(key=lambda x: x.created_at, reverse=True)
-            return all_news
+            result = [n for bucket in by_source.values() for n in bucket]
+            result.sort(key=lambda x: x.created_at, reverse=True)
+            return result
 
     @staticmethod
     async def get_or_analyze_stock(

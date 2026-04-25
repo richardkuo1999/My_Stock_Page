@@ -5,7 +5,7 @@
 
 ## Architecture
 
-The `AIService` class provides AI operations using Google Gemini with automatic key rotation and model fallback.
+The `AIService` class provides AI operations using Google Gemini (primary) or Ollama (local fallback) with automatic key rotation and model fallback.
 
 ## Configuration
 
@@ -14,7 +14,15 @@ Configuration is loaded from `Settings` class in `config.py`:
 ```python
 class Settings(BaseSettings):
     GEMINI_API_KEYS: list[str] = []  # Multiple keys for rotation
+    OLLAMA_MODEL: str = ""           # e.g. "llama3.2", empty = disabled
 ```
+
+## Ollama Integration (`_call_ollama`)
+
+**Features:**
+- Local model support via Ollama HTTP API (`http://localhost:11434`)
+- Auto-start: `ensure_ollama()` checks/starts Ollama service and pulls model at app startup
+- Used when `OLLAMA_MODEL` is set and Gemini keys are unavailable
 
 ## Gemini Integration (`_call_gemini`)
 

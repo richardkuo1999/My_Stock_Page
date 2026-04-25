@@ -93,7 +93,7 @@ if ratio > 0.85:
 
 **Location:** `jobs.py` `check_news_job()`
 
-1. Fetch from all configured sources
+1. Fetch from all configured sources **in parallel** (`asyncio.gather`)
 2. Deduplicate against recent articles (24-hour window)
 3. Save new articles to database
 4. For each subscriber:
