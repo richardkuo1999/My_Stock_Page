@@ -350,7 +350,6 @@ class VolumeSpikeScanner:
                 progress=False,
             )
 
-        results: list[VolumeSpikeResult] = []
         for i in range(0, len(yf_tickers), BATCH_SIZE):
             batch = yf_tickers[i : i + BATCH_SIZE]
             logger.info("Downloading batch %d-%d/%d...", i + 1, min(i + BATCH_SIZE, len(yf_tickers)), len(yf_tickers))

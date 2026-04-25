@@ -47,6 +47,30 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
 
     pii_salt = settings.LOG_PII_SALT or None
 
+    # Load subscribers early so progress messages can be broadcast
+    from .models.subscriber import Subscriber
+
+    def _get_daily_subscribers():
+        with Session(engine) as session:
+            subs = session.exec(select(Subscriber).where(Subscriber.daily_analysis_enabled)).all()
+            return [(s.chat_id, s.topic_id) for s in subs]
+
+    _daily_subs = await asyncio.to_thread(_get_daily_subscribers)
+
+    async def _broadcast(text: str) -> None:
+        """Send a message to all daily-analysis subscribers."""
+        for cid, tid in _daily_subs:
+            try:
+                kwargs = {"chat_id": cid, "text": text}
+                if tid:
+                    kwargs["message_thread_id"] = tid
+                await bot.send_message(**kwargs)
+            except Exception as e:
+                logger.warning(
+                    "broadcast failed to %s: %s",
+                    redact_telegram_id(cid, salt=pii_salt), e,
+                )
+
     # 0. Load Active Tags
     from .services.stock_service import StockService
 
@@ -180,14 +204,9 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
         logger.warning(
             "No tickers selected for daily analysis. Check active_daily_tags or enable run_tracked."
         )
-        if chat_id:
-            try:
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text="⚠️ Daily run skipped: 沒有任何股票被選入分析清單（請先在 Settings 開啟 tags，或改用 Tracked 模式）。",
-                )
-            except Exception as e:
-                logger.error(f"Failed to send empty-tickers msg: {e}")
+        await _broadcast(
+            "⚠️ Daily run skipped: 沒有任何股票被選入分析清單（請先在 Settings 開啟 tags，或改用 Tracked 模式）。"
+        )
         return
 
     # Temp dir for reports
@@ -236,20 +255,15 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
 
             # Send progress update at intervals
             if current % PROGRESS_INTERVAL == 0 or current == total:
-                try:
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text=f"📊 分析進度：{current}/{total} ({current / total * 100:.0f}%)",
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to send progress update: {e}")
+                await _broadcast(
+                    f"📊 分析進度：{current}/{total} ({current / total * 100:.0f}%)"
+                )
 
             return result
 
         logger.info(f"Starting parallel analysis with MAX_CONCURRENT={MAX_CONCURRENT}")
-        await bot.send_message(
-            chat_id=chat_id,
-            text=f"🔍 開始分析 {len(tickers)} 檔股票（並發數：{MAX_CONCURRENT}）...",
+        await _broadcast(
+            f"🔍 開始分析 {len(tickers)} 檔股票（並發數：{MAX_CONCURRENT}）..."
         )
 
         # Run all analyses in parallel
@@ -277,7 +291,7 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
         )
 
         # Send failure summary if any
-        if failed_tickers and chat_id:
+        if failed_tickers:
             fail_msg = f"⚠️ 失敗 {len(failed_tickers)} 檔：\n"
             fail_msg += "\n".join(
                 [
@@ -287,10 +301,7 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
             )
             if len(failed_tickers) > 10:
                 fail_msg += f"\n... 及其他 {len(failed_tickers) - 10} 檔"
-            try:
-                await bot.send_message(chat_id=chat_id, text=fail_msg)
-            except Exception as e:
-                logger.warning(f"Failed to send failure summary: {e}")
+            await _broadcast(fail_msg)
 
         underestimated_stocks = []
 
@@ -413,16 +424,7 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
                     f"Failed to send bundle to {redact_telegram_id(target_chat_id, salt=pii_salt)}: {e}"
                 )
 
-        from .models.subscriber import Subscriber
-
-        def get_subscribers():
-            with Session(engine) as session:
-                subs = session.exec(select(Subscriber).where(Subscriber.daily_analysis_enabled)).all()
-                return [(s.chat_id, s.topic_id) for s in subs]
-
-        subscribers = await asyncio.to_thread(get_subscribers)
-
-        for sub_cid, sub_tid in subscribers:
+        for sub_cid, sub_tid in _daily_subs:
             await send_daily_bundle(sub_cid, sub_tid)
 
     logger.info("Daily analysis job completed.")
