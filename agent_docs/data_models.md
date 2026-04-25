@@ -29,14 +29,17 @@ class Subscriber(SQLModel, table=True):
         UniqueConstraint("chat_id", "topic_id", name="uq_subscriber_chat_topic"),
     )
 
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id: int | None = Field(default=None, primary_key=True)
     chat_id: int = Field(index=True)
-    topic_id: Optional[int] = Field(default=None, index=True)
+    topic_id: int | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=now_tw)
     news_enabled: bool = Field(default=False)
     ispike_enabled: bool = Field(default=False)
     sentiment_alert_enabled: bool = Field(default=False)
     umon_enabled: bool = Field(default=False)
+    daily_analysis_enabled: bool = Field(default=False)
+    spike_enabled: bool = Field(default=False)
+    vix_enabled: bool = Field(default=False)
 ```
 
 **Purpose:** Track Telegram chat IDs for push notifications.

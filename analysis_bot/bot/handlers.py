@@ -49,7 +49,7 @@ from .jobs import process_threads_watch_entry
 logger = logging.getLogger(__name__)
 
 # Constants
-MAX_ALIAS_LENGTH = 64
+from .constants import MAX_ALIAS_LENGTH
 _THREADS_USERNAME_RE = re.compile(r"^[A-Za-z0-9._]+$")
 
 # Conversation states

@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
@@ -15,7 +14,7 @@ class Subscriber(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     chat_id: int = Field(index=True)
-    topic_id: Optional[int] = Field(default=None, index=True)  # Telegram Forum topic
+    topic_id: int | None = Field(default=None, index=True)  # Telegram Forum topic
     created_at: datetime = Field(default_factory=now_tw)
     news_enabled: bool = Field(default=False)  # 訂閱新聞推播
     ispike_enabled: bool = Field(default=False)  # 訂閱盤中爆量通知

@@ -9,12 +9,52 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlmodel import Session, select
 
 from .database import engine
+from .models.config import SystemConfig
 from .models.stock import StockData
 from .services.podcast_service import PodcastService
 from .services.stock_analyzer import StockAnalyzer
 
 scheduler = AsyncIOScheduler()
 logger = logging.getLogger(__name__)
+
+
+def _get_bot():
+    """Reuse running bot instance, or create a new one."""
+    from . import main as _main_mod
+    from .config import get_settings
+
+    if getattr(_main_mod, "bot_app", None) and _main_mod.bot_app.bot:
+        return _main_mod.bot_app.bot
+    from telegram import Bot
+    return Bot(token=get_settings().TELEGRAM_TOKEN)
+
+
+def _load_config_json(key: str, default=None):
+    """Load a JSON value from SystemConfig by key."""
+    try:
+        with Session(engine) as session:
+            row = session.exec(select(SystemConfig).where(SystemConfig.key == key)).first()
+            if row:
+                return json.loads(row.value)
+    except Exception as e:
+        logger.warning("Config load failed for %s: %s", key, e)
+    return default if default is not None else {}
+
+
+def _save_config_json(key: str, value) -> None:
+    """Save a JSON value to SystemConfig by key (upsert)."""
+    try:
+        with Session(engine) as session:
+            row = session.exec(select(SystemConfig).where(SystemConfig.key == key)).first()
+            encoded = json.dumps(value)
+            if row:
+                row.value = encoded
+                session.add(row)
+            else:
+                session.add(SystemConfig(key=key, value=encoded))
+            session.commit()
+    except Exception as e:
+        logger.warning("Config save failed for %s: %s", key, e)
 
 
 async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True):
@@ -33,15 +73,7 @@ async def daily_analysis_job(run_daily=True, run_anchors=True, run_tracked=True)
 
     settings = get_settings()
 
-    # Try to get the bot from the running application to avoid creating duplicate instances
-    from . import main as _main_mod
-
-    if getattr(_main_mod, "bot_app", None) and _main_mod.bot_app.bot:
-        bot = _main_mod.bot_app.bot
-    else:
-        from telegram import Bot
-
-        bot = Bot(token=settings.TELEGRAM_TOKEN)
+    bot = _get_bot()
 
     from .utils.pii import redact_telegram_id
 
@@ -444,14 +476,7 @@ async def daily_podcast_job():
 
     settings = get_settings()
 
-    from . import main as _main_mod
-
-    if getattr(_main_mod, "bot_app", None) and _main_mod.bot_app.bot:
-        bot = _main_mod.bot_app.bot
-    else:
-        from telegram import Bot
-
-        bot = Bot(token=settings.TELEGRAM_TOKEN)
+    bot = _get_bot()
 
     from .utils.pii import redact_telegram_id
 
@@ -527,15 +552,7 @@ async def daily_volume_spike_job():
         )
         sort_by = SpikeSortBy.RATIO
 
-    # Reuse running bot instance
-    from . import main as _main_mod
-
-    if getattr(_main_mod, "bot_app", None) and _main_mod.bot_app.bot:
-        bot = _main_mod.bot_app.bot
-    else:
-        from telegram import Bot
-
-        bot = Bot(token=settings.TELEGRAM_TOKEN)
+    bot = _get_bot()
 
     from .utils.pii import redact_telegram_id
 
@@ -640,38 +657,14 @@ def _intraday_notified_key() -> str:
 
 def _load_intraday_notified() -> set[str]:
     """讀取今日已通知的盤中爆量股票清單（去重用）。"""
-    from .models.config import SystemConfig
     key = _intraday_notified_key()
-    try:
-        with Session(engine) as session:
-            row = session.exec(
-                select(SystemConfig).where(SystemConfig.key == key)
-            ).first()
-            if row:
-                return set(json.loads(row.value))
-    except Exception as e:
-        logger.warning(f"Intraday notified load failed: {e}")
-    return set()
+    data = _load_config_json(key, default=[])
+    return set(data) if isinstance(data, list) else set()
 
 
 def _save_intraday_notified(tickers: set[str]) -> None:
     """寫入今日已通知的盤中爆量股票清單。"""
-    from .models.config import SystemConfig
-    key = _intraday_notified_key()
-    try:
-        with Session(engine) as session:
-            row = session.exec(
-                select(SystemConfig).where(SystemConfig.key == key)
-            ).first()
-            value = json.dumps(sorted(tickers))
-            if row:
-                row.value = value
-                session.add(row)
-            else:
-                session.add(SystemConfig(key=key, value=value))
-            session.commit()
-    except Exception as e:
-        logger.warning(f"Intraday notified save failed: {e}")
+    _save_config_json(_intraday_notified_key(), sorted(tickers))
 
 
 async def premarket_vol19_job() -> None:
@@ -863,12 +856,7 @@ async def intraday_spike_scan_job():
     if not settings.INTRADAY_SPIKE_ENABLED:
         return
 
-    from . import main as _main_mod
-    if getattr(_main_mod, "bot_app", None) and _main_mod.bot_app.bot:
-        bot = _main_mod.bot_app.bot
-    else:
-        from telegram import Bot
-        bot = Bot(token=settings.TELEGRAM_TOKEN)
+    bot = _get_bot()
 
     try:
         # 1. 載入前日 MA20 快照
@@ -967,48 +955,12 @@ _VIX_LAST_ALERT_KEY = "vix_last_alert"  # SystemConfig key
 
 def _load_vix_last_alert() -> dict:
     """從 DB 讀取上次推播狀態。"""
-    import json
-
-    from sqlmodel import Session, select
-
-    from .database import engine
-    from .models.config import SystemConfig
-
-    try:
-        with Session(engine) as session:
-            row = session.exec(
-                select(SystemConfig).where(SystemConfig.key == _VIX_LAST_ALERT_KEY)
-            ).first()
-            if row:
-                return json.loads(row.value)
-    except Exception as e:
-        logger.warning(f"VIX alert state load failed: {e}")
-    return {"level": None, "time": None}
+    return _load_config_json(_VIX_LAST_ALERT_KEY, default={"level": None, "time": None})
 
 
 def _save_vix_last_alert(level: str, time_iso: str) -> None:
     """將推播狀態持久化到 DB。"""
-    import json
-
-    from sqlmodel import Session, select
-
-    from .database import engine
-    from .models.config import SystemConfig
-
-    try:
-        with Session(engine) as session:
-            row = session.exec(
-                select(SystemConfig).where(SystemConfig.key == _VIX_LAST_ALERT_KEY)
-            ).first()
-            value = json.dumps({"level": level, "time": time_iso})
-            if row:
-                row.value = value
-                session.add(row)
-            else:
-                session.add(SystemConfig(key=_VIX_LAST_ALERT_KEY, value=value))
-            session.commit()
-    except Exception as e:
-        logger.warning(f"VIX alert state save failed: {e}")
+    _save_config_json(_VIX_LAST_ALERT_KEY, {"level": level, "time": time_iso})
 
 
 async def vix_check_job():
@@ -1024,13 +976,7 @@ async def vix_check_job():
     from .services.vix_fetcher import fetch_vix_snapshot, format_vix_message
 
     settings = get_settings()
-
-    if getattr(_main_mod, "bot_app", None) and _main_mod.bot_app.bot:
-        bot = _main_mod.bot_app.bot
-    else:
-        from telegram import Bot
-
-        bot = Bot(token=settings.TELEGRAM_TOKEN)
+    bot = _get_bot()
 
     snap = await fetch_vix_snapshot()
     if snap is None:

@@ -22,7 +22,7 @@ from ..utils.tz import now_tw
 logger = logging.getLogger(__name__)
 
 # Constants
-MAX_ALIAS_LENGTH = 64
+from .constants import MAX_ALIAS_LENGTH
 MAX_SEND_ARTICLES = 5
 
 _WORD_CHARS_RE = re.compile(r"[A-Z0-9]")
