@@ -9,7 +9,7 @@ from .config import get_settings
 from .database import create_db_and_tables
 from .logging_conf import setup_logging
 from .scheduler import shutdown_scheduler, start_scheduler
-from .services.ai_service import AIService
+from .services.ai_service import AIService, ensure_ollama
 from .services.news_parser import NewsParser
 
 settings = get_settings()
@@ -51,6 +51,9 @@ async def lifespan(app: FastAPI):
         )
 
     create_db_and_tables()
+
+    # Ensure Ollama service & model are ready (if using Ollama)
+    await ensure_ollama()
 
     # Start Scheduler
     start_scheduler()
@@ -137,6 +140,8 @@ async def lifespan(app: FastAPI):
     yield
     # Shutdown
     if bot_app:
+        import asyncio as _shutdown_aio
+
         try:
             if bot_app.bot_data.get("news_parser"):
                 await bot_app.bot_data["news_parser"].close()
@@ -144,15 +149,15 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Error closing news_parser: {e}")
         try:
             if bot_app.updater and bot_app.updater.running:
-                await bot_app.updater.stop()
+                await _shutdown_aio.wait_for(bot_app.updater.stop(), timeout=5)
         except Exception as e:
             logger.warning(f"Error stopping updater: {e}")
         try:
-            await bot_app.stop()
+            await _shutdown_aio.wait_for(bot_app.stop(), timeout=5)
         except Exception as e:
             logger.warning(f"Error stopping bot app: {e}")
         try:
-            await bot_app.shutdown()
+            await _shutdown_aio.wait_for(bot_app.shutdown(), timeout=5)
         except Exception as e:
             logger.warning(f"Error shutting down bot app: {e}")
         print("Bot stopped.")

@@ -23,9 +23,16 @@ class Settings(BaseSettings):
     ENABLE_UDN_NEWS: bool = False
     ENABLE_YAHOO_NEWS: bool = False
 
+    # AI Provider: "gemini" or "ollama"
+    AI_PROVIDER: str = "gemini"
+
     # AI Keys
     GEMINI_API_KEYS: list[str] = []
     GROQ_API_KEY: str | None = None
+
+    # Ollama (local model)
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_MODEL: str = "gemma4:e4b"
 
     # Podcast
     PODCAST_SOURCE_IDS: list[str] = [
