@@ -51,7 +51,14 @@ Handler registration is in `analysis_bot/bot/main.py`.
 
 **Services Used:**
 - `LegacyMoneyDJ` — Scrapes MoneyDJ wiki
-- `AIService` — Generates summary with Google search
+- `uanalyze_ai.analyze_stock()` — UAnalyze AI 分析（6 題精選 prompt，並行呼叫）
+- `AIService` — 整合 MoneyDJ + UAnalyze 資料，搭配 Google search 產生總結報告
+
+**Flow:**
+1. 並行呼叫 MoneyDJ wiki + UAnalyze AI（`asyncio.gather`，任一失敗不影響另一個）
+2. 合併兩個來源的內容
+3. 送入 AI 產生繁體中文總結報告（含 Google 搜尋）
+4. 回傳 Markdown 文件
 
 **Example:** `/info 2330`
 

@@ -33,6 +33,7 @@ from ..services.blake_chips_scraper import fetch_chips_data, fetch_chips_data_88
 from ..services.intraday_chart import render_intraday_chart
 from ..services.intraday_spike_scanner import IntradaySpikeScanner
 from ..services.legacy_scraper import LegacyMoneyDJ
+from ..services.uanalyze_ai import analyze_stock as uanalyze_analyze
 from ..services.news_parser import NewsParser
 from ..services.price_fetcher import fetch_price
 from ..services.report_generator import ReportGenerator
@@ -444,26 +445,57 @@ class _fake_context:
 
 
 # --- Core Logic Functions (Reusable) ---
+
+# UAnalyze prompts subset for /info (keep it fast)
+_INFO_UA_PROMPTS = ["公司概覽", "近況發展", "❤️產品線分析", "利多因素", "利空因素", "長短期展望"]
+
+
 async def run_info_analysis(update: Update, ticker: str):
     await update.message.reply_text(f"✅ 你輸入的股號是 {ticker}，幫你處理！📊")
 
-    # 1. Scrape MoneyDJ
     dj = LegacyMoneyDJ()
     try:
-        stock_name, wiki_text = await dj.get_wiki_result(ticker)
+        # 1. Parallel fetch: MoneyDJ wiki + UAnalyze AI
+        wiki_task = dj.get_wiki_result(ticker)
+        ua_task = uanalyze_analyze(ticker, prompts=_INFO_UA_PROMPTS)
 
+        wiki_result, ua_md = await asyncio.gather(
+            wiki_task, ua_task, return_exceptions=True,
+        )
+
+        # Handle wiki failure
+        if isinstance(wiki_result, BaseException):
+            logger.warning(f"MoneyDJ failed for {ticker}: {wiki_result}")
+            stock_name, wiki_text = None, None
+        else:
+            stock_name, wiki_text = wiki_result
         if not stock_name:
             await update.message.reply_text(f"❌ 找不到 {ticker} 的相關資訊。")
             return
 
-        # 2. AI Summary
+        # Handle UAnalyze failure gracefully
+        if isinstance(ua_md, BaseException):
+            logger.warning(f"UAnalyze failed for {ticker}: {ua_md}")
+            ua_md = ""
+
+        # 2. Combine sources for AI
+        combined = ""
+        if wiki_text:
+            combined += f"=== MoneyDJ 百科 ===\n{wiki_text}\n\n"
+        if ua_md:
+            combined += f"=== UAnalyze AI 分析 ===\n{ua_md}\n\n"
+
         ai = AIService()
-        condition = "近1年的公司產品、營收占比、業務來源、財務狀況(營收、eps、毛利率等)、近期pros & cons 加上 google 搜尋結果，要幫我標示來源"
+        condition = (
+            "根據以下資料，整理近1年的公司產品、營收占比、業務來源、"
+            "財務狀況(營收、eps、毛利率等)、近況發展、利多與利空因素、"
+            "長短期展望，加上 google 搜尋結果，要幫我標示來源"
+        )
         prompt = "\n" + condition + "，並且使用繁體中文回答\n"
 
-        # Call AI
+        # 3. Call AI
         await update.message.reply_chat_action(ChatAction.TYPING)
-        response = await ai.call(RequestType.TEXT, contents=wiki_text, prompt=prompt)
+        response = await ai.call(RequestType.TEXT, contents=combined, prompt=prompt)
 
         if response:
             file_name = f"{ticker}{stock_name}_info.md"
@@ -471,7 +503,7 @@ async def run_info_analysis(update: Update, ticker: str):
             f.name = file_name
             await update.message.reply_document(
                 document=InputFile(f, filename=file_name),
-                caption="這是你的報告(含google搜尋) 📄",
+                caption="這是你的報告(含UAnalyze+google搜尋) 📄",
             )
         else:
             await update.message.reply_text("抱歉我壞了 (AI Error)")
