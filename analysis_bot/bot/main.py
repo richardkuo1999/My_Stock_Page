@@ -177,7 +177,12 @@ def create_bot_application() -> Application:
 
     # Jobs
     if application.job_queue:
-        application.job_queue.run_repeating(check_news_job, interval=600, first=30)
+        application.job_queue.run_repeating(
+            check_news_job,
+            interval=600,
+            first=30,
+            job_kwargs={"misfire_grace_time": 120, "coalesce": True, "max_instances": 1},
+        )
         if settings.THREADS_WATCH_INTERVAL_SEC > 0:
             application.job_queue.run_repeating(
                 threads_watch_job,

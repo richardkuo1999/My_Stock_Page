@@ -118,7 +118,11 @@ class NewsParser:
                     text = raw.decode(resp.get_encoding() or "latin-1", errors="replace")
                 return BeautifulSoup(text, "html.parser")
         except Exception as e:
-            self.logger.error(f"HTTP request error {url}: {e}")
+            status = getattr(e, "status", None)
+            if status in (403, 401):
+                self.logger.debug(f"HTTP {status} (blocked/paywall) {url}")
+            else:
+                self.logger.error(f"HTTP request error {url}: {e}")
             return None
 
     def moneyDJ_news_parser(self, soup) -> str:

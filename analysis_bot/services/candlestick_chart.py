@@ -612,12 +612,19 @@ async def _screenshot(payload: dict) -> str:
     return path
 
 
-def _run_in_process(html: str, path: str) -> None:
-    proc = multiprocessing.Process(target=_screenshot_in_subprocess, args=(html, path))
-    proc.start()
-    proc.join(timeout=30)
-    if proc.exitcode != 0:
-        raise RuntimeError(f"screenshot subprocess failed (exit={proc.exitcode})")
+def _run_in_process(html: str, path: str, retries: int = 2) -> None:
+    for attempt in range(1 + retries):
+        proc = multiprocessing.Process(target=_screenshot_in_subprocess, args=(html, path))
+        proc.start()
+        proc.join(timeout=30)
+        if proc.exitcode == 0:
+            return
+        if proc.is_alive():
+            proc.kill()
+            proc.join(timeout=5)
+        if attempt < retries:
+            logger.debug("screenshot attempt %d failed (exit=%s), retrying…", attempt + 1, proc.exitcode)
+    raise RuntimeError(f"screenshot subprocess failed (exit={proc.exitcode})")
 
 
 async def render_candlestick_chart(
