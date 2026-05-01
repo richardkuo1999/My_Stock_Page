@@ -457,6 +457,11 @@ async def gsheet_sync_for_user(chat_id: int, user_id: int) -> str:
             continue
 
         current_hash = _hash_content(csv_text)
+
+        # Skip if content unchanged since last sync
+        if sub.last_hash and current_hash == sub.last_hash:
+            continue
+
         entries = _parse_rows(csv_text)
 
         if not entries:
@@ -540,6 +545,11 @@ async def gsheet_sync_for_chat(chat_id: int) -> str:
             continue
 
         current_hash = _hash_content(csv_text)
+
+        # Skip if content unchanged since last sync
+        if sub.last_hash and current_hash == sub.last_hash:
+            continue
+
         entries = _parse_rows(csv_text)
 
         if not entries:
