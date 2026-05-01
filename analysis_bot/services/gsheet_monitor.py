@@ -128,9 +128,19 @@ def _parse_rows(csv_text: str) -> list[dict]:
     reader = csv.reader(io.StringIO(csv_text))
     entries = []
 
+    # Extract sheet-level 更新日期 from row 0 (e.g. ",短線持股%,40,更新日期,2026/04/28,...")
+    sheet_date = ""
     for i, row in enumerate(reader):
-        # Skip header rows (row 0 is metadata, row 1 is header)
-        if i < 2:
+        if i == 0:
+            for j, cell in enumerate(row):
+                if "更新日期" in cell:
+                    # The date value is in the next column
+                    if j + 1 < len(row) and row[j + 1].strip():
+                        sheet_date = row[j + 1].strip()
+                    break
+            continue
+        # Skip header row (row 1)
+        if i == 1:
             continue
         if len(row) < 8:
             continue
@@ -141,7 +151,7 @@ def _parse_rows(csv_text: str) -> list[dict]:
             continue
 
         name = row[2].strip() if len(row) > 2 else ""
-        date_str = row[3].strip() if len(row) > 3 else ""
+        date_str = sheet_date
         status = row[4].strip() if len(row) > 4 else ""
         period = row[5].strip() if len(row) > 5 else ""
         strategy = row[6].strip() if len(row) > 6 else ""
@@ -273,17 +283,13 @@ def _sync_watchlist(
 
 
 def _format_entry_line(entry: dict) -> str:
-    """Format a single entry dict into a display line."""
+    """Format a single entry dict into a compact display line."""
     ticker = entry["ticker"]
     name = entry.get("name") or ""
     price = entry.get("price")
-    note = entry.get("note") or ""
-    price_str = f" ${price:,.1f}" if price else ""
+    price_str = f"  ${price:,.1f}" if price else ""
     name_str = f" {name}" if name else ""
-    line = f"  {ticker}{name_str}{price_str}"
-    if note:
-        line += f"\n    📝 {note}"
-    return line
+    return f"  {ticker}{name_str}{price_str}"
 
 
 async def gsheet_sync_job() -> None:
@@ -373,6 +379,11 @@ async def gsheet_sync_job() -> None:
         if removed:
             lines.append(f"\n🗑 移除：{', '.join(removed)}")
         lines.append(f"\n共 {len(entries)} 檔持股")
+
+        # Append compact watchlist
+        from ..bot.handlers import _format_watchlist
+        watchlist = _format_watchlist(sub.chat_id)
+        lines.append(f"\n{watchlist}")
 
         message = "\n".join(lines)
 

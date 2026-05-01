@@ -1715,13 +1715,6 @@ def _parse_note_fields(note: str) -> dict[str, str]:
     return fields
 
 
-def _extract_stars(note: str | None) -> str:
-    """Extract star rating (倉位) from note, e.g. '★★★☆☆'."""
-    if not note:
-        return ""
-    fields = _parse_note_fields(note)
-    return fields.get("倉位", "")
-
 
 def _format_pnl(added_price: float | None, cur_price: float | None) -> tuple[str, str]:
     """Return (price_part, pnl_str) for display."""
@@ -1787,14 +1780,11 @@ def _render_compact(
             cur_price = price_map.get(e.ticker)
             price_part, pnl_str = _format_pnl(e.added_price, cur_price)
 
-            stars = _extract_stars(e.note)
             parts = [f"{i:>2}. {e.ticker}{alias}"]
             if price_part:
                 parts.append(price_part)
             if pnl_str:
                 parts.append(pnl_str)
-            if stars:
-                parts.append(stars)
             lines.append("  " + "  ".join(parts))
         lines.append("")
 
@@ -1845,14 +1835,9 @@ def _render_full(
                 # Row 2: 策略
                 if "策略" in fields:
                     lines.append(f"   🔹 策略：{fields['策略']}")
-                # Row 3: 停損 + 倉位
-                risk = []
+                # Row 3: 停損
                 if "停損" in fields:
-                    risk.append(f"停損：{fields['停損']}")
-                if "倉位" in fields:
-                    risk.append(fields["倉位"])
-                if risk:
-                    lines.append("   🔹 " + "  ".join(risk))
+                    lines.append(f"   🔹 停損：{fields['停損']}")
                 # Row 4: 動作
                 if "動作" in fields:
                     lines.append(f"   ⚡ {fields['動作']}")
@@ -2474,7 +2459,8 @@ async def gsheet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from ..services.gsheet_monitor import gsheet_sync_for_user
 
             sync_result = await gsheet_sync_for_user(chat_id, user_id)
-            await update.message.reply_text(sync_result)
+            watchlist = await asyncio.to_thread(_format_watchlist, chat_id)
+            await update.message.reply_text(f"{sync_result}\n\n{watchlist}")
 
     elif action == "del":
         if len(context.args) < 2:
@@ -2532,7 +2518,8 @@ async def gsheet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from ..services.gsheet_monitor import gsheet_sync_for_chat
 
         result = await gsheet_sync_for_chat(chat_id)
-        await update.message.reply_text(result)
+        watchlist = await asyncio.to_thread(_format_watchlist, chat_id)
+        await update.message.reply_text(f"{result}\n\n{watchlist}")
 
     else:
         await update.message.reply_text(usage)

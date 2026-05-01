@@ -110,6 +110,11 @@ def test_parse_rows_basic():
     assert entries[2]["ticker"] == "3680"
     assert "動作:再再再加碼" in entries[2]["note"]
 
+    # All entries use sheet-level 更新日期 (row 0) instead of per-stock 新增日期
+    assert entries[0]["date_str"] == "2026/04/28"
+    assert entries[1]["date_str"] == "2026/04/28"
+    assert entries[2]["date_str"] == "2026/04/28"
+
 
 def test_parse_rows_skips_invalid():
     csv_text = """\
