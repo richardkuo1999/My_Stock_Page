@@ -13,6 +13,7 @@ from analysis_bot.services.gsheet_monitor import (
     _parse_rows,
     _parse_sheet_url,
     _sync_watchlist,
+    gsheet_sync_for_chat,
     gsheet_sync_for_user,
 )
 from analysis_bot.tests.bot_fakes import FakeContext, FakeMessage, FakeUpdate
@@ -373,3 +374,68 @@ async def test_gsheet_sync_no_subs(gsheet_engine, mock_fetch):
     await handlers.gsheet_command(update, FakeContext(args=["sync"]))
     assert "⏳" in msg.reply_text_calls[0].text
     assert "沒有註冊" in msg.reply_text_calls[1].text
+
+
+# --- Cross-user tests: list and sync are chat-level ---
+
+
+@pytest.mark.asyncio
+async def test_gsheet_list_shows_all_users(gsheet_engine, mock_fetch):
+    """list should show subscriptions from all users in the same chat."""
+    # User A adds a sheet
+    update_a = FakeUpdate(message=FakeMessage(), chat_id=1, user_id=10, user_full_name="Alice")
+    await handlers.gsheet_command(update_a, FakeContext(args=["add", TEST_GSHEET_URL, "Alice的持股"]))
+
+    # User B lists — should see Alice's sheet
+    msg = FakeMessage()
+    update_b = FakeUpdate(message=msg, chat_id=1, user_id=20, user_full_name="Bob")
+    await handlers.gsheet_command(update_b, FakeContext(args=["list"]))
+    list_text = msg.reply_text_calls[0].text
+    assert "Alice的持股" in list_text
+    assert "Alice" in list_text
+
+
+@pytest.mark.asyncio
+async def test_gsheet_sync_works_for_other_user(gsheet_engine, mock_fetch):
+    """sync should sync all subscriptions in the chat, not just the caller's."""
+    # User A adds a sheet
+    update_a = FakeUpdate(message=FakeMessage(), chat_id=1, user_id=10, user_full_name="Alice")
+    await handlers.gsheet_command(update_a, FakeContext(args=["add", TEST_GSHEET_URL]))
+
+    # User B syncs — should succeed (not "沒有註冊")
+    msg = FakeMessage()
+    update_b = FakeUpdate(message=msg, chat_id=1, user_id=20, user_full_name="Bob")
+    await handlers.gsheet_command(update_b, FakeContext(args=["sync"]))
+    assert "⏳" in msg.reply_text_calls[0].text
+    sync_text = msg.reply_text_calls[1].text
+    assert "沒有註冊" not in sync_text
+
+
+@pytest.mark.asyncio
+async def test_gsheet_sync_for_chat_function(gsheet_engine, mock_fetch):
+    """gsheet_sync_for_chat should find subscriptions regardless of user_id."""
+    # Add subscription as user 10
+    with Session(gsheet_engine) as session:
+        session.add(GSheetSubscription(
+            chat_id=1, user_id=10, url=TEST_GSHEET_URL,
+            user_name="Alice",
+        ))
+        session.commit()
+
+    result = await gsheet_sync_for_chat(chat_id=1)
+    assert "沒有註冊" not in result
+    assert "同步完成" in result
+
+
+@pytest.mark.asyncio
+async def test_gsheet_list_different_chat_isolated(gsheet_engine, mock_fetch):
+    """list should not show subscriptions from a different chat."""
+    # User adds in chat 1
+    update1 = FakeUpdate(message=FakeMessage(), chat_id=1, user_id=10, user_full_name="Alice")
+    await handlers.gsheet_command(update1, FakeContext(args=["add", TEST_GSHEET_URL]))
+
+    # Different chat lists — should be empty
+    msg = FakeMessage()
+    update2 = FakeUpdate(message=msg, chat_id=2, user_id=20, user_full_name="Bob")
+    await handlers.gsheet_command(update2, FakeContext(args=["list"]))
+    assert "沒有註冊" in msg.reply_text_calls[0].text

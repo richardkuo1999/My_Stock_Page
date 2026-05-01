@@ -47,7 +47,8 @@ async def test_wadd_with_note(watchlist_engine) -> None:
     await handlers.wadd_command(update, FakeContext(args=["2330", "長期持有"]))
     text = msg.reply_text_calls[-1].text
     assert "✅ 已加入：2330" in text
-    assert "📝 長期持有" in text
+    # Compact mode doesn't show notes; hint to use /wlist full is shown
+    assert "/wlist full" in text
 
 
 @pytest.mark.asyncio

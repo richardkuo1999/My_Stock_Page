@@ -172,7 +172,8 @@ _HELP_PAGES = {
         "⭐ *自選股 & 追蹤*\n\n"
         "• `/wadd <股號> [備註]` — 加入自選股\n"
         "• `/wdel <股號>` — 移除自選股\n"
-        "• `/wlist` — 查看清單\n"
+        "• `/wlist` — 精簡清單\n"
+        "• `/wlist full` — 完整清單（含備註）\n"
         "• `/gsheet add <URL> [標籤]` — 📊 註冊試算表同步\n"
         "• `/gsheet del <URL>` — 取消試算表同步\n"
         "• `/gsheet list` — 已註冊的試算表\n"
@@ -1698,8 +1699,52 @@ async def name_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"公司名稱：{name}\nTicker：{ticker}")
 
 
-def _format_watchlist(chat_id: int) -> str:
-    """Format the full watchlist for a chat, grouped by user."""
+def _parse_note_fields(note: str) -> dict[str, str]:
+    """Parse structured note like '狀態:持有 | 週期:短線 | 停損:250.0' into a dict."""
+    fields: dict[str, str] = {}
+    remainder_parts: list[str] = []
+    for segment in note.split("|"):
+        segment = segment.strip()
+        if ":" in segment or "：" in segment:
+            key, _, val = segment.replace("：", ":").partition(":")
+            fields[key.strip()] = val.strip()
+        elif segment:
+            remainder_parts.append(segment)
+    if remainder_parts:
+        fields["_rest"] = " | ".join(remainder_parts)
+    return fields
+
+
+def _extract_stars(note: str | None) -> str:
+    """Extract star rating (倉位) from note, e.g. '★★★☆☆'."""
+    if not note:
+        return ""
+    fields = _parse_note_fields(note)
+    return fields.get("倉位", "")
+
+
+def _format_pnl(added_price: float | None, cur_price: float | None) -> tuple[str, str]:
+    """Return (price_part, pnl_str) for display."""
+    price_part = ""
+    pnl_str = ""
+    if added_price and cur_price:
+        pnl = (cur_price - added_price) / added_price * 100
+        price_part = f"${cur_price:,.1f}"
+        pnl_str = f"{pnl:+.2f}%"
+    elif added_price:
+        price_part = f"${added_price:,.1f}"
+    elif cur_price:
+        price_part = f"${cur_price:,.1f}"
+    return price_part, pnl_str
+
+
+def _format_watchlist(chat_id: int, *, full: bool = False) -> str:
+    """Format the watchlist for a chat, grouped by user.
+
+    Args:
+        chat_id: Telegram chat ID.
+        full: If True, show all note details. If False, show compact view.
+    """
     with Session(engine) as session:
         items = session.exec(
             select(WatchlistEntry)
@@ -1721,28 +1766,104 @@ def _format_watchlist(chat_id: int) -> str:
         name = it.user_name or str(it.user_id)
         grouped.setdefault(name, []).append(it)
 
-    lines = ["📌 自選股清單\n"]
+    total = sum(len(v) for v in grouped.values())
+
+    if full:
+        return _render_full(grouped, price_map, total)
+    return _render_compact(grouped, price_map, total)
+
+
+def _render_compact(
+    grouped: dict[str, list[WatchlistEntry]],
+    price_map: dict[str, float],
+    total: int,
+) -> str:
+    """Compact one-line-per-stock view."""
+    lines = [f"📌 自選股清單 ({total}檔)\n"]
     for user_name, entries in grouped.items():
         lines.append(f"👤 {user_name}:")
         for i, e in enumerate(entries, 1):
             alias = f" {e.alias}" if e.alias else ""
-            date_str = e.created_at.strftime("%m/%d") if e.created_at else ""
-
-            # Price & P/L
             cur_price = price_map.get(e.ticker)
-            price_part = ""
-            if e.added_price and cur_price:
-                pnl = (cur_price - e.added_price) / e.added_price * 100
-                price_part = f" ${e.added_price:.1f}→${cur_price:.1f} ({pnl:+.2f}%)"
-            elif e.added_price:
-                price_part = f" ${e.added_price:.1f}"
-            elif cur_price:
-                price_part = f" ${cur_price:.1f}"
+            price_part, pnl_str = _format_pnl(e.added_price, cur_price)
 
-            line = f"  {i}. {e.ticker}{alias}{price_part} {date_str}"
+            stars = _extract_stars(e.note)
+            parts = [f"{i:>2}. {e.ticker}{alias}"]
+            if price_part:
+                parts.append(price_part)
+            if pnl_str:
+                parts.append(pnl_str)
+            if stars:
+                parts.append(stars)
+            lines.append("  " + "  ".join(parts))
+        lines.append("")
+
+    lines.append("💡 /wlist full 查看完整備註")
+    return "\n".join(lines).rstrip()
+
+
+_SEPARATOR = "─────────────────"
+
+
+def _render_full(
+    grouped: dict[str, list[WatchlistEntry]],
+    price_map: dict[str, float],
+    total: int,
+) -> str:
+    """Detailed view with separator lines and structured note fields."""
+    lines = [f"📌 自選股清單 ({total}檔)\n"]
+    for user_name, entries in grouped.items():
+        lines.append(f"👤 {user_name}:")
+        lines.append(_SEPARATOR)
+        for i, e in enumerate(entries, 1):
+            alias = f" {e.alias}" if e.alias else ""
+            date_str = e.created_at.strftime("%m/%d") if e.created_at else ""
+            cur_price = price_map.get(e.ticker)
+            price_part, pnl_str = _format_pnl(e.added_price, cur_price)
+
+            header_parts = [f"{i}. {e.ticker}{alias}"]
+            if price_part:
+                header_parts.append(price_part)
+            if date_str:
+                header_parts.append(date_str)
+            lines.append("  ".join(header_parts))
+
+            if pnl_str:
+                lines.append(f"   📈 {pnl_str}")
+
+            # Expand note fields
             if e.note:
-                line += f"\n     📝 {e.note}"
-            lines.append(line)
+                fields = _parse_note_fields(e.note)
+                # Row 1: 狀態 + 週期
+                meta = []
+                if "狀態" in fields:
+                    meta.append(fields["狀態"])
+                if "週期" in fields:
+                    meta.append(fields["週期"])
+                if meta:
+                    lines.append("   🔹 " + " · ".join(meta))
+                # Row 2: 策略
+                if "策略" in fields:
+                    lines.append(f"   🔹 策略：{fields['策略']}")
+                # Row 3: 停損 + 倉位
+                risk = []
+                if "停損" in fields:
+                    risk.append(f"停損：{fields['停損']}")
+                if "倉位" in fields:
+                    risk.append(fields["倉位"])
+                if risk:
+                    lines.append("   🔹 " + "  ".join(risk))
+                # Row 4: 動作
+                if "動作" in fields:
+                    lines.append(f"   ⚡ {fields['動作']}")
+                # Anything that didn't match structured fields
+                rest = fields.get("_rest")
+                if rest:
+                    lines.append(f"   📝 {rest}")
+                # If note has no structured fields at all, show raw
+                if not any(k in fields for k in ("狀態", "週期", "策略", "停損", "倉位", "動作", "_rest")):
+                    lines.append(f"   📝 {e.note}")
+            lines.append(_SEPARATOR)
         lines.append("")
 
     return "\n".join(lines).rstrip()
@@ -1898,9 +2019,11 @@ async def wdel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def wlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """/wlist — 查看自選股清單"""
+    """/wlist [full] — 查看自選股清單"""
     chat_id = update.effective_chat.id
-    watchlist = await asyncio.to_thread(_format_watchlist, chat_id)
+    args = getattr(context, "args", None) or []
+    full = len(args) > 0 and args[0].lower() == "full"
+    watchlist = await asyncio.to_thread(_format_watchlist, chat_id, full=full)
     await update.message.reply_text(watchlist)
 
 
@@ -2386,7 +2509,6 @@ async def gsheet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 rows = session.exec(
                     select(GSheetSubscription)
                     .where(GSheetSubscription.chat_id == chat_id)
-                    .where(GSheetSubscription.user_id == user_id)
                 ).all()
                 return rows
 
@@ -2399,16 +2521,17 @@ async def gsheet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i, row in enumerate(rows, 1):
             label_str = f" ({row.label})" if row.label else ""
             synced_str = row.synced_at.strftime("%m/%d %H:%M") if row.synced_at else "尚未同步"
-            lines.append(f"{i}. {label_str}\n   🔗 {row.url}\n   ⏱ 最後同步：{synced_str}")
+            user_str = f" by {row.user_name}" if row.user_name else ""
+            lines.append(f"{i}.{label_str}{user_str}\n   🔗 {row.url}\n   ⏱ 最後同步：{synced_str}")
 
         await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
 
     elif action == "sync":
         await update.message.reply_text("⏳ 開始同步...")
 
-        from ..services.gsheet_monitor import gsheet_sync_for_user
+        from ..services.gsheet_monitor import gsheet_sync_for_chat
 
-        result = await gsheet_sync_for_user(chat_id, user_id)
+        result = await gsheet_sync_for_chat(chat_id)
         await update.message.reply_text(result)
 
     else:

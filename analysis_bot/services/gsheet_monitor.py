@@ -25,6 +25,7 @@ from ..config import get_settings
 from ..database import engine
 from ..models.gsheet_sub import GSheetSubscription
 from ..models.watchlist import WatchlistEntry
+from ..utils.tz import TW_TZ
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,30 @@ def _parse_price(val: str) -> float | None:
         return None
     try:
         return float(val.replace(",", "").strip())
+    except ValueError:
+        return None
+
+
+def _parse_date_str(val: str) -> datetime | None:
+    """Parse date string from Google Sheet into a TW-timezone datetime.
+
+    Supports formats: ``MM/DD``, ``YYYY/MM/DD``, ``YYYY-MM-DD``.
+    For ``MM/DD`` the current year is assumed.
+    """
+    val = val.strip()
+    if not val:
+        return None
+    for fmt in ("%Y/%m/%d", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(val, fmt).replace(tzinfo=TW_TZ)
+        except ValueError:
+            continue
+    # MM/DD — assume current year
+    try:
+        dt = datetime.strptime(val, "%m/%d").replace(
+            year=datetime.now(TW_TZ).year, tzinfo=TW_TZ,
+        )
+        return dt
     except ValueError:
         return None
 
@@ -192,6 +217,7 @@ def _sync_watchlist(
         # Add or update
         for entry in entries:
             ticker = entry["ticker"]
+            parsed_date = _parse_date_str(entry.get("date_str", ""))
             if ticker in existing_map:
                 # 覆蓋：用 sheet 資料更新
                 row = existing_map[ticker]
@@ -205,6 +231,9 @@ def _sync_watchlist(
                 if entry["price"] is not None and row.added_price != entry["price"]:
                     row.added_price = entry["price"]
                     changed = True
+                if parsed_date and row.created_at != parsed_date:
+                    row.created_at = parsed_date
+                    changed = True
                 # 標記為 gsheet 管理（即使原本是手動加的，現在 sheet 也有就歸 gsheet）
                 if row.source != "gsheet":
                     row.source = "gsheet"
@@ -217,7 +246,7 @@ def _sync_watchlist(
                     updated.append(entry)
             else:
                 # New entry from sheet
-                session.add(WatchlistEntry(
+                new_entry = WatchlistEntry(
                     chat_id=chat_id,
                     user_id=user_id,
                     ticker=ticker,
@@ -226,7 +255,10 @@ def _sync_watchlist(
                     note=entry["note"],
                     user_name=user_name,
                     source="gsheet",
-                ))
+                )
+                if parsed_date:
+                    new_entry.created_at = parsed_date
+                session.add(new_entry)
                 added.append(entry)
 
         # Remove: sheet 移除的就一起刪掉
@@ -442,6 +474,87 @@ async def gsheet_sync_for_user(chat_id: int, user_id: int) -> str:
         await asyncio.to_thread(_update)
 
     # Build result message
+    lines = ["✅ 同步完成"]
+    if all_added:
+        lines.append(f"\n➕ *新增 {len(all_added)} 檔：*")
+        for e in all_added:
+            lines.append(_format_entry_line(e))
+    if all_updated:
+        lines.append(f"\n✏️ *更新 {len(all_updated)} 檔：*")
+        for e in all_updated:
+            lines.append(_format_entry_line(e))
+    if all_removed:
+        lines.append(f"\n🗑 移除：{', '.join(all_removed)}")
+    if not all_added and not all_updated and not all_removed:
+        lines.append("無變更")
+    if errors:
+        lines.append(f"\n⚠️ 錯誤：{'; '.join(errors)}")
+
+    return "\n".join(lines)
+
+
+async def gsheet_sync_for_chat(chat_id: int) -> str:
+    """
+    手動同步指定聊天室內所有使用者的已註冊試算表。
+    群組內任何人都可觸發。
+    """
+    from ..models.gsheet_sub import GSheetSubscription
+
+    def _load_subs():
+        with Session(engine) as session:
+            return session.exec(
+                select(GSheetSubscription)
+                .where(GSheetSubscription.chat_id == chat_id)
+            ).all()
+
+    subs = await asyncio.to_thread(_load_subs)
+    if not subs:
+        return "❌ 此聊天室還沒有註冊任何試算表。\n用 /gsheet add <URL> 來新增。"
+
+    all_added = []
+    all_updated = []
+    all_removed = []
+    errors = []
+
+    for sub in subs:
+        try:
+            sheet_id, gid = _parse_sheet_url(sub.url)
+        except ValueError:
+            errors.append(f"URL 格式錯誤：{sub.url[:30]}...")
+            continue
+
+        csv_text = await fetch_sheet_csv(sheet_id, gid)
+        if csv_text is None:
+            errors.append(f"抓取失敗（試算表可能不是公開的）")
+            continue
+
+        current_hash = _hash_content(csv_text)
+        entries = _parse_rows(csv_text)
+
+        if not entries:
+            errors.append(f"無法解析有效股票資料")
+            continue
+
+        added, updated, removed = await asyncio.to_thread(
+            _sync_watchlist, chat_id, sub.user_id, entries, sub.url,
+            user_name=sub.user_name,
+        )
+
+        all_added.extend(added)
+        all_updated.extend(updated)
+        all_removed.extend(removed)
+
+        def _update(sub_id=sub.id, h=current_hash):
+            with Session(engine) as session:
+                row = session.get(GSheetSubscription, sub_id)
+                if row:
+                    row.last_hash = h
+                    row.synced_at = datetime.now()
+                    session.add(row)
+                    session.commit()
+
+        await asyncio.to_thread(_update)
+
     lines = ["✅ 同步完成"]
     if all_added:
         lines.append(f"\n➕ *新增 {len(all_added)} 檔：*")
