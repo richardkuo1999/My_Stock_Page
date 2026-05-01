@@ -1087,6 +1087,22 @@ def start_scheduler():
             replace_existing=True,
         )
 
+    # Google Sheets 自選股同步
+    _settings = _gs()
+    if _settings.GSHEET_MONITOR_INTERVAL_SEC > 0:
+        from .services.gsheet_monitor import gsheet_sync_job
+
+        scheduler.add_job(
+            gsheet_sync_job,
+            trigger=IntervalTrigger(seconds=_settings.GSHEET_MONITOR_INTERVAL_SEC),
+            id="gsheet_sync",
+            replace_existing=True,
+        )
+        logger.info(
+            "GSheet sync enabled: interval=%ds",
+            _settings.GSHEET_MONITOR_INTERVAL_SEC,
+        )
+
     scheduler.start()
     logger.info("Scheduler started.")
 

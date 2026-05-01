@@ -23,3 +23,4 @@ class Subscriber(SQLModel, table=True):
     daily_analysis_enabled: bool = Field(default=False)  # 訂閱每日分析推播
     spike_enabled: bool = Field(default=False)  # 訂閱收盤爆量推播
     vix_enabled: bool = Field(default=False)  # 訂閱 VIX 警報推播
+    wlist_enabled: bool = Field(default=False)  # 訂閱自選股同步通知

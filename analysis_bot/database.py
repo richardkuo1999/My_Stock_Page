@@ -24,6 +24,7 @@ def create_db_and_tables():
     # Helper to import all models so SQLModel metadata is populated
     from .models import intraday_ma  # noqa: F401 — ensures IntradayMA20Snapshot is registered
     from .models import sentiment  # noqa: F401 — ensures NewsSentiment is registered
+    from .models import gsheet_sub  # noqa: F401 — ensures GSheetSubscription is registered
 
     SQLModel.metadata.create_all(engine)
 
@@ -58,9 +59,12 @@ def create_db_and_tables():
                 "ALTER TABLE watchlist_entry ADD COLUMN added_price REAL",
                 "ALTER TABLE watchlist_entry ADD COLUMN user_name TEXT",
                 "ALTER TABLE watchlist_entry ADD COLUMN note TEXT",
+                "ALTER TABLE watchlist_entry ADD COLUMN source TEXT",
+                "ALTER TABLE gsheet_subscription ADD COLUMN user_name TEXT",
                 "ALTER TABLE subscriber ADD COLUMN daily_analysis_enabled INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE subscriber ADD COLUMN spike_enabled INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE subscriber ADD COLUMN vix_enabled INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE subscriber ADD COLUMN wlist_enabled INTEGER NOT NULL DEFAULT 0",
             ]:
                 try:
                     conn.execute(text(ddl))

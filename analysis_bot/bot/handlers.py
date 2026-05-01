@@ -173,6 +173,10 @@ _HELP_PAGES = {
         "• `/wadd <股號> [備註]` — 加入自選股\n"
         "• `/wdel <股號>` — 移除自選股\n"
         "• `/wlist` — 查看清單\n"
+        "• `/gsheet add <URL> [標籤]` — 📊 註冊試算表同步\n"
+        "• `/gsheet del <URL>` — 取消試算表同步\n"
+        "• `/gsheet list` — 已註冊的試算表\n"
+        "• `/gsheet sync` — 立即同步\n"
         "• `/threads add <帳號>` — 🧵 訂閱 Threads\n"
         "• `/threads remove <帳號>` — 取消訂閱\n"
         "• `/threads list` — 訂閱清單\n"
@@ -195,7 +199,9 @@ _HELP_PAGES = {
         "• `/sub_spike` — 💥 訂閱收盤爆量\n"
         "• `/unsub_spike` — 取消收盤爆量\n"
         "• `/sub_vix` — ⚡ 訂閱 VIX 警報\n"
-        "• `/unsub_vix` — 取消 VIX 警報"
+        "• `/unsub_vix` — 取消 VIX 警報\n"
+        "• `/sub_wlist` — 📋 訂閱自選股同步通知\n"
+        "• `/unsub_wlist` — 取消自選股同步通知"
     ),
     "help_ua": (
         "🔬 *UAnalyze / MEGA*\n\n"
@@ -2188,3 +2194,222 @@ async def sentiment_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         if shift_warning:
             await update.message.reply_text(shift_warning)
+
+
+# ─── 自選股同步訂閱 ────────────────────────────────────────────────────────────
+
+
+async def sub_wlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """訂閱自選股同步通知（試算表有更新時推播到此聊天室）。"""
+    chat_id = update.effective_chat.id
+    topic_id = _get_topic_id(update)
+
+    def _do():
+        with Session(engine) as session:
+            sub = _find_subscriber(session, chat_id, topic_id)
+            if not sub:
+                sub = Subscriber(chat_id=chat_id, topic_id=topic_id, wlist_enabled=True)
+                session.add(sub)
+                session.commit()
+                return "new"
+            if not sub.wlist_enabled:
+                sub.wlist_enabled = True
+                session.add(sub)
+                session.commit()
+                return "reactivated"
+            return "already"
+
+    result = await asyncio.to_thread(_do)
+    if result == "already":
+        await update.message.reply_text("您已經訂閱自選股同步通知了！")
+    else:
+        await update.message.reply_text("✅ 已訂閱自選股同步通知！\n試算表有更新時會推播到此聊天室。")
+
+
+async def unsub_wlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """取消訂閱自選股同步通知。"""
+    chat_id = update.effective_chat.id
+    topic_id = _get_topic_id(update)
+
+    def _do():
+        with Session(engine) as session:
+            sub = _find_subscriber(session, chat_id, topic_id)
+            if sub and sub.wlist_enabled:
+                sub.wlist_enabled = False
+                session.add(sub)
+                session.commit()
+                return True
+            return False
+
+    found = await asyncio.to_thread(_do)
+    if found:
+        await update.message.reply_text("❌ 已取消自選股同步通知。")
+    else:
+        await update.message.reply_text("您尚未訂閱自選股同步通知。")
+
+
+# ─── Google Sheets 自選股同步指令 ─────────────────────────────────────────────
+
+
+async def gsheet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/gsheet — 管理 Google Sheets 自選股同步
+
+    /gsheet add <url> [標籤] — 註冊試算表
+    /gsheet del <url> — 取消註冊
+    /gsheet list — 列出已註冊的試算表
+    /gsheet sync — 立即同步
+    """
+    from ..models.gsheet_sub import GSheetSubscription
+
+    usage = (
+        "用法：\n"
+        "/gsheet add <URL> [標籤] — 註冊試算表\n"
+        "/gsheet del <URL> — 取消註冊\n"
+        "/gsheet list — 列出已註冊\n"
+        "/gsheet sync — 立即同步"
+    )
+
+    if not context.args:
+        await update.message.reply_text(usage)
+        return
+
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id if update.effective_user else None
+    if not user_id:
+        await update.message.reply_text("無法取得使用者資訊。")
+        return
+
+    action = context.args[0].lower()
+
+    if action == "add":
+        if len(context.args) < 2:
+            await update.message.reply_text("用法：/gsheet add <URL> [標籤]")
+            return
+
+        url = context.args[1]
+        label = " ".join(context.args[2:]).strip() or None
+
+        # Validate URL
+        if "docs.google.com/spreadsheets" not in url:
+            await update.message.reply_text("❌ 請提供有效的 Google Sheets URL")
+            return
+
+        # 驗證：試抓一次確認試算表可存取
+        from ..services.gsheet_monitor import _parse_sheet_url, fetch_sheet_csv, _parse_rows
+
+        try:
+            sheet_id, gid = _parse_sheet_url(url)
+        except ValueError:
+            await update.message.reply_text("❌ 無法解析 URL，請確認格式正確")
+            return
+
+        csv_text = await fetch_sheet_csv(sheet_id, gid)
+        if csv_text is None:
+            await update.message.reply_text(
+                "❌ 無法存取此試算表\n"
+                "請確認：\n"
+                "1. 試算表已設為「知道連結的人可檢視」\n"
+                "2. URL 正確（含正確的 gid）"
+            )
+            return
+
+        entries = _parse_rows(csv_text)
+        if not entries:
+            await update.message.reply_text(
+                "⚠️ 試算表可存取，但找不到有效的股票資料。\n"
+                "請確認格式：B 欄為股票代號（4-6 碼數字）"
+            )
+            return
+
+        def _add():
+            with Session(engine) as session:
+                existing = session.exec(
+                    select(GSheetSubscription)
+                    .where(GSheetSubscription.chat_id == chat_id)
+                    .where(GSheetSubscription.user_id == user_id)
+                    .where(GSheetSubscription.url == url)
+                ).first()
+                if existing:
+                    return "exists"
+                session.add(GSheetSubscription(
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    url=url,
+                    label=label,
+                    user_name=update.effective_user.full_name or str(user_id),
+                ))
+                session.commit()
+                return "added"
+
+        result = await asyncio.to_thread(_add)
+        if result == "exists":
+            await update.message.reply_text("ℹ️ 此試算表已註冊過")
+        else:
+            label_str = f"（{label}）" if label else ""
+            await update.message.reply_text(f"✅ 已註冊試算表{label_str}\n⏳ 正在同步...")
+
+            from ..services.gsheet_monitor import gsheet_sync_for_user
+
+            sync_result = await gsheet_sync_for_user(chat_id, user_id)
+            await update.message.reply_text(sync_result)
+
+    elif action == "del":
+        if len(context.args) < 2:
+            await update.message.reply_text("用法：/gsheet del <URL>")
+            return
+
+        url = context.args[1]
+
+        def _del():
+            with Session(engine) as session:
+                row = session.exec(
+                    select(GSheetSubscription)
+                    .where(GSheetSubscription.chat_id == chat_id)
+                    .where(GSheetSubscription.user_id == user_id)
+                    .where(GSheetSubscription.url == url)
+                ).first()
+                if not row:
+                    return "not_found"
+                session.delete(row)
+                session.commit()
+                return "deleted"
+
+        result = await asyncio.to_thread(_del)
+        if result == "not_found":
+            await update.message.reply_text("❌ 找不到此試算表註冊紀錄")
+        else:
+            await update.message.reply_text("✅ 已取消註冊，不再同步此試算表。")
+
+    elif action == "list":
+        def _list():
+            with Session(engine) as session:
+                rows = session.exec(
+                    select(GSheetSubscription)
+                    .where(GSheetSubscription.chat_id == chat_id)
+                    .where(GSheetSubscription.user_id == user_id)
+                ).all()
+                return rows
+
+        rows = await asyncio.to_thread(_list)
+        if not rows:
+            await update.message.reply_text("目前沒有註冊任何試算表。\n用 /gsheet add <URL> 來新增。")
+            return
+
+        lines = ["📋 *已註冊的試算表：*\n"]
+        for i, row in enumerate(rows, 1):
+            label_str = f" ({row.label})" if row.label else ""
+            synced_str = row.synced_at.strftime("%m/%d %H:%M") if row.synced_at else "尚未同步"
+            lines.append(f"{i}. {label_str}\n   🔗 {row.url}\n   ⏱ 最後同步：{synced_str}")
+
+        await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN)
+
+    elif action == "sync":
+        await update.message.reply_text("⏳ 開始同步...")
+
+        from ..services.gsheet_monitor import gsheet_sync_for_user
+
+        result = await gsheet_sync_for_user(chat_id, user_id)
+        await update.message.reply_text(result)
+
+    else:
+        await update.message.reply_text(usage)

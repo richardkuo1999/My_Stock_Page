@@ -273,6 +273,51 @@ Handler registration is in `analysis_bot/bot/main.py`.
 
 ---
 
+### `/gsheet add|del|list|sync <URL> [標籤]`
+**Function:** `gsheet_command()`
+
+**Description:** 管理 Google Sheets 自選股同步。用戶註冊公開試算表 URL 後，bot 每 5 分鐘自動抓取並同步到自選股清單。
+
+**用法：**
+- `/gsheet add <URL> [標籤]` — 註冊試算表（需為公開或「知道連結的人可檢視」）
+- `/gsheet del <URL>` — 取消註冊
+- `/gsheet list` — 查看已註冊的試算表
+- `/gsheet sync` — 立即手動同步
+
+**同步邏輯：**
+- Sheet 新增 → 加入 WatchlistEntry
+- Sheet 更新 → 覆蓋 WatchlistEntry（note、alias、price）
+- Sheet 刪除 → 從 WatchlistEntry 移除
+- 同一檔股票只存一筆，以 Google Sheet 為主覆蓋
+
+**試算表格式（預期欄位）：**
+B: 股票代號, C: 股票名稱, D: 新增日期, E: 狀態, F: 週期, G: 備註&策略, H: 現價, I: 參考損, J: 月成本, K: 持倉%, L: 近期動作
+
+**Note 欄位格式：** `狀態:持有 | 週期:波段 | 策略:xxx | 停損:xxx | 倉位:★★★☆☆ | 動作:xxx`
+
+**防呆驗證（add 時）：**
+1. URL 必須包含 `docs.google.com/spreadsheets`
+2. 試抓 CSV 確認試算表可存取
+3. 解析確認有有效股票資料（B 欄為 4-6 碼數字）
+4. 任一步驟失敗則拒絕註冊並提示原因
+
+**通知：** 定時同步偵測到變更時，推播給所有 `/sub_wlist` 訂閱者，訊息包含新增/更新的股票明細。
+
+**Database:** `GSheetSubscription`（註冊資訊）, `WatchlistEntry`（同步後的持股）
+
+**Services:** `gsheet_monitor.gsheet_sync_job()`（定時任務）, `gsheet_monitor.gsheet_sync_for_user()`（手動同步）
+
+---
+
+### `/sub_wlist` / `/unsub_wlist`
+**Functions:** `sub_wlist_command()` / `unsub_wlist_command()`
+
+**Description:** 訂閱/取消自選股同步通知。當 Google Sheets 試算表有更新並同步後，推播變更明細到訂閱的聊天室。
+
+**Database:** `Subscriber` model（`wlist_enabled` 欄位）
+
+---
+
 ### `/threads add|remove|list|check|bootstrap <帳號>`
 **Function:** `threads_command()`
 

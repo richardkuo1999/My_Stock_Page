@@ -24,6 +24,7 @@ from .handlers import (
     chatid_command,
     esti_command,
     google_command,
+    gsheet_command,
     help_callback_handler,
     help_command,
     hold888_command,
@@ -48,6 +49,7 @@ from .handlers import (
     sub_ispike_command,
     sub_senti_command,
     sub_news_command,
+    sub_wlist_command,
     threads_command,
     ua_command,
     uask_command,
@@ -63,6 +65,7 @@ from .handlers import (
     unsub_ispike_command,
     unsub_senti_command,
     unsub_news_command,
+    unsub_wlist_command,
     vix_command,
     wadd_command,
     wdel_command,
@@ -136,6 +139,9 @@ def create_bot_application() -> Application:
     application.add_handler(CommandHandler("unsub_vix", unsub_vix_command, filters=f))
     application.add_handler(CommandHandler("mega", mega_command, filters=f))
     application.add_handler(CommandHandler("senti", sentiment_command, filters=f))
+    application.add_handler(CommandHandler("gsheet", gsheet_command, filters=f))
+    application.add_handler(CommandHandler("sub_wlist", sub_wlist_command, filters=f))
+    application.add_handler(CommandHandler("unsub_wlist", unsub_wlist_command, filters=f))
 
     # Conversation: Research (per_chat=False allows concurrent users)
     research_conv = ConversationHandler(

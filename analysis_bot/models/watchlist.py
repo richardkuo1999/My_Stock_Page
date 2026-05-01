@@ -23,4 +23,5 @@ class WatchlistEntry(SQLModel, table=True):
     added_price: float | None = Field(default=None)
     user_name: str | None = Field(default=None)
     note: str | None = Field(default=None)
+    source: str | None = Field(default=None)  # "manual" | "gsheet" | None (legacy)
     created_at: datetime = Field(default_factory=now_tw)

@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     # MEGA
     MEGA_PUBLIC_URL: str = ""
 
+    # Google Sheets Sync
+    GSHEET_MONITOR_INTERVAL_SEC: int =300  # Sync interval (fixed 5 min)
+
     # Parallel Analysis Settings
     MAX_CONCURRENT_ANALYSIS: int = 10  # Maximum concurrent stock analyses
     ANALYSIS_PROGRESS_INTERVAL: int = 50  # Send progress update every N stocks
