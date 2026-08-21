@@ -2,6 +2,9 @@ python-telegram-bot==21.6
 APScheduler==3.10.4
 python-dotenv==1.0.1
 httpx==0.28.1
+mplfinance==0.12.10b0
+matplotlib==3.9.2
+pandas==2.2.3
 
 # dev / test
 pytest==8.3.3
