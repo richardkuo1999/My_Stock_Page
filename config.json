@@ -1,0 +1,6 @@
+{
+  "vocus_users": ["@ieobserve", "@miula", "65ab564cfd897800018a88cc"],
+  "uanalyze_keywords": ["AI", "半導體", "ETF"],
+  "news_schedule_interval_min": 60,
+  "threads_schedule_interval_min": 15
+}

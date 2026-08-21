@@ -28,3 +28,5 @@ reports/
 *.mp3
 
 old_file/
+
+data/logs/

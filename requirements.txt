@@ -1,0 +1,7 @@
+python-telegram-bot==21.6
+APScheduler==3.10.4
+python-dotenv==1.0.1
+
+# dev / test
+pytest==8.3.3
+pytest-asyncio==0.24.0
