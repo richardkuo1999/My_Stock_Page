@@ -26,3 +26,5 @@ reports/
 *.db-shm
 *.db-wal
 *.mp3
+
+old_file/
