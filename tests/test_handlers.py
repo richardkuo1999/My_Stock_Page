@@ -27,7 +27,38 @@ def context():
     ctx = MagicMock()
     ctx.bot = MagicMock()
     ctx.bot.username = "test_bot"
+    ctx.bot_data = {}
     return ctx
+
+
+@pytest.fixture
+def mock_bridge():
+    """Create a mock AgentBridge."""
+    bridge = AsyncMock()
+    bridge.send = AsyncMock(return_value="Agent 回覆內容")
+    return bridge
+
+
+def _make_mention_update(text: str, bot_name: str = "test_bot"):
+    """Helper to create an update with a mention entity."""
+    update = MagicMock()
+    update.message = MagicMock()
+    update.message.text = text
+    update.message.reply_text = AsyncMock()
+    update.effective_user = MagicMock()
+    update.effective_user.id = 12345
+
+    mention_str = f"@{bot_name}"
+    offset = text.find(mention_str)
+    entity = MagicMock()
+    entity.type = "mention"
+    entity.offset = offset
+    entity.length = len(mention_str)
+    update.message.entities = [entity]
+    return update
+
+
+# --- Echo tests ---
 
 
 @pytest.mark.asyncio
@@ -54,26 +85,66 @@ async def test_echo_no_message(context):
     await echo(update, context)  # Should not raise
 
 
+# --- Mention + Agent routing tests ---
+
+
 @pytest.mark.asyncio
-async def test_mention_detects_bot_username(context):
-    """Mention handler should log when bot is mentioned."""
-    update = MagicMock()
-    update.message = MagicMock()
-    update.message.text = "@test_bot 分析台積電"
-    update.effective_user = MagicMock()
-    update.effective_user.id = 12345
+async def test_mention_routes_to_bridge(context, mock_bridge):
+    """Mention handler routes text to bridge and replies with response."""
+    context.bot_data["agent_bridge"] = mock_bridge
+    update = _make_mention_update("@test_bot 分析台積電")
 
-    entity = MagicMock()
-    entity.type = "mention"
-    entity.offset = 0
-    entity.length = 9  # len("@test_bot")
-    update.message.entities = [entity]
+    await mention(update, context)
 
-    with patch("bot.handlers.logger") as mock_logger:
-        await mention(update, context)
-        mock_logger.info.assert_called_once()
-        call_args = mock_logger.info.call_args[0]
-        assert "分析台積電" in call_args[2]
+    mock_bridge.send.assert_called_once_with("分析台積電")
+    update.message.reply_text.assert_called_once_with("Agent 回覆內容")
+
+
+@pytest.mark.asyncio
+async def test_mention_timeout_error(context, mock_bridge):
+    """Mention handler replies with timeout message on TimeoutError."""
+    mock_bridge.send = AsyncMock(side_effect=TimeoutError("timed out"))
+    context.bot_data["agent_bridge"] = mock_bridge
+    update = _make_mention_update("@test_bot 很慢的問題")
+
+    await mention(update, context)
+
+    update.message.reply_text.assert_called_once_with("⚠️ Agent 暫時無法回應，請稍後再試")
+
+
+@pytest.mark.asyncio
+async def test_mention_runtime_error(context, mock_bridge):
+    """Mention handler replies with error message on RuntimeError."""
+    mock_bridge.send = AsyncMock(side_effect=RuntimeError("Agent error (code 1): fail"))
+    context.bot_data["agent_bridge"] = mock_bridge
+    update = _make_mention_update("@test_bot 壞掉的指令")
+
+    await mention(update, context)
+
+    update.message.reply_text.assert_called_once_with("⚠️ Agent 發生錯誤，請稍後再試")
+
+
+@pytest.mark.asyncio
+async def test_mention_empty_text(context, mock_bridge):
+    """Mention handler prompts user when no text follows the mention."""
+    context.bot_data["agent_bridge"] = mock_bridge
+    update = _make_mention_update("@test_bot")
+
+    await mention(update, context)
+
+    update.message.reply_text.assert_called_once_with("請在 @mention 後加上您的問題")
+    mock_bridge.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_mention_no_bridge(context):
+    """Mention handler replies with setup message when bridge not configured."""
+    # bot_data has no "agent_bridge" key
+    update = _make_mention_update("@test_bot 問題")
+
+    await mention(update, context)
+
+    update.message.reply_text.assert_called_once_with("⚠️ Agent 未設定")
 
 
 @pytest.mark.asyncio
@@ -82,6 +153,7 @@ async def test_mention_ignores_other_users(context):
     update = MagicMock()
     update.message = MagicMock()
     update.message.text = "@other_user hello"
+    update.message.reply_text = AsyncMock()
     update.effective_user = MagicMock()
     update.effective_user.id = 12345
 
@@ -91,9 +163,8 @@ async def test_mention_ignores_other_users(context):
     entity.length = 11  # len("@other_user")
     update.message.entities = [entity]
 
-    with patch("bot.handlers.logger") as mock_logger:
-        await mention(update, context)
-        mock_logger.info.assert_not_called()
+    await mention(update, context)
+    update.message.reply_text.assert_not_called()
 
 
 @pytest.mark.asyncio

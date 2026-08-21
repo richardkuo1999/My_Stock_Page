@@ -6,6 +6,7 @@ import os
 from dotenv import load_dotenv
 from telegram.ext import Application
 
+from agent.bridge import AntigravityCLIBridge
 from bot.handlers import register_handlers
 from bot.subscriptions import register_subscription_handlers
 
@@ -26,6 +27,7 @@ def main() -> None:
 
     logger.info("Starting bot...")
     application = Application.builder().token(token).build()
+    application.bot_data["agent_bridge"] = AntigravityCLIBridge()
     register_handlers(application)
     register_subscription_handlers(application)
     logger.info("Bot started. Polling...")

@@ -20,10 +20,7 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def mention(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Detect @bot_username mentions and log them.
-
-    Actual agent integration will be implemented in Ticket 03.
-    """
+    """Detect @bot_username mentions and route to Agent."""
     if not update.message or not update.message.entities:
         return
 
@@ -33,22 +30,37 @@ async def mention(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             mentioned = update.message.text[entity.offset : entity.offset + entity.length]
             if mentioned.lower() == f"@{bot_username}".lower():
                 text_after = update.message.text[entity.offset + entity.length :].strip()
+                if not text_after:
+                    await update.message.reply_text("請在 @mention 後加上您的問題")
+                    return
+
                 logger.info(
                     "Bot mentioned by user %s: %s",
                     update.effective_user.id if update.effective_user else "unknown",
                     text_after,
                 )
-                # TODO: Ticket 03 - route to AgentBridge
-                break
+
+                bridge = context.bot_data.get("agent_bridge")
+                if not bridge:
+                    await update.message.reply_text("⚠️ Agent 未設定")
+                    return
+
+                try:
+                    response = await bridge.send(text_after)
+                    await update.message.reply_text(response)
+                except TimeoutError:
+                    await update.message.reply_text("⚠️ Agent 暫時無法回應，請稍後再試")
+                except RuntimeError as e:
+                    logger.error("Agent error: %s", e)
+                    await update.message.reply_text("⚠️ Agent 發生錯誤，請稍後再試")
+                return
 
 
 def register_handlers(application: Application) -> None:
     """Register all message handlers."""
-    # Mention handler has higher priority (group 0)
     application.add_handler(
         MessageHandler(filters.Entity("mention"), mention), group=0
     )
-    # Echo handler (group 1, lower priority)
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, echo), group=1
     )
