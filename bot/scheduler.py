@@ -285,33 +285,59 @@ async def threads_push_job(bot, subscription_manager) -> None:
     logger.info("Pushed %d threads to %d subscribers", len(new_posts), len(subscribers))
 
 
-def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict) -> AsyncIOScheduler:
+def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict, notifier=None) -> AsyncIOScheduler:
     """Create and configure the APScheduler with news and threads push jobs."""
+    from bot.error_notify import run_with_retry
+
     scheduler = AsyncIOScheduler()
 
-    # News job
     news_interval = config.get("news_schedule_interval_min", 60)
-    scheduler.add_job(
-        news_push_job,
-        "interval",
-        minutes=news_interval,
-        args=[bot, subscription_manager, agent_bridge],
-        id="news_push",
-        name="News Push",
-        misfire_grace_time=300,
-    )
-
-    # Threads job
     threads_interval = config.get("threads_schedule_interval_min", 15)
-    scheduler.add_job(
-        threads_push_job,
-        "interval",
-        minutes=threads_interval,
-        args=[bot, subscription_manager],
-        id="threads_push",
-        name="Threads Push",
-        misfire_grace_time=120,
-    )
+
+    if notifier:
+        # Wrapped jobs with retry + error notification
+        async def wrapped_news_job():
+            await run_with_retry(news_push_job, "news_push", notifier, bot, subscription_manager, agent_bridge)
+
+        async def wrapped_threads_job():
+            await run_with_retry(threads_push_job, "threads_push", notifier, bot, subscription_manager)
+
+        scheduler.add_job(
+            wrapped_news_job,
+            "interval",
+            minutes=news_interval,
+            id="news_push",
+            name="News Push",
+            misfire_grace_time=300,
+        )
+        scheduler.add_job(
+            wrapped_threads_job,
+            "interval",
+            minutes=threads_interval,
+            id="threads_push",
+            name="Threads Push",
+            misfire_grace_time=120,
+        )
+    else:
+        # Direct jobs (backward compatible, no retry wrapper)
+        scheduler.add_job(
+            news_push_job,
+            "interval",
+            minutes=news_interval,
+            args=[bot, subscription_manager, agent_bridge],
+            id="news_push",
+            name="News Push",
+            misfire_grace_time=300,
+        )
+        scheduler.add_job(
+            threads_push_job,
+            "interval",
+            minutes=threads_interval,
+            args=[bot, subscription_manager],
+            id="threads_push",
+            name="Threads Push",
+            misfire_grace_time=120,
+        )
 
     logger.info("Scheduler configured: news=%dmin, threads=%dmin", news_interval, threads_interval)
     return scheduler

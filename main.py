@@ -9,17 +9,16 @@ from dotenv import load_dotenv
 from telegram.ext import Application
 
 from agent.bridge import AntigravityCLIBridge
+from bot.error_notify import JobErrorNotifier
 from bot.handlers import register_handlers
+from bot.logging_conf import setup_logging
 from bot.scheduler import setup_scheduler
 from bot.subscriptions import manager as subscription_manager
 from bot.subscriptions import register_subscription_handlers
 
 load_dotenv()
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -57,7 +56,8 @@ def main() -> None:
     register_subscription_handlers(application)
 
     # Setup scheduler
-    scheduler = setup_scheduler(application.bot, subscription_manager, bridge, config)
+    notifier = JobErrorNotifier(bot=application.bot)
+    scheduler = setup_scheduler(application.bot, subscription_manager, bridge, config, notifier)
 
     # Lifecycle hooks
     async def post_init(app):
