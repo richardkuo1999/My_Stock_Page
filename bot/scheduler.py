@@ -14,6 +14,9 @@ PUSHED_NEWS_PATH = Path("data/pushed_news.json")
 NEWS_TTL_DAYS = 7
 SIMILARITY_THRESHOLD = 0.8  # titles with >80% similarity are considered duplicates
 
+PUSHED_THREADS_PATH = Path("data/pushed_threads.json")
+THREADS_TTL_DAYS = 3
+
 
 def _load_pushed_news() -> list[dict]:
     """Load pushed news records from JSON file."""
@@ -166,20 +169,149 @@ async def news_push_job(bot, subscription_manager, agent_bridge) -> None:
     logger.info("Pushed %d articles to %d subscribers", len(new_articles), len(subscribers))
 
 
-def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict) -> AsyncIOScheduler:
-    """Create and configure the APScheduler with news push job."""
-    scheduler = AsyncIOScheduler()
-    interval_min = config.get("news_schedule_interval_min", 60)
+def _load_pushed_threads() -> list[dict]:
+    """Load pushed threads records from JSON file."""
+    if not PUSHED_THREADS_PATH.exists():
+        return []
+    try:
+        return json.loads(PUSHED_THREADS_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
 
+
+def _save_pushed_threads(records: list[dict]) -> None:
+    """Save pushed threads records to JSON file."""
+    PUSHED_THREADS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PUSHED_THREADS_PATH.write_text(
+        json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _cleanup_expired_threads(records: list[dict]) -> list[dict]:
+    """Remove records older than THREADS_TTL_DAYS."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=THREADS_TTL_DAYS)
+    result = []
+    for r in records:
+        try:
+            pushed_at = datetime.fromisoformat(r["pushed_at"])
+            if pushed_at.tzinfo is None:
+                pushed_at = pushed_at.replace(tzinfo=timezone.utc)
+            if pushed_at > cutoff:
+                result.append(r)
+        except (KeyError, ValueError):
+            continue
+    return result
+
+
+def _format_thread_post(post: dict) -> str:
+    """Format a single thread post for Telegram message."""
+    user = post.get("user", "unknown")
+    text = post.get("text", "")
+    url = post.get("url", "")
+    timestamp = post.get("timestamp", "")
+
+    # Truncate long text
+    if len(text) > 500:
+        text = text[:497] + "..."
+
+    parts = [f"🧵 Threads - {user}"]
+    if timestamp:
+        parts[0] += f" ({timestamp[:10]})"
+    if text:
+        parts.append(text)
+    if url:
+        parts.append(f"🔗 {url}")
+    return "\n".join(parts)
+
+
+async def threads_push_job(bot, subscription_manager) -> None:
+    """Scheduled job: fetch threads, filter, format, push."""
+    from tools.fetch_threads import check_new
+
+    logger.info("Threads push job started")
+
+    try:
+        result = await check_new()
+    except Exception as e:
+        logger.error("Failed to fetch threads: %s", e)
+        return
+
+    if "error" in result:
+        logger.error("Threads fetch error: %s", result["error"])
+        return
+
+    posts = result.get("posts", [])
+    if not posts:
+        logger.info("No new threads posts found")
+        return
+
+    # Load and cleanup
+    pushed_records = _load_pushed_threads()
+    pushed_records = _cleanup_expired_threads(pushed_records)
+    pushed_ids = {r["id"] for r in pushed_records}
+
+    # Filter new posts
+    new_posts = [p for p in posts if p.get("id") and p["id"] not in pushed_ids]
+
+    if not new_posts:
+        logger.info("All threads already pushed")
+        _save_pushed_threads(pushed_records)
+        return
+
+    # Get subscribers
+    subscribers = subscription_manager.get_subscribers("threads")
+    if not subscribers:
+        logger.info("No threads subscribers")
+        now = datetime.now(timezone.utc).isoformat()
+        for post in new_posts:
+            pushed_records.append({"id": post["id"], "pushed_at": now})
+        _save_pushed_threads(pushed_records)
+        return
+
+    # Format and push (NO Agent, direct push)
+    for post in new_posts:
+        message = _format_thread_post(post)
+        for chat_id in subscribers:
+            try:
+                await bot.send_message(chat_id=chat_id, text=message)
+            except Exception as e:
+                logger.error("Failed to push thread to %s: %s", chat_id, e)
+
+    # Record pushed
+    now = datetime.now(timezone.utc).isoformat()
+    for post in new_posts:
+        pushed_records.append({"id": post["id"], "pushed_at": now})
+    _save_pushed_threads(pushed_records)
+    logger.info("Pushed %d threads to %d subscribers", len(new_posts), len(subscribers))
+
+
+def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict) -> AsyncIOScheduler:
+    """Create and configure the APScheduler with news and threads push jobs."""
+    scheduler = AsyncIOScheduler()
+
+    # News job
+    news_interval = config.get("news_schedule_interval_min", 60)
     scheduler.add_job(
         news_push_job,
         "interval",
-        minutes=interval_min,
+        minutes=news_interval,
         args=[bot, subscription_manager, agent_bridge],
         id="news_push",
         name="News Push",
         misfire_grace_time=300,
     )
 
-    logger.info("Scheduler configured: news push every %d min", interval_min)
+    # Threads job
+    threads_interval = config.get("threads_schedule_interval_min", 15)
+    scheduler.add_job(
+        threads_push_job,
+        "interval",
+        minutes=threads_interval,
+        args=[bot, subscription_manager],
+        id="threads_push",
+        name="Threads Push",
+        misfire_grace_time=120,
+    )
+
+    logger.info("Scheduler configured: news=%dmin, threads=%dmin", news_interval, threads_interval)
     return scheduler

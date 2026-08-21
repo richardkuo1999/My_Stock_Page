@@ -10,12 +10,18 @@ import pytest
 from bot.scheduler import (
     NEWS_TTL_DAYS,
     SIMILARITY_THRESHOLD,
+    THREADS_TTL_DAYS,
     _cleanup_expired,
+    _cleanup_expired_threads,
+    _format_thread_post,
     _is_duplicate_title,
     _load_pushed_news,
+    _load_pushed_threads,
     _save_pushed_news,
+    _save_pushed_threads,
     news_push_job,
     setup_scheduler,
+    threads_push_job,
 )
 
 
@@ -359,10 +365,10 @@ def test_setup_scheduler_default_interval():
 
     scheduler = setup_scheduler(bot, mgr, bridge, {})
     jobs = scheduler.get_jobs()
-    assert len(jobs) == 1
-    assert jobs[0].id == "news_push"
+    assert len(jobs) == 2
+    news_job = next(j for j in jobs if j.id == "news_push")
     # Interval trigger
-    trigger = jobs[0].trigger
+    trigger = news_job.trigger
     assert trigger.interval == timedelta(minutes=60)
 
 
@@ -374,7 +380,8 @@ def test_setup_scheduler_custom_interval():
 
     scheduler = setup_scheduler(bot, mgr, bridge, {"news_schedule_interval_min": 30})
     jobs = scheduler.get_jobs()
-    trigger = jobs[0].trigger
+    news_job = next(j for j in jobs if j.id == "news_push")
+    trigger = news_job.trigger
     assert trigger.interval == timedelta(minutes=30)
 
 
@@ -386,4 +393,332 @@ def test_setup_scheduler_misfire_grace():
 
     scheduler = setup_scheduler(bot, mgr, bridge, {})
     jobs = scheduler.get_jobs()
-    assert jobs[0].misfire_grace_time == 300
+    news_job = next(j for j in jobs if j.id == "news_push")
+    assert news_job.misfire_grace_time == 300
+
+
+# ============================================================
+# Threads push job tests
+# ============================================================
+
+
+@pytest.fixture
+def pushed_threads_path(tmp_path):
+    """Patch PUSHED_THREADS_PATH to use tmp_path."""
+    path = tmp_path / "pushed_threads.json"
+    with patch("bot.scheduler.PUSHED_THREADS_PATH", path):
+        yield path
+
+
+@pytest.fixture
+def sample_thread_posts():
+    """Sample thread posts as returned by fetch_threads.check_new()."""
+    return [
+        {"id": "t001", "user": "stock_guru", "text": "台積電今天表現不錯", "timestamp": "2026-08-22T10:00:00", "url": "https://threads.net/@stock_guru/t001"},
+        {"id": "t002", "user": "market_watcher", "text": "美股三大指數齊漲", "timestamp": "2026-08-22T09:30:00", "url": "https://threads.net/@market_watcher/t002"},
+    ]
+
+
+# --- _load_pushed_threads ---
+
+
+def test_load_pushed_threads_empty(pushed_threads_path):
+    """File doesn't exist → returns empty list."""
+    result = _load_pushed_threads()
+    assert result == []
+
+
+def test_load_pushed_threads_valid(pushed_threads_path):
+    """Valid JSON file → returns parsed records."""
+    records = [
+        {"id": "t001", "pushed_at": "2026-08-22T03:00:00"},
+    ]
+    pushed_threads_path.write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")
+    result = _load_pushed_threads()
+    assert result == records
+
+
+def test_load_pushed_threads_corrupt_json(pushed_threads_path):
+    """Corrupt JSON file → returns empty list."""
+    pushed_threads_path.write_text("not valid json {{{", encoding="utf-8")
+    result = _load_pushed_threads()
+    assert result == []
+
+
+# --- _save_pushed_threads ---
+
+
+def test_save_pushed_threads(pushed_threads_path):
+    """Writes records correctly and creates parent dir."""
+    records = [
+        {"id": "t001", "pushed_at": "2026-08-22T03:00:00"},
+    ]
+    _save_pushed_threads(records)
+    assert pushed_threads_path.exists()
+    loaded = json.loads(pushed_threads_path.read_text(encoding="utf-8"))
+    assert loaded == records
+
+
+def test_save_pushed_threads_creates_directory(tmp_path):
+    """Creates parent directory if it doesn't exist."""
+    nested_path = tmp_path / "subdir" / "pushed_threads.json"
+    with patch("bot.scheduler.PUSHED_THREADS_PATH", nested_path):
+        _save_pushed_threads([{"id": "t001", "pushed_at": "2026-08-22T00:00:00"}])
+    assert nested_path.exists()
+
+
+# --- _cleanup_expired_threads ---
+
+
+def test_cleanup_expired_threads():
+    """Records older than 3 days get removed."""
+    now = datetime.now(timezone.utc)
+    old_time = (now - timedelta(days=4)).isoformat()
+    recent_time = (now - timedelta(days=1)).isoformat()
+
+    records = [
+        {"id": "old_post", "pushed_at": old_time},
+        {"id": "recent_post", "pushed_at": recent_time},
+    ]
+    result = _cleanup_expired_threads(records)
+    assert len(result) == 1
+    assert result[0]["id"] == "recent_post"
+
+
+def test_cleanup_expired_threads_keeps_recent():
+    """Records within 3 days are kept."""
+    now = datetime.now(timezone.utc)
+    times = [(now - timedelta(days=i)).isoformat() for i in range(3)]
+    records = [{"id": f"post_{i}", "pushed_at": t} for i, t in enumerate(times)]
+    result = _cleanup_expired_threads(records)
+    assert len(result) == 3
+
+
+def test_cleanup_expired_threads_naive_datetime():
+    """Records with naive datetime (no timezone) treated as UTC."""
+    now = datetime.now(timezone.utc)
+    recent = (now - timedelta(hours=1)).replace(tzinfo=None).isoformat()
+    records = [{"id": "t_naive", "pushed_at": recent}]
+    result = _cleanup_expired_threads(records)
+    assert len(result) == 1
+
+
+def test_cleanup_expired_threads_skips_invalid():
+    """Records without valid pushed_at are dropped."""
+    records = [
+        {"id": "no_date"},
+        {"id": "bad_date", "pushed_at": "not-a-date"},
+    ]
+    result = _cleanup_expired_threads(records)
+    assert result == []
+
+
+# --- _format_thread_post ---
+
+
+def test_format_thread_post():
+    """Verify output format for a normal post."""
+    post = {
+        "id": "t001",
+        "user": "stock_guru",
+        "text": "台積電今天表現不錯",
+        "timestamp": "2026-08-22T10:00:00",
+        "url": "https://threads.net/@stock_guru/t001",
+    }
+    result = _format_thread_post(post)
+    assert "🧵 Threads - stock_guru" in result
+    assert "(2026-08-22)" in result
+    assert "台積電今天表現不錯" in result
+    assert "🔗 https://threads.net/@stock_guru/t001" in result
+
+
+def test_format_thread_post_long_text():
+    """Long text is truncated at 500 chars."""
+    long_text = "A" * 600
+    post = {
+        "id": "t_long",
+        "user": "verbose_user",
+        "text": long_text,
+        "timestamp": "2026-08-22T10:00:00",
+        "url": "https://threads.net/@verbose_user/t_long",
+    }
+    result = _format_thread_post(post)
+    # 497 chars + "..." = 500
+    assert "A" * 497 + "..." in result
+    assert "A" * 498 not in result
+
+
+def test_format_thread_post_no_url():
+    """Post without URL omits the link line."""
+    post = {"id": "t_nourl", "user": "someone", "text": "Hello", "timestamp": "", "url": ""}
+    result = _format_thread_post(post)
+    assert "🔗" not in result
+    assert "Hello" in result
+
+
+def test_format_thread_post_no_text():
+    """Post without text omits the text line."""
+    post = {"id": "t_notext", "user": "someone", "text": "", "timestamp": "2026-08-22T10:00:00", "url": "https://example.com"}
+    result = _format_thread_post(post)
+    lines = result.strip().split("\n")
+    assert lines[0].startswith("🧵 Threads - someone")
+    assert lines[1] == "🔗 https://example.com"
+
+
+# --- threads_push_job ---
+
+
+@pytest.mark.asyncio
+async def test_threads_push_job_no_posts(mock_bot, mock_subscription_manager, pushed_threads_path):
+    """When check_new() returns no posts, nothing is pushed."""
+    with patch("tools.fetch_threads.check_new", new_callable=AsyncMock, return_value={"posts": []}):
+        await threads_push_job(mock_bot, mock_subscription_manager)
+
+    mock_bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_threads_push_job_error_response(mock_bot, mock_subscription_manager, pushed_threads_path):
+    """When check_new() returns an error, job exits gracefully."""
+    with patch("tools.fetch_threads.check_new", new_callable=AsyncMock, return_value={"error": "Token expired"}):
+        await threads_push_job(mock_bot, mock_subscription_manager)
+
+    mock_bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_threads_push_job_fetch_exception(mock_bot, mock_subscription_manager, pushed_threads_path):
+    """When check_new() raises, job exits gracefully."""
+    with patch("tools.fetch_threads.check_new", new_callable=AsyncMock, side_effect=Exception("Network error")):
+        await threads_push_job(mock_bot, mock_subscription_manager)
+
+    mock_bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_threads_push_job_all_pushed(
+    mock_bot, mock_subscription_manager, pushed_threads_path, sample_thread_posts
+):
+    """When all posts already pushed, nothing new is sent."""
+    now = datetime.now(timezone.utc).isoformat()
+    pushed_records = [{"id": p["id"], "pushed_at": now} for p in sample_thread_posts]
+    pushed_threads_path.write_text(json.dumps(pushed_records), encoding="utf-8")
+
+    with patch("tools.fetch_threads.check_new", new_callable=AsyncMock, return_value={"posts": sample_thread_posts}):
+        await threads_push_job(mock_bot, mock_subscription_manager)
+
+    mock_bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_threads_push_job_success(
+    mock_bot, mock_subscription_manager, pushed_threads_path, sample_thread_posts
+):
+    """New posts are formatted and pushed to subscribers."""
+    mock_subscription_manager.get_subscribers = MagicMock(return_value=[12345, 67890])
+
+    with patch("tools.fetch_threads.check_new", new_callable=AsyncMock, return_value={"posts": sample_thread_posts}):
+        await threads_push_job(mock_bot, mock_subscription_manager)
+
+    # 2 posts × 2 subscribers = 4 sends
+    assert mock_bot.send_message.call_count == 4
+
+    # Verify message content
+    first_call_text = mock_bot.send_message.call_args_list[0].kwargs["text"]
+    assert "🧵 Threads" in first_call_text
+
+    # Records written to file
+    saved = json.loads(pushed_threads_path.read_text(encoding="utf-8"))
+    assert len(saved) == 2
+    saved_ids = {r["id"] for r in saved}
+    assert "t001" in saved_ids
+    assert "t002" in saved_ids
+
+
+@pytest.mark.asyncio
+async def test_threads_push_job_no_subscribers(
+    mock_bot, pushed_threads_path, sample_thread_posts
+):
+    """No subscribers: posts recorded but not pushed."""
+    mgr = MagicMock()
+    mgr.get_subscribers = MagicMock(return_value=[])
+
+    with patch("tools.fetch_threads.check_new", new_callable=AsyncMock, return_value={"posts": sample_thread_posts}):
+        await threads_push_job(mock_bot, mgr)
+
+    mock_bot.send_message.assert_not_called()
+
+    # Posts still recorded as pushed
+    saved = json.loads(pushed_threads_path.read_text(encoding="utf-8"))
+    assert len(saved) == 2
+
+
+@pytest.mark.asyncio
+async def test_threads_push_job_cleans_expired(
+    mock_bot, mock_subscription_manager, pushed_threads_path, sample_thread_posts
+):
+    """Old records are cleaned during job run."""
+    old_time = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+    old_records = [{"id": "old_thread", "pushed_at": old_time}]
+    pushed_threads_path.write_text(json.dumps(old_records), encoding="utf-8")
+
+    mock_subscription_manager.get_subscribers = MagicMock(return_value=[12345])
+
+    with patch("tools.fetch_threads.check_new", new_callable=AsyncMock, return_value={"posts": sample_thread_posts}):
+        await threads_push_job(mock_bot, mock_subscription_manager)
+
+    saved = json.loads(pushed_threads_path.read_text(encoding="utf-8"))
+    saved_ids = {r["id"] for r in saved}
+    assert "old_thread" not in saved_ids
+    assert "t001" in saved_ids
+    assert "t002" in saved_ids
+
+
+# --- setup_scheduler with threads job ---
+
+
+def test_setup_scheduler_both_jobs():
+    """Both news and threads jobs are registered in the scheduler."""
+    bot = MagicMock()
+    mgr = MagicMock()
+    bridge = MagicMock()
+
+    scheduler = setup_scheduler(bot, mgr, bridge, {})
+    jobs = scheduler.get_jobs()
+    job_ids = {j.id for j in jobs}
+    assert "news_push" in job_ids
+    assert "threads_push" in job_ids
+    assert len(jobs) == 2
+
+
+def test_setup_scheduler_threads_default_interval():
+    """Threads job uses default 15-min interval when not in config."""
+    bot = MagicMock()
+    mgr = MagicMock()
+    bridge = MagicMock()
+
+    scheduler = setup_scheduler(bot, mgr, bridge, {})
+    jobs = {j.id: j for j in scheduler.get_jobs()}
+    assert jobs["threads_push"].trigger.interval == timedelta(minutes=15)
+
+
+def test_setup_scheduler_threads_custom_interval():
+    """Threads job uses interval from config."""
+    bot = MagicMock()
+    mgr = MagicMock()
+    bridge = MagicMock()
+
+    scheduler = setup_scheduler(bot, mgr, bridge, {"threads_schedule_interval_min": 30})
+    jobs = {j.id: j for j in scheduler.get_jobs()}
+    assert jobs["threads_push"].trigger.interval == timedelta(minutes=30)
+
+
+def test_setup_scheduler_threads_misfire_grace():
+    """Threads job has misfire_grace_time set to 120."""
+    bot = MagicMock()
+    mgr = MagicMock()
+    bridge = MagicMock()
+
+    scheduler = setup_scheduler(bot, mgr, bridge, {})
+    jobs = {j.id: j for j in scheduler.get_jobs()}
+    assert jobs["threads_push"].misfire_grace_time == 120
