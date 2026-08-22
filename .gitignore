@@ -15,6 +15,9 @@ config.toml
 # Threads 監控腳本狀態（含已見過貼文 id）
 data/threads_watch_state.json
 
+# 執行期資料（訂閱清單、已推 ID）
+data/
+
 .venv/
 venv/
 logs/
