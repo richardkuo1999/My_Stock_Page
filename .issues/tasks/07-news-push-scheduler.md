@@ -4,14 +4,14 @@
 
 **Blocked by:** 02 — 訂閱管理, 03 — AgentBridge, 06 — Tool: fetch_news
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] APScheduler job 每小時觸發一次
-- [ ] 呼叫 `fetch_news.latest()` 取得新文章
-- [ ] 以 URL 為 key 比對 `pushed_news.json`，過濾已推送的
-- [ ] 新文章經 `AgentBridge.send()` 產出摘要
-- [ ] 摘要推送給所有新聞訂閱者
-- [ ] 推送後將 URL + 時間戳寫入 `pushed_news.json`
-- [ ] 每次 job 執行時清理超過 7 天的舊紀錄
-- [ ] 模糊標題去重（避免同篇文章不同 URL）
-- [ ] 有 unit test
+- [x] APScheduler job 每小時觸發一次
+- [x] 呼叫 `fetch_news.latest()` 取得新文章
+- [x] 以 URL 為 key 比對 `pushed_news.json`，過濾已推送的
+- [x] 新文章經 `AgentBridge.send()` 產出摘要
+- [x] 摘要推送給所有新聞訂閱者
+- [x] 推送後將 URL + 時間戳寫入 `pushed_news.json`
+- [x] 每次 job 執行時清理超過 7 天的舊紀錄
+- [x] 模糊標題去重（避免同篇文章不同 URL）
+- [x] 有 unit test

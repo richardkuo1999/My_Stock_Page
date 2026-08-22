@@ -60,6 +60,8 @@
 | `/unsub_news` | 取消新聞推播 |
 | `/sub_threads` | 訂閱 Threads 推播 |
 | `/unsub_threads` | 取消 Threads 推播 |
+| `/news` | 立即抓最新新聞並回覆呼叫者（不受訂閱/去重限制） |
+| `/threads` | 立即抓最新 Threads 貼文並回覆呼叫者 |
 
 ## 4. Agent 接入方式
 
@@ -112,7 +114,7 @@ Google AI Pro 方案不提供 `GEMINI_API_KEY`，SDK 需要此 key 才能執行�
 | `tools/fetch_news.py` | 抓指定股票/全部最新新聞 | `python tools/fetch_news.py 2330 --limit 5` |
 | `tools/uanalyze.py` | AI 估值分析 | `python tools/uanalyze.py 2330` |
 | `tools/get_stock_price.py` | 即時股價 | `python tools/get_stock_price.py 2330` |
-| `tools/draw_kchart.py` | K 線圖（回傳圖片路徑） | `python tools/draw_kchart.py 2330 --period 60` |
+| `tools/draw_kchart.py` | K 線圖（mplfinance 繪製，回傳圖片路徑） | `python tools/draw_kchart.py 2330 --period 60` |
 | `tools/fetch_threads.py` | 抓追蹤帳號 Threads 貼文 | `python tools/fetch_threads.py --check-new` |
 | `tools/summarize_document.py` | URL/PDF 文件摘要 | `python tools/summarize_document.py https://...` |
 
@@ -229,25 +231,27 @@ Agent 只透過 tool script 拿即時資料，不碰 `data/` 目錄。
 
 ## 8. 新聞來源（15 個）
 
-| # | 來源 | 格式 |
+| # | 來源 | 格式（實作） |
 |---|------|------|
 | 1 | CNYES 鉅亨網 | JSON API |
-| 2 | MoneyDJ | RSS |
+| 2 | MoneyDJ | RSS（`verify=False`，SSL 憑證問題） |
 | 3 | Yahoo 股市 | RSS |
-| 4 | UDN 聯合新聞網（財經版） | RSS |
-| 5 | UAnalyze | HTML |
-| 6 | Fugle | HTML |
-| 7 | Vocus 方格子（特定作者） | Next.js SSR |
-| 8 | MacroMicro 財經M平方 | RSS (morss) |
-| 9 | FinGuider | JSON API |
-| 10 | Fintastic | RSS (morss) |
-| 11 | Forecastock | RSS (morss) |
+| 4 | UDN 聯合新聞網（財經版） | RSS（4 個 feed 並行合併） |
+| 5 | UAnalyze | HTML（BeautifulSoup 解析） |
+| 6 | Fugle | HTML（blog 分類頁爬 /post/ 連結） |
+| 7 | Vocus 方格子（特定作者） | Next.js SSR（`__NEXT_DATA__`） |
+| 8 | MacroMicro 財經M平方 | RSS（`curl_cffi` 偽裝 Chrome TLS 指紋繞 Cloudflare） |
+| 9 | FinGuider | JSON API（`verify=False` fallback） |
+| 10 | Fintastic | WordPress REST API（`/wp-json/wp/v2/posts` + 完整瀏覽器 UA） |
+| 11 | Forecastock | HTML（直接爬，繞過失效的 morss proxy） |
 | 12 | NewsDigest AI | RSS |
-| 13 | SinoTrade 永豐 | GraphQL |
-| 14 | Pocket 學堂 | JSON API |
-| 15 | Buffett Letters + Howard Marks Memos | PDF/HTML |
+| 13 | SinoTrade 永豐 | GraphQL POST（`verify=False`） |
+| 14 | Pocket 學堂 | JSON API（`verify=False`） |
+| 15 | Buffett Letters + Howard Marks Memos | 靜態參考連結 |
 
 **已砍：** Google News TW（雜訊多）
+
+> **反爬蟲對策**：morss.it 公開 proxy 已失效，改為直接抓取。SSL 憑證問題的來源用 `verify=False`；Cloudflare 保護的 MacroMicro 用 `curl_cffi` 偽裝 TLS 指紋、Fintastic 用 WordPress API + 瀏覽器 UA。實測 15 個來源全部可用（約 175 篇文章）。
 
 ## 9. Threads 追蹤
 

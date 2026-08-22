@@ -4,14 +4,14 @@
 
 **Blocked by:** 03 — AgentBridge + @mention 觸發
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `python tools/summarize_document.py https://example.com/article` 回傳摘要 JSON
-- [ ] `from tools.summarize_document import summarize` 可直接 import 使用
-- [ ] 支援一般網頁 URL（擷取正文）
-- [ ] 支援 PDF URL（下載後擷取文字）
-- [ ] 透過 `AgentBridge.send()` 產出摘要
-- [ ] 回傳格式：`{"title": "...", "summary": "...", "source_url": "..."}`
-- [ ] URL 無法存取時回傳 `{"error": "..."}`
-- [ ] 檔頭 docstring 符合規範
-- [ ] 有 unit test
+- [x] `python tools/summarize_document.py https://example.com/article` 回傳摘要 JSON
+- [x] `from tools.summarize_document import summarize` 可直接 import 使用
+- [x] 支援一般網頁 URL（擷取正文）
+- [x] 支援 PDF URL（下載後擷取文字）
+- [x] 透過 `AgentBridge.send()` 產出摘要
+- [x] 回傳格式：`{"title": "...", "summary": "...", "source_url": "..."}`
+- [x] URL 無法存取時回傳 `{"error": "..."}`
+- [x] 檔頭 docstring 符合規範
+- [x] 有 unit test

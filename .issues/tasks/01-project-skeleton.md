@@ -4,12 +4,12 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `python main.py` 啟動後 Bot 上線，能在 Telegram 收到訊息並回 echo
-- [ ] `docker compose up` 能成功啟動
-- [ ] 專案目錄結構符合 ARCHITECTURE.md §10（bot/、agent/、tools/、data/）
-- [ ] `requirements.txt` 列出所有基礎依賴（python-telegram-bot、APScheduler）
-- [ ] `.env.example` 列出所有需要的環境變數
-- [ ] `config.json` 有預設的應用設定（vocus_users、排程頻率等）
-- [ ] logging 基礎設定（stdout output）
+- [x] `python main.py` 啟動後 Bot 上線，能在 Telegram 收到訊息並回 echo
+- [x] `docker compose up` 能成功啟動
+- [x] 專案目錄結構符合 ARCHITECTURE.md §10（bot/、agent/、tools/、data/）
+- [x] `requirements.txt` 列出所有基礎依賴（python-telegram-bot、APScheduler）
+- [x] `.env.example` 列出所有需要的環境變數
+- [x] `config.json` 有預設的應用設定（vocus_users、排程頻率等）
+- [x] logging 基礎設定（stdout output）

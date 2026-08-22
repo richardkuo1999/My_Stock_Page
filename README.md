@@ -1,0 +1,135 @@
+# Stock Bot — 台股投資輔助 Telegram Bot
+
+AI Agent + Telegram 混合架構的台股投資輔助 Bot。Bot 薄殼負責收發訊息與排程推播，`@mention` 交給 Antigravity Agent 決定呼叫哪些工具，工具是一組獨立的 Python script（可 CLI 執行、也可 import）。
+
+完整架構設計見 [`ARCHITECTURE.md`](ARCHITECTURE.md)。
+
+## 需求
+
+- Python 3.12+
+- （選用）Docker + Docker Compose
+- （選用）Antigravity CLI（`agy` 指令）— `@mention` 問 Agent 才需要
+
+## 安裝
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+## 設定
+
+### 環境變數（`.env` — 機密）
+
+複製 `.env.example` 為 `.env` 並填入：
+
+```env
+TELEGRAM_BOT_TOKEN=       # 必填。@BotFather 建立 bot 取得
+TELEGRAM_ADMIN_CHAT_ID=   # 必填。管理者 chat id，接收排程失敗通知
+FINMIND_TOKENS=           # JSON 陣列字串，如 ["token1","token2"]
+FUGLE_API_KEY=            # 富果 API 金鑰（股價、K 線）
+UANALYZE_EMAIL=           # UAnalyze 帳號
+UANALYZE_PASSWORD=        # UAnalyze 密碼
+THREADS_ACCESS_TOKEN=     # Meta Threads 官方 API long-lived token
+```
+
+### 應用設定（`config.json` — 非機密）
+
+```json
+{
+  "vocus_users": ["@ieobserve", "@miula", "65ab564cfd897800018a88cc"],
+  "uanalyze_keywords": ["AI", "半導體", "ETF"],
+  "news_schedule_interval_min": 60,
+  "threads_schedule_interval_min": 15,
+  "threads_users": []
+}
+```
+
+- `threads_users`：要追蹤的 Threads user ID 清單。留空時 `/threads` 與排程會 fallback 抓「自己帳號」的貼文。
+
+## 啟動
+
+```bash
+# 本機開發
+python main.py
+
+# Docker 部署
+docker compose up -d
+```
+
+看到 `Bot started. Polling...` 即上線。
+
+## Telegram 指令
+
+| 指令 | 功能 |
+|------|------|
+| `/sub_news` / `/unsub_news` | 訂閱 / 取消新聞推播（每小時） |
+| `/sub_threads` / `/unsub_threads` | 訂閱 / 取消 Threads 推播（每 15 分鐘） |
+| `/news` | 立即抓最新新聞並回覆（不受訂閱/去重限制，可用來即時檢查） |
+| `/threads` | 立即抓最新 Threads 貼文並回覆 |
+| `@bot 你的問題` | 交給 Agent 處理（需先設定 Antigravity CLI，見下） |
+
+> 排程推播只發給訂閱者且會去重；`/news`、`/threads` 是直接回給呼叫者。
+
+## Agent（`@mention`）
+
+`@bot` 問問題時，Bot 透過 `AntigravityCLIBridge` 呼叫 `agy -p "..." --output-format json`。
+需先在本機安裝並登入 Antigravity CLI（`agy` 指令）。未安裝時 `@mention` 會回覆錯誤訊息，其餘功能不受影響。
+
+## 工具（獨立 CLI）
+
+每個工具都能單獨在命令列執行，回傳 JSON：
+
+```bash
+python tools/get_stock_price.py 2330                       # 即時股價
+python tools/draw_kchart.py 2330 --period 60               # K 線圖 → 圖片路徑
+python tools/fetch_news.py --all                           # 全部 15 來源最新新聞
+python tools/fetch_news.py 2330 --limit 5                  # 指定股票新聞
+python tools/fetch_threads.py --check-new                  # 追蹤帳號 Threads 貼文
+python tools/uanalyze.py 2330                              # UAnalyze AI 估值分析
+python tools/summarize_document.py https://example.com/x   # URL/PDF 摘要
+```
+
+## 新聞來源（15 個）
+
+CNYES、MoneyDJ、Yahoo股市、UDN財經、UAnalyze、Fugle、Vocus（特定作者）、MacroMicro、FinGuider、Fintastic、Forecastock、NewsDigestAI、SinoTrade、Pocket學堂、Buffett Letters + Howard Marks Memos。
+
+部分來源有 Cloudflare / SSL 保護，已分別處理：
+- SSL 憑證問題（MoneyDJ / Pocket / FinGuider / SinoTrade）→ `verify=False`
+- Cloudflare（MacroMicro）→ `curl_cffi` 偽裝 Chrome TLS 指紋
+- Cloudflare（Fintastic）→ WordPress REST API + 完整瀏覽器 UA
+
+## 資料儲存
+
+執行期資料存為 JSON（`data/`，已被 `.gitignore` 排除）：
+
+- `subscriptions.json` — 訂閱清單
+- `pushed_news.json` — 已推新聞 URL（保留 7 天）
+- `pushed_threads.json` — 已推 Threads ID（保留 3 天）
+- `logs/bot.log` — WARNING 以上日誌（rotation，5MB × 5）
+
+## 測試
+
+```bash
+source .venv/bin/activate
+python -m pytest tests/ -q
+```
+
+## 專案結構
+
+```
+main.py                 # 進入點
+bot/
+├── handlers.py         # Telegram 訊息處理 + @mention 路由
+├── scheduler.py        # APScheduler 新聞 / Threads 推播 job
+├── subscriptions.py    # /sub_* /unsub_* /news /threads 指令
+├── logging_conf.py     # 日誌設定（stdout + file rotation）
+└── error_notify.py     # 排程失敗 retry + 管理者通知
+agent/
+├── bridge.py           # AgentBridge ABC + AntigravityCLIBridge
+└── prompts.py          # Agent prompt templates
+tools/                  # 6 個工具 script（CLI + import 雙入口）
+data/                   # 執行期 JSON + 日誌
+tests/                  # 212 個測試
+```
