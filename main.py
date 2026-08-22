@@ -59,6 +59,31 @@ def main() -> None:
     notifier = JobErrorNotifier(bot=application.bot)
     scheduler = setup_scheduler(application.bot, subscription_manager, bridge, config, notifier)
 
+    # Application-level error handler: catches unhandled exceptions raised inside
+    # any handler (e.g. @mention routing) so python-telegram-bot no longer logs
+    # "No error handlers are registered". Logs the error, tries to reply to the
+    # user, and notifies the admin.
+    async def error_handler(update, context) -> None:
+        logger.error("Unhandled exception in handler", exc_info=context.error)
+
+        # Best-effort user-facing reply
+        try:
+            if update and getattr(update, "effective_message", None):
+                await update.effective_message.reply_text(
+                    "⚠️ 系統發生錯誤，請稍後再試"
+                )
+        except Exception:
+            logger.exception("Failed to send error reply to user")
+
+        # Notify admin (reuse the scheduler's notifier)
+        try:
+            notifier.record_failure("telegram_handler")
+            await notifier.notify_admin("telegram_handler", str(context.error))
+        except Exception:
+            logger.exception("Failed to notify admin about handler error")
+
+    application.add_error_handler(error_handler)
+
     # Lifecycle hooks
     async def post_init(app):
         scheduler.start()

@@ -149,7 +149,7 @@ async def _fetch_rss(source: dict, client: httpx.AsyncClient) -> list[dict]:
             return []
         return _parse_feed_text(r.text, name)
     except Exception as e:
-        logger.warning("RSS fetch failed for %s: %s", name, e)
+        logger.warning("RSS fetch failed for %s: %s", name, e or type(e).__name__)
         return []
 
 
