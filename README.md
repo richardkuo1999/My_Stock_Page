@@ -71,7 +71,7 @@ docker compose up -d
 | `/threads` | 立即抓最新 Threads 貼文並回覆 |
 | `/p <代號>` | 即時股價（直接跑工具，秒回），例 `/p 2330` |
 | `/k <代號> [天數]` | K 線圖（回傳圖片），例 `/k 2330 60` |
-| `/ua <代號>` | UAnalyze AI 估值分析，例 `/ua 2330` |
+| `/ua <代號>` | UAnalyze AI 分析：跳出選單選分析面向（近況/產業/資本支出…），例 `/ua 2330` |
 | `@bot 你的問題` | 交給 Agent 處理（需先設定 Antigravity CLI，見下） |
 
 > 快捷指令（`/p` `/k` `/ua` `/news` `/threads`）直接呼叫工具、不經 AI，回應快且省 token；
@@ -141,7 +141,7 @@ source .venv/bin/activate
 python -m pytest tests/ -q
 ```
 
-目前 **231 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
+目前 **235 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
 
 ### 端到端驗證現況
 
@@ -172,5 +172,5 @@ agent/
 └── prompts.py          # Agent prompt templates
 tools/                  # 7 個工具 script（CLI + import 雙入口）
 data/                   # 執行期 JSON + 日誌
-tests/                  # 231 個測試
+tests/                  # 235 個測試
 ```

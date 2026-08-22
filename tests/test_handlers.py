@@ -220,8 +220,73 @@ async def test_kchart_command_error(context):
 
 
 @pytest.mark.asyncio
-async def test_uanalyze_command_success(context):
+async def test_uanalyze_command_shows_menu(context):
+    """/ua <代號> replies with an inline keyboard menu, not a direct analysis."""
     update = _make_command_update("/ua 2330")
-    with patch("tools.uanalyze.analyze", new=AsyncMock(return_value={"analysis": "台積電近況良好"})):
-        await uanalyze_command(update, context)
-    assert any("台積電近況良好" in c.args[0] for c in update.message.reply_text.call_args_list)
+    await uanalyze_command(update, context)
+    kwargs = update.message.reply_text.call_args.kwargs
+    assert "reply_markup" in kwargs  # menu shown
+    assert "2330" in update.message.reply_text.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_uanalyze_command_no_arg(context):
+    update = _make_command_update("/ua")
+    await uanalyze_command(update, context)
+    assert "用法" in update.message.reply_text.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_uanalyze_callback_runs_selected_prompt(context):
+    """Pressing a menu button runs analyze() with the chosen prompt."""
+    from bot.handlers import UA_PROMPTS, uanalyze_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "ua:2330:0"  # first prompt
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    with patch("tools.uanalyze.analyze", new=AsyncMock(return_value={"analysis": "近況分析內容"})) as mock_analyze:
+        await uanalyze_callback(update, context)
+
+    # analyze called with the selected prompt's FULL text (tuple element [1])
+    mock_analyze.assert_awaited_once_with("2330", UA_PROMPTS[0][1])
+    # final edit shows the result
+    assert any("近況分析內容" in c.args[0] for c in update.callback_query.edit_message_text.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_uanalyze_callback_sends_full_long_prompt(context):
+    """A long-prompt entry sends the complete prompt text, not the short label."""
+    from bot.handlers import UA_PROMPTS, uanalyze_callback
+
+    # Find a long-prompt entry (label != prompt)
+    idx = next(i for i, (label, prompt) in enumerate(UA_PROMPTS) if label != prompt)
+    long_label, long_prompt = UA_PROMPTS[idx]
+    assert len(long_prompt) > len(long_label)  # sanity: full prompt is longer
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = f"ua:2330:{idx}"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    with patch("tools.uanalyze.analyze", new=AsyncMock(return_value={"analysis": "x"})) as mock_analyze:
+        await uanalyze_callback(update, context)
+
+    mock_analyze.assert_awaited_once_with("2330", long_prompt)
+
+
+@pytest.mark.asyncio
+async def test_uanalyze_callback_invalid_data(context):
+    from bot.handlers import uanalyze_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "ua:2330:999"  # out-of-range index
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    await uanalyze_callback(update, context)
+    assert "無效" in update.callback_query.edit_message_text.call_args[0][0]

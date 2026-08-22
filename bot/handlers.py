@@ -2,9 +2,10 @@
 
 import logging
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -28,6 +29,77 @@ HELP_TEXT = (
     f"@我 你的問題 — 例：`@bot 台積電最近怎麼樣？`\n\n"
     "輸入 /help 隨時查看本說明。"
 )
+
+# UAnalyze 分析面向選單。每項為 (按鈕標籤, 實際送出的完整 prompt)。
+# 標籤用於 inline 按鈕（需短），送出時用完整 prompt。取自 old_file 的 PROMPT_LIST（33 項全保留）。
+UA_PROMPTS: list[tuple[str, str]] = [
+    ("近況發展", "近況發展"),
+    ("產業趨勢", "產業趨勢"),
+    ("產品線分析", "產品線分析"),
+    ("長短期展望", "長短期展望"),
+    ("供需分析", "供需分析"),
+    ("觀察重點", "觀察重點"),
+    ("利多因素", "利多因素"),
+    ("利空因素", "利空因素"),
+    ("接單狀況", "接單狀況"),
+    ("資本支出", "資本支出"),
+    ("新產品", "新產品"),
+    ("時間表", "時間表"),
+    ("相關公司", "相關公司"),
+    ("同業競爭", "同業競爭"),
+    ("護城河分析", "護城河分析"),
+    ("併購分析", "併購分析"),
+    ("重要數字", "重要數字"),
+    ("公司概覽", "公司概覽"),
+    ("銷售地區", "銷售地區"),
+    ("描述庫存", "描述庫存"),
+    (
+        "營收成長來源",
+        "驅動銷售金額(營收)成長或衰退的來源有哪些，詳細且完整的敍述原因(敍述時請用數據佐證你的論點(若有數據的話))，分為短期(意為持續性不強)、長期(意為持續不斷的動能)",
+    ),
+    (
+        "獲利成長因子",
+        "驅動獲利(盈餘)成長或衰退的因子有哪些，詳細且完整的敍述原因(敍述時請用數據佐證你的論點(若有數據的話))，分為短期(意為持續性不強)、長期(意為持續不斷的動能)",
+    ),
+    (
+        "毛利率變化",
+        "驅動毛利率(成本)上升或下降的因素有哪些，詳細且完整的敍述原因，可以的話用數據佐證你的論點，分為短期長期。如果資料不足允許提供較少內容，如果資料中找不到原因可以不提供。備註，業外不會影響毛利率，ASP與毛利率不一定相關",
+    ),
+    (
+        "營收時間線",
+        "根據資料，將有提到(營收)或(銷售)的資訊取出，重新改寫(改寫程度大)，理為時間線(依時間排序)(去除相同內容)(排除匯兌收益、EPS、毛利率相關資訊)",
+    ),
+    (
+        "展望上下修",
+        "法人或公司有展望上下修原因是什麼?請注意要有明確看法變化|調整的意思才算。以多層結構顯示，第1層先[[展望上修(正向調整)]]再<<展望下修(負向調整)>>，第2層 - 時間(例如2025年第一季)、 - 第3層類型(例如<<毛利率下修>>、[[出貨量上修]]以及其他類型)。注意，有上下修的才算，維持不變的不用顯示。如果沒有上下修相關資料，請回答『無相關資料』",
+    ),
+    (
+        "關稅/生產基地",
+        "請你幫我做2件事，第一、我提供的資料中是否有提到關稅、貿易戰、或相關細節內容(這很重要一定要找出來)...； 第二、提供公司的生產基地、工廠地點、據點的相關細節內容...",
+    ),
+    (
+        "供應鏈重組",
+        "請檢查提供的資料中是否有提到『供應鏈如何重組』、『美國製造基地資訊』、『關稅影響利潤及價格上漲議題』或者『對等關稅影響』的相關內容...如果回答時有相似內容請將其整合為一句，儘量提供具體數據以及具體案例來輔助說明...",
+    ),
+    (
+        "匯率影響",
+        "台幣兌美元升貶值對公司成本或競爭力(產業競爭程度如何)的影響(再分為升值 and 貶值)公司說明(如果有的話)及分析並綜合評估影響明顯程度，台幣兌美元升貶值對匯兌損益影響...。輸出：台幣升值情境分析：... 台幣貶值情境分析：...。記得標示正面和負面標記",
+    ),
+    (
+        "AI 相關",
+        "請檢查我提供的資料中是否有提到『AI』『邊緣AI』『人工智慧』『人工智能』或相關內容...如果回答時有相似內容請將其整合為一句，可以提供具體數據以及具體案例來輔助說明...",
+    ),
+    ("新產品進度", "有新產品嗎，進度如何，最後條列出新產品詳細數字"),
+    (
+        "資本支出細節",
+        "詳述資本支出或擴產計劃，包含前因後果、項目、產能、金額、時間點、地點，若無資本支出或擴產，請回答『無資本支出相關資料』",
+    ),
+    (
+        "庫存循環",
+        "描述該公司的庫存情形，並在每一段敘述之後標註資料來源日期。我想更加了解該公司自身的庫存水位以及終端需求或客戶的庫存水位，接著想利用公司的接單情況來預判未來庫存循環方向",
+    ),
+]
+
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -122,25 +194,55 @@ async def kchart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def uanalyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /ua <代號> — UAnalyze AI valuation (no local AI; calls UAnalyze service)."""
+    """Handle /ua <代號> — show a prompt menu; the actual analysis runs when the
+    user picks an angle (see uanalyze_callback)."""
     symbol = _command_arg(update)
     if not symbol:
         await update.message.reply_text("用法：/ua <股票代號>，例 /ua 2330")
         return
 
-    await update.message.reply_text(f"🧠 正在分析 {symbol}…")
+    symbol = symbol.strip().upper()
+    # Build an inline keyboard: 3 buttons per row. callback_data encodes the
+    # symbol + prompt index (keeps well under Telegram's 64-byte limit).
+    buttons = [
+        InlineKeyboardButton(label, callback_data=f"ua:{symbol}:{i}")
+        for i, (label, _prompt) in enumerate(UA_PROMPTS)
+    ]
+    rows = [buttons[i : i + 3] for i in range(0, len(buttons), 3)]
+    keyboard = InlineKeyboardMarkup(rows)
+    await update.message.reply_text(
+        f"🧠 要看 {symbol} 的哪個面向？請選擇：",
+        reply_markup=keyboard,
+    )
+
+
+async def uanalyze_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle a UAnalyze prompt-menu button press: run the chosen prompt."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+
+    try:
+        _, symbol, idx_str = query.data.split(":", 2)
+        label, prompt = UA_PROMPTS[int(idx_str)]
+    except (ValueError, IndexError):
+        await query.edit_message_text("⚠️ 無效的選項")
+        return
+
+    await query.edit_message_text(f"🧠 正在分析 {symbol}（{label}）…")
 
     from tools.uanalyze import analyze
 
     try:
-        r = await analyze(symbol)
+        r = await analyze(symbol, prompt)
     except Exception as e:
-        logger.error("/ua failed for %s: %s", symbol, e)
-        await update.message.reply_text(f"⚠️ 分析失敗：{e}")
+        logger.error("/ua callback failed for %s (%s): %s", symbol, label, e)
+        await query.edit_message_text(f"⚠️ 分析失敗：{e}")
         return
 
     if "error" in r:
-        await update.message.reply_text(f"😕 {r['error']}")
+        await query.edit_message_text(f"😕 {r['error']}")
         return
 
     analysis = r.get("analysis", "")
@@ -148,7 +250,9 @@ async def uanalyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         import json as _json
 
         analysis = _json.dumps(analysis, ensure_ascii=False, indent=2)
-    await update.message.reply_text(f"🧠 {symbol} UAnalyze 分析\n{'=' * 20}\n{analysis}")
+    text = f"🧠 {symbol} · {label}\n{'=' * 20}\n{analysis}"
+    # Telegram message hard limit is 4096 chars.
+    await query.edit_message_text(text[:4096])
 
 
 async def mention(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -198,6 +302,9 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("p", price_command), group=0)
     application.add_handler(CommandHandler("k", kchart_command), group=0)
     application.add_handler(CommandHandler("ua", uanalyze_command), group=0)
+    application.add_handler(
+        CallbackQueryHandler(uanalyze_callback, pattern=r"^ua:"), group=0
+    )
     application.add_handler(
         MessageHandler(filters.Entity("mention"), mention), group=0
     )

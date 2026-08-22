@@ -40,9 +40,18 @@ SYSTEM_PROMPT = """你是一個台股投資輔助助理，透過 Telegram 與使
    查詢：`python tools/lookup_stock_name.py <代號>`
    寫入：`python tools/lookup_stock_name.py --set <代號> <公司名>`
 
-4. UAnalyze AI 估值分析
-   `python tools/uanalyze.py <股票代號>`
-   例：`python tools/uanalyze.py 2330`
+4. UAnalyze AI 估值分析（可指定分析面向）
+   `python tools/uanalyze.py <股票代號> [--prompt <分析面向>]`
+   例（單一面向）：`python tools/uanalyze.py 2330 --prompt 資本支出`
+   可用面向包含：近況發展、產業趨勢、產品線分析、長短期展望、供需分析、
+   觀察重點、利多因素、利空因素、接單狀況、資本支出、新產品、同業競爭、
+   護城河分析、重要數字、公司概覽、營收成長來源、獲利成長因子、毛利率變化、
+   展望上下修、匯率影響、AI 相關、庫存循環 等（不帶 --prompt 時預設「近況發展」）。
+
+   **做「分析報告」時**：當使用者要一份完整分析或投資報告，請「分別」以不同
+   面向多次呼叫本工具（例如近況發展、利多因素、利空因素、資本支出、展望上下修），
+   再把各面向結果「彙整、去重、綜合」成一份結構清楚的繁體中文報告
+   （用標題分段），而不是只跑單一面向。依問題挑選最相關的 3-6 個面向即可。
 
 5. Threads 貼文（追蹤帳號）
    `python tools/fetch_threads.py --check-new`
