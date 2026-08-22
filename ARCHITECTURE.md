@@ -56,12 +56,18 @@
 
 | 指令 | 功能 |
 |------|------|
+| `/start` `/help` | 歡迎訊息 / 指令與功能說明 |
 | `/sub_news` | 訂閱新聞推播 |
 | `/unsub_news` | 取消新聞推播 |
 | `/sub_threads` | 訂閱 Threads 推播 |
 | `/unsub_threads` | 取消 Threads 推播 |
 | `/news` | 立即抓最新新聞並回覆呼叫者（不受訂閱/去重限制） |
 | `/threads` | 立即抓最新 Threads 貼文並回覆呼叫者 |
+| `/p <代號>` | 即時股價（直接 import 工具，不經 AI） |
+| `/k <代號> [天數]` | K 線圖（回傳圖片） |
+| `/ua <代號>` | UAnalyze 估值分析 |
+
+> 快捷指令直接呼叫對應工具、不經 Agent（省 token、秒回）；需自然語言或組合多工具時才用 `@mention`。
 
 ## 4. Agent 接入方式
 

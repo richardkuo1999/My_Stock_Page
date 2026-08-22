@@ -4,7 +4,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from bot.handlers import mention
+from bot.handlers import (
+    help_command,
+    kchart_command,
+    mention,
+    price_command,
+    start_command,
+    uanalyze_command,
+)
 
 
 @pytest.fixture
@@ -137,3 +144,84 @@ async def test_mention_no_entities(context):
     update.message = MagicMock()
     update.message.entities = None
     await mention(update, context)  # Should not raise
+
+
+# --- /start, /help and quick command tests ---
+
+
+def _make_command_update(text: str):
+    update = MagicMock()
+    update.message = MagicMock()
+    update.message.text = text
+    update.message.reply_text = AsyncMock()
+    update.message.reply_photo = AsyncMock()
+    return update
+
+
+@pytest.mark.asyncio
+async def test_start_command_greets(context):
+    update = _make_command_update("/start")
+    await start_command(update, context)
+    update.message.reply_text.assert_awaited_once()
+    assert "台股" in update.message.reply_text.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_help_command_lists_commands(context):
+    update = _make_command_update("/help")
+    await help_command(update, context)
+    text = update.message.reply_text.call_args[0][0]
+    assert "/p" in text and "/k" in text and "/ua" in text
+
+
+@pytest.mark.asyncio
+async def test_price_command_no_arg(context):
+    update = _make_command_update("/p")
+    await price_command(update, context)
+    assert "用法" in update.message.reply_text.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_price_command_success(context):
+    update = _make_command_update("/p 2330")
+    fake = {"symbol": "2330", "name": "台積電", "price": 2410.0, "change": 35.0, "change_pct": 1.47, "volume": 0, "source": "fugle"}
+    with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)):
+        await price_command(update, context)
+    # last reply carries the price info
+    text = update.message.reply_text.call_args[0][0]
+    assert "台積電" in text and "2410" in text
+
+
+@pytest.mark.asyncio
+async def test_price_command_error(context):
+    update = _make_command_update("/p 9999")
+    with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value={"error": "找不到股票代號 9999"})):
+        await price_command(update, context)
+    assert "找不到" in update.message.reply_text.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_kchart_command_sends_photo(context, tmp_path):
+    img = tmp_path / "chart.png"
+    img.write_bytes(b"\x89PNG\r\n")
+    update = _make_command_update("/k 2330 60")
+    with patch("tools.draw_kchart.draw", new=AsyncMock(return_value={"image_path": str(img)})):
+        await kchart_command(update, context)
+    update.message.reply_photo.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_kchart_command_error(context):
+    update = _make_command_update("/k 9999")
+    with patch("tools.draw_kchart.draw", new=AsyncMock(return_value={"error": "找不到股票代號 9999 的歷史資料"})):
+        await kchart_command(update, context)
+    # reply_text called with error (after the "正在繪製" message)
+    assert any("找不到" in c.args[0] for c in update.message.reply_text.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_uanalyze_command_success(context):
+    update = _make_command_update("/ua 2330")
+    with patch("tools.uanalyze.analyze", new=AsyncMock(return_value={"analysis": "台積電近況良好"})):
+        await uanalyze_command(update, context)
+    assert any("台積電近況良好" in c.args[0] for c in update.message.reply_text.call_args_list)
