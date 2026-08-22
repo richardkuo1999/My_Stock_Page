@@ -22,6 +22,7 @@ from bot.scheduler import (
     news_push_job,
     setup_scheduler,
     threads_push_job,
+    uanalyze_push_job,
 )
 
 
@@ -365,7 +366,7 @@ def test_setup_scheduler_default_interval():
 
     scheduler = setup_scheduler(bot, mgr, bridge, {})
     jobs = scheduler.get_jobs()
-    assert len(jobs) == 2
+    assert len(jobs) == 3
     news_job = next(j for j in jobs if j.id == "news_push")
     # Interval trigger
     trigger = news_job.trigger
@@ -688,7 +689,8 @@ def test_setup_scheduler_both_jobs():
     job_ids = {j.id for j in jobs}
     assert "news_push" in job_ids
     assert "threads_push" in job_ids
-    assert len(jobs) == 2
+    assert "uanalyze_push" in job_ids
+    assert len(jobs) == 3
 
 
 def test_setup_scheduler_threads_default_interval():
@@ -722,3 +724,130 @@ def test_setup_scheduler_threads_misfire_grace():
     scheduler = setup_scheduler(bot, mgr, bridge, {})
     jobs = {j.id: j for j in scheduler.get_jobs()}
     assert jobs["threads_push"].misfire_grace_time == 120
+
+
+# ============================================================
+# UAnalyze report monitor push job tests
+# ============================================================
+
+
+@pytest.fixture
+def pushed_uanalyze_path(tmp_path):
+    """Patch PUSHED_UANALYZE_PATH to use tmp_path."""
+    path = tmp_path / "pushed_uanalyze.json"
+    with patch("bot.scheduler.PUSHED_UANALYZE_PATH", path):
+        yield path
+
+
+@pytest.fixture
+def sample_reports():
+    """Sample reports as returned by uanalyze.list_latest_reports()."""
+    return [
+        {"id": 102, "title": "台積電 Q3 法說", "stock_name": "台積電", "date": "2024-10-15", "summary": "毛利率創高", "url": "https://u/r102"},
+        {"id": 101, "title": "聯發科展望", "stock_name": "聯發科", "date": "2024-10-14", "summary": "AI 拉貨", "url": "https://u/r101"},
+    ]
+
+
+def _recent_ts() -> str:
+    """A timestamp inside the UAnalyze TTL window (so seeded state survives cleanup)."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+@pytest.mark.asyncio
+async def test_uanalyze_push_first_run_seeds_state(
+    mock_bot, pushed_uanalyze_path, sample_reports
+):
+    """First run (no state): seeds dedup state, pushes nothing (no spam)."""
+    mgr = MagicMock()
+    mgr.get_subscribers = MagicMock(return_value=[111])
+
+    with patch("tools.uanalyze.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}):
+        await uanalyze_push_job(mock_bot, mgr)
+
+    mock_bot.send_message.assert_not_called()
+    saved = json.loads(pushed_uanalyze_path.read_text(encoding="utf-8"))
+    assert {r["id"] for r in saved} == {101, 102}
+
+
+@pytest.mark.asyncio
+async def test_uanalyze_push_new_report(
+    mock_bot, pushed_uanalyze_path, sample_reports
+):
+    """A newly-appeared report id is pushed to subscribers."""
+    # Seed state with only the older report.
+    pushed_uanalyze_path.write_text(
+        json.dumps([{"id": 101, "pushed_at": _recent_ts()}]),
+        encoding="utf-8",
+    )
+    mgr = MagicMock()
+    mgr.get_subscribers = MagicMock(return_value=[111, 222])
+
+    with patch("tools.uanalyze.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}):
+        await uanalyze_push_job(mock_bot, mgr)
+
+    # New report 102 pushed to both subscribers.
+    assert mock_bot.send_message.call_count == 2
+    text = mock_bot.send_message.call_args_list[0].kwargs["text"]
+    assert "台積電" in text and "https://u/r102" in text
+    saved = json.loads(pushed_uanalyze_path.read_text(encoding="utf-8"))
+    assert {r["id"] for r in saved} == {101, 102}
+
+
+@pytest.mark.asyncio
+async def test_uanalyze_push_no_new(mock_bot, pushed_uanalyze_path, sample_reports):
+    """All reports already pushed → nothing sent."""
+    pushed_uanalyze_path.write_text(
+        json.dumps([
+            {"id": 101, "pushed_at": _recent_ts()},
+            {"id": 102, "pushed_at": _recent_ts()},
+        ]),
+        encoding="utf-8",
+    )
+    mgr = MagicMock()
+    mgr.get_subscribers = MagicMock(return_value=[111])
+
+    with patch("tools.uanalyze.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}):
+        await uanalyze_push_job(mock_bot, mgr)
+
+    mock_bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_uanalyze_push_no_subscribers(
+    mock_bot, pushed_uanalyze_path, sample_reports
+):
+    """No subscribers: new report recorded as pushed but not sent."""
+    pushed_uanalyze_path.write_text(
+        json.dumps([{"id": 101, "pushed_at": _recent_ts()}]),
+        encoding="utf-8",
+    )
+    mgr = MagicMock()
+    mgr.get_subscribers = MagicMock(return_value=[])
+
+    with patch("tools.uanalyze.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}):
+        await uanalyze_push_job(mock_bot, mgr)
+
+    mock_bot.send_message.assert_not_called()
+    saved = json.loads(pushed_uanalyze_path.read_text(encoding="utf-8"))
+    assert {r["id"] for r in saved} == {101, 102}
+
+
+@pytest.mark.asyncio
+async def test_uanalyze_push_fetch_error(mock_bot, pushed_uanalyze_path):
+    """Fetch error → job returns quietly, nothing pushed."""
+    mgr = MagicMock()
+    mgr.get_subscribers = MagicMock(return_value=[111])
+
+    with patch("tools.uanalyze.list_latest_reports", new_callable=AsyncMock, return_value={"error": "boom"}):
+        await uanalyze_push_job(mock_bot, mgr)
+
+    mock_bot.send_message.assert_not_called()
+
+
+def test_setup_scheduler_registers_uanalyze_job():
+    """setup_scheduler wires a uanalyze_push job with configured interval."""
+    scheduler = setup_scheduler(
+        MagicMock(), MagicMock(), MagicMock(), {"uanalyze_schedule_interval_min": 45}
+    )
+    job = next(j for j in scheduler.get_jobs() if j.id == "uanalyze_push")
+    assert job.trigger.interval == timedelta(minutes=45)

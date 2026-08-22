@@ -61,11 +61,13 @@
 | `/unsub_news` | 取消新聞推播 |
 | `/sub_threads` | 訂閱 Threads 推播 |
 | `/unsub_threads` | 取消 Threads 推播 |
-| `/news` | 立即抓最新新聞並回覆呼叫者（不受訂閱/去重限制） |
+| `/sub_ua_reports` | 訂閱 UAnalyze 新研究報告推播 |
+| `/unsub_ua_reports` | 取消 UAnalyze 新研究報告推播 |
+| `/news` | 跳選單選新聞來源（全部或指定 15 來源之一）後回覆 |
 | `/threads` | 立即抓最新 Threads 貼文並回覆呼叫者 |
 | `/p <代號>` | 即時股價（直接 import 工具，不經 AI） |
 | `/k <代號> [天數]` | K 線圖（回傳圖片） |
-| `/ua <代號>` | UAnalyze 估值分析 |
+| `/ua <代號>` | UAnalyze 估值分析：跳選單選分析面向 |
 
 > 快捷指令直接呼叫對應工具、不經 Agent（省 token、秒回）；需自然語言或組合多工具時才用 `@mention`。
 
@@ -199,6 +201,7 @@ if __name__ == "__main__":
 |-----|------|------|
 | 新聞推播 | 每小時 | `fetch_news.latest()` → Agent 摘要 → 推 Telegram |
 | Threads 追蹤 | 每 15 分鐘 | `fetch_threads.check_new()` → 直接推 Telegram |
+| UAnalyze 報告監控 | 每 30 分鐘 | `uanalyze.list_latest_reports()` → 依 report id 去重 → 直接推 Telegram（無 AI、無關鍵字過濾，每則新報告一律正常通知；首次執行只建立去重狀態不洗版） |
 
 ### 推播流程
 

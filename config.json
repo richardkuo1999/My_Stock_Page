@@ -3,5 +3,6 @@
   "uanalyze_keywords": ["AI", "半導體", "ETF"],
   "news_schedule_interval_min": 60,
   "threads_schedule_interval_min": 15,
+  "uanalyze_schedule_interval_min": 30,
   "threads_users": []
 }

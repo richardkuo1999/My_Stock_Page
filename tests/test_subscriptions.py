@@ -11,9 +11,11 @@ from bot.subscriptions import (
     news_source_callback,
     sub_news_handler,
     sub_threads_handler,
+    sub_uanalyze_handler,
     threads_now_handler,
     unsub_news_handler,
     unsub_threads_handler,
+    unsub_uanalyze_handler,
 )
 
 
@@ -248,6 +250,35 @@ async def test_unsub_threads_handler_success(update, context):
         await unsub_threads_handler(update, context)
         mock_manager.unsubscribe.assert_called_once_with(12345, "threads")
         update.message.reply_text.assert_called_once_with("✅ 已取消 Threads 推播")
+
+
+@pytest.mark.asyncio
+async def test_sub_uanalyze_handler_new(update, context):
+    """sub_ua_reports subscribes to the uanalyze channel."""
+    with patch("bot.subscriptions.manager") as mock_manager:
+        mock_manager.subscribe.return_value = True
+        await sub_uanalyze_handler(update, context)
+        mock_manager.subscribe.assert_called_once_with(12345, "uanalyze")
+        update.message.reply_text.assert_called_once_with("✅ 已訂閱 UAnalyze 新報告推播")
+
+
+@pytest.mark.asyncio
+async def test_sub_uanalyze_handler_already(update, context):
+    """sub_ua_reports replies info if already subscribed."""
+    with patch("bot.subscriptions.manager") as mock_manager:
+        mock_manager.subscribe.return_value = False
+        await sub_uanalyze_handler(update, context)
+        update.message.reply_text.assert_called_once_with("ℹ️ 您已經訂閱 UAnalyze 新報告推播")
+
+
+@pytest.mark.asyncio
+async def test_unsub_uanalyze_handler_success(update, context):
+    """unsub_ua_reports unsubscribes from the uanalyze channel."""
+    with patch("bot.subscriptions.manager") as mock_manager:
+        mock_manager.unsubscribe.return_value = True
+        await unsub_uanalyze_handler(update, context)
+        mock_manager.unsubscribe.assert_called_once_with(12345, "uanalyze")
+        update.message.reply_text.assert_called_once_with("✅ 已取消 UAnalyze 新報告推播")
 
 
 @pytest.mark.asyncio

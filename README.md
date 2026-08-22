@@ -42,6 +42,7 @@ THREADS_ACCESS_TOKEN=     # Meta Threads 官方 API long-lived token
   "uanalyze_keywords": ["AI", "半導體", "ETF"],
   "news_schedule_interval_min": 60,
   "threads_schedule_interval_min": 15,
+  "uanalyze_schedule_interval_min": 30,
   "threads_users": []
 }
 ```
@@ -67,6 +68,7 @@ docker compose up -d
 | `/start` / `/help` | 歡迎訊息 / 指令與功能說明 |
 | `/sub_news` / `/unsub_news` | 訂閱 / 取消新聞推播（每小時） |
 | `/sub_threads` / `/unsub_threads` | 訂閱 / 取消 Threads 推播（每 15 分鐘） |
+| `/sub_ua_reports` / `/unsub_ua_reports` | 訂閱 / 取消 UAnalyze 新研究報告推播（每 30 分鐘） |
 | `/news` | 跳出選單選新聞來源（全部或指定 15 來源之一），再回覆該來源最新新聞 |
 | `/threads` | 立即抓最新 Threads 貼文並回覆 |
 | `/p <代號>` | 即時股價（直接跑工具，秒回），例 `/p 2330` |
@@ -101,6 +103,7 @@ python tools/fetch_news.py --all                           # 全部 15 來源最
 python tools/fetch_news.py 2330 --limit 5                  # 指定股票新聞（本地過濾）
 python tools/fetch_threads.py --check-new                  # 追蹤帳號 Threads 貼文
 python tools/uanalyze.py 2330                              # UAnalyze AI 估值分析
+python tools/uanalyze.py --reports --limit 50              # UAnalyze 最新研究報告列表（監控用）
 python tools/summarize_document.py https://example.com/x   # URL/PDF 摘要
 python tools/lookup_stock_name.py 2330                     # 查代號→公司名（對照表）
 python tools/lookup_stock_name.py --set 9999 某公司        # 寫回對照表
@@ -132,6 +135,7 @@ CNYES、MoneyDJ、Yahoo股市、UDN財經、UAnalyze、Fugle、Vocus（特定作
 - `news_cache.json` — 新聞內容快取（TTL 10 分鐘，避免每次重抓 15 來源）
 - `pushed_news.json` — 已推新聞 URL（保留 7 天）
 - `pushed_threads.json` — 已推 Threads ID（保留 3 天）
+- `pushed_uanalyze.json` — 已推 UAnalyze 報告 id（保留 14 天，監控去重用）
 - `stock_names.json` — 代號↔公司名對照表（seed 20 檔，自我成長）
 - `logs/bot.log` — WARNING 以上日誌（rotation，5MB × 5）
 
@@ -142,7 +146,7 @@ source .venv/bin/activate
 python -m pytest tests/ -q
 ```
 
-目前 **244 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
+目前 **260 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
 
 ### 端到端驗證現況
 
@@ -173,5 +177,5 @@ agent/
 └── prompts.py          # Agent prompt templates
 tools/                  # 7 個工具 script（CLI + import 雙入口）
 data/                   # 執行期 JSON + 日誌
-tests/                  # 244 個測試
+tests/                  # 260 個測試
 ```

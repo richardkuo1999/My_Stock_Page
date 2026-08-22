@@ -17,6 +17,9 @@ SIMILARITY_THRESHOLD = 0.8  # titles with >80% similarity are considered duplica
 PUSHED_THREADS_PATH = Path("data/pushed_threads.json")
 THREADS_TTL_DAYS = 3
 
+PUSHED_UANALYZE_PATH = Path("data/pushed_uanalyze.json")
+UANALYZE_TTL_DAYS = 14
+
 
 def _load_pushed_news() -> list[dict]:
     """Load pushed news records from JSON file."""
@@ -285,6 +288,141 @@ async def threads_push_job(bot, subscription_manager) -> None:
     logger.info("Pushed %d threads to %d subscribers", len(new_posts), len(subscribers))
 
 
+def _load_pushed_uanalyze() -> list[dict]:
+    """Load pushed UAnalyze report records from JSON file."""
+    if not PUSHED_UANALYZE_PATH.exists():
+        return []
+    try:
+        return json.loads(PUSHED_UANALYZE_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def _save_pushed_uanalyze(records: list[dict]) -> None:
+    """Save pushed UAnalyze report records to JSON file."""
+    PUSHED_UANALYZE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PUSHED_UANALYZE_PATH.write_text(
+        json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _cleanup_expired_uanalyze(records: list[dict]) -> list[dict]:
+    """Remove records older than UANALYZE_TTL_DAYS."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=UANALYZE_TTL_DAYS)
+    result = []
+    for r in records:
+        try:
+            pushed_at = datetime.fromisoformat(r["pushed_at"])
+            if pushed_at.tzinfo is None:
+                pushed_at = pushed_at.replace(tzinfo=timezone.utc)
+            if pushed_at > cutoff:
+                result.append(r)
+        except (KeyError, ValueError):
+            continue
+    return result
+
+
+def _format_uanalyze_report(report: dict) -> str:
+    """Format a single UAnalyze report for a Telegram message (plain, no HTML)."""
+    title = report.get("title", "")
+    stock_name = report.get("stock_name", "")
+    date = report.get("date", "")
+    summary = report.get("summary", "")
+    url = report.get("url", "")
+
+    head = "📋 UAnalyze 新報告"
+    if stock_name:
+        head += f" · {stock_name}"
+    parts = [head]
+    if title and date:
+        parts.append(f"{title}（{date}）")
+    elif title or date:
+        parts.append(title or date)
+    parts.append("━" * 10)
+    if summary:
+        parts.append(summary[:800])
+    if url:
+        parts.append(f"🔗 {url}")
+    return "\n".join(parts)
+
+
+async def uanalyze_push_job(bot, subscription_manager) -> None:
+    """Scheduled job: poll UAnalyze for newly published reports and push them to
+    subscribers. Dedup by report id (persisted). No AI, no keyword filtering —
+    every new report is pushed with a normal notification."""
+    from tools.uanalyze import list_latest_reports
+
+    logger.info("UAnalyze report push job started")
+
+    try:
+        result = await list_latest_reports()
+    except Exception as e:
+        logger.error("Failed to fetch UAnalyze reports: %s", e)
+        return
+
+    if "error" in result:
+        logger.error("UAnalyze report fetch error: %s", result["error"])
+        return
+
+    reports = result.get("reports", [])
+    if not reports:
+        logger.info("No UAnalyze reports found")
+        return
+
+    # Load and cleanup pushed records (dedup by report id).
+    pushed_records = _load_pushed_uanalyze()
+    pushed_records = _cleanup_expired_uanalyze(pushed_records)
+    pushed_ids = {r["id"] for r in pushed_records}
+
+    new_reports = [
+        r for r in reports if r.get("id") is not None and r["id"] not in pushed_ids
+    ]
+
+    # First run (no state yet): seed dedup state without spamming every old report.
+    if not pushed_records and new_reports:
+        now = datetime.now(timezone.utc).isoformat()
+        for r in reports:
+            if r.get("id") is not None:
+                pushed_records.append({"id": r["id"], "pushed_at": now})
+        _save_pushed_uanalyze(pushed_records)
+        logger.info(
+            "UAnalyze monitor initialized with %d existing reports", len(pushed_records)
+        )
+        return
+
+    if not new_reports:
+        logger.info("All UAnalyze reports already pushed")
+        _save_pushed_uanalyze(pushed_records)
+        return
+
+    subscribers = subscription_manager.get_subscribers("uanalyze")
+    now = datetime.now(timezone.utc).isoformat()
+    if not subscribers:
+        logger.info("No UAnalyze subscribers")
+        for r in new_reports:
+            pushed_records.append({"id": r["id"], "pushed_at": now})
+        _save_pushed_uanalyze(pushed_records)
+        return
+
+    # Oldest-first so the newest report ends up at the bottom of the chat.
+    for report in sorted(new_reports, key=lambda r: r["id"]):
+        message = _format_uanalyze_report(report)
+        for chat_id in subscribers:
+            try:
+                await bot.send_message(
+                    chat_id=chat_id, text=message, disable_web_page_preview=True
+                )
+            except Exception as e:
+                logger.error("Failed to push UAnalyze report to %s: %s", chat_id, e)
+
+    for r in new_reports:
+        pushed_records.append({"id": r["id"], "pushed_at": now})
+    _save_pushed_uanalyze(pushed_records)
+    logger.info(
+        "Pushed %d UAnalyze reports to %d subscribers", len(new_reports), len(subscribers)
+    )
+
+
 def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict, notifier=None) -> AsyncIOScheduler:
     """Create and configure the APScheduler with news and threads push jobs."""
     from bot.error_notify import run_with_retry
@@ -293,6 +431,7 @@ def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict, notif
 
     news_interval = config.get("news_schedule_interval_min", 60)
     threads_interval = config.get("threads_schedule_interval_min", 15)
+    uanalyze_interval = config.get("uanalyze_schedule_interval_min", 30)
 
     if notifier:
         # Wrapped jobs with retry + error notification
@@ -301,6 +440,9 @@ def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict, notif
 
         async def wrapped_threads_job():
             await run_with_retry(threads_push_job, "threads_push", notifier, bot, subscription_manager)
+
+        async def wrapped_uanalyze_job():
+            await run_with_retry(uanalyze_push_job, "uanalyze_push", notifier, bot, subscription_manager)
 
         scheduler.add_job(
             wrapped_news_job,
@@ -317,6 +459,14 @@ def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict, notif
             id="threads_push",
             name="Threads Push",
             misfire_grace_time=120,
+        )
+        scheduler.add_job(
+            wrapped_uanalyze_job,
+            "interval",
+            minutes=uanalyze_interval,
+            id="uanalyze_push",
+            name="UAnalyze Report Push",
+            misfire_grace_time=300,
         )
     else:
         # Direct jobs (backward compatible, no retry wrapper)
@@ -338,6 +488,20 @@ def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict, notif
             name="Threads Push",
             misfire_grace_time=120,
         )
+        scheduler.add_job(
+            uanalyze_push_job,
+            "interval",
+            minutes=uanalyze_interval,
+            args=[bot, subscription_manager],
+            id="uanalyze_push",
+            name="UAnalyze Report Push",
+            misfire_grace_time=300,
+        )
 
-    logger.info("Scheduler configured: news=%dmin, threads=%dmin", news_interval, threads_interval)
+    logger.info(
+        "Scheduler configured: news=%dmin, threads=%dmin, uanalyze=%dmin",
+        news_interval,
+        threads_interval,
+        uanalyze_interval,
+    )
     return scheduler

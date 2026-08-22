@@ -14,6 +14,7 @@ from tools.uanalyze import (
     analyze,
     get_completion,
     get_reports,
+    list_latest_reports,
 )
 
 
@@ -322,6 +323,81 @@ async def test_get_reports_failure():
 
     assert "error" in result
     assert "9999" in result["error"]
+
+
+# --- list_latest_reports() tests ---
+
+
+@pytest.mark.asyncio
+async def test_list_latest_reports_success():
+    """Latest site-wide reports are parsed with id/stock_name for dedup + display."""
+    _auth.access_token = "tok"
+
+    reports_data = {
+        "data": [
+            {
+                "id": 102,
+                "name": "台積電 Q3 法說",
+                "stock_name": "台積電",
+                "content_date": "2024-10-15T00:00:00",
+                "summary": "毛利率創高",
+                "url": "https://example.com/r102",
+            },
+            {
+                "id": 101,
+                "name": "聯發科展望",
+                "stock_name": "聯發科",
+                "content_date": "2024-10-14T00:00:00",
+                "summary": "AI 手機拉貨",
+                "url": "https://example.com/r101",
+            },
+        ]
+    }
+    api_resp = _make_httpx_response(200, reports_data)
+    mock_client = _mock_async_client(api_resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await list_latest_reports(limit=50)
+
+    assert "reports" in result
+    assert len(result["reports"]) == 2
+    r0 = result["reports"][0]
+    assert r0["id"] == 102
+    assert r0["title"] == "台積電 Q3 法說"
+    assert r0["stock_name"] == "台積電"
+    assert r0["date"] == "2024-10-15"
+    assert r0["summary"] == "毛利率創高"
+    assert r0["url"] == "https://example.com/r102"
+
+
+@pytest.mark.asyncio
+async def test_list_latest_reports_nested_data():
+    """Handles the {data:{data:[...]}} wrapper some UAnalyze endpoints return."""
+    _auth.access_token = "tok"
+
+    reports_data = {"data": {"data": [{"id": 5, "name": "X", "stock_name": "某股"}]}}
+    api_resp = _make_httpx_response(200, reports_data)
+    mock_client = _mock_async_client(api_resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await list_latest_reports()
+
+    assert "reports" in result
+    assert result["reports"][0]["id"] == 5
+
+
+@pytest.mark.asyncio
+async def test_list_latest_reports_failure():
+    """API failure → error dict."""
+    _auth.access_token = "tok"
+
+    api_resp = _make_httpx_response(500, {"error": "internal"})
+    mock_client = _mock_async_client(api_resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await list_latest_reports()
+
+    assert "error" in result
 
 
 # --- CLI test ---

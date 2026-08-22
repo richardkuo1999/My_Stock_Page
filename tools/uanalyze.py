@@ -169,6 +169,36 @@ async def get_reports(symbol: str) -> dict:
     return {"error": f"UAnalyze 無法取得 {symbol} 的報告"}
 
 
+async def list_latest_reports(limit: int = 50) -> dict:
+    """List the latest site-wide research reports (pure data, no AI, no push).
+
+    Used by the scheduled monitor to detect newly published reports. Returns
+    reports newest-first with the fields needed for dedup (id) and display.
+    """
+    url = f"{BASE_URL}/api/report-summaries"
+    result = await _request_with_auth(url, {"limit": limit, "offset": 0})
+    if not result or "data" not in result:
+        return {"error": "UAnalyze 無法取得最新報告列表"}
+
+    # Endpoint may return data:[...] or data:{data:[...]}.
+    raw = result["data"]
+    items = raw.get("data", []) if isinstance(raw, dict) else raw
+
+    reports = []
+    for item in items:
+        reports.append(
+            {
+                "id": item.get("id"),
+                "title": item.get("name", "") or item.get("title", ""),
+                "stock_name": item.get("stock_name", ""),
+                "date": (item.get("content_date", "") or item.get("date", ""))[:10],
+                "summary": item.get("summary", ""),
+                "url": item.get("url", ""),
+            }
+        )
+    return {"reports": reports}
+
+
 async def analyze(symbol: str, prompt: str = DEFAULT_PROMPT) -> dict:
     """Main entry: analyze a stock via UAnalyze AI.
 
@@ -209,6 +239,18 @@ if __name__ == "__main__":
             prompt = args[args.index("--prompt") + 1]
         except IndexError:
             pass
+
+    if args[0] == "--reports":
+        # List latest site-wide reports (monitor feed), no symbol needed.
+        limit = 50
+        if "--limit" in args:
+            try:
+                limit = int(args[args.index("--limit") + 1])
+            except (IndexError, ValueError):
+                pass
+        result = asyncio.run(list_latest_reports(limit))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
 
     result = asyncio.run(analyze(symbol, prompt))
     print(json.dumps(result, ensure_ascii=False))

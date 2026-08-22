@@ -140,6 +140,28 @@ async def unsub_threads_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("ℹ️ 您尚未訂閱 Threads 推播")
 
 
+async def sub_uanalyze_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /sub_ua_reports — subscribe to UAnalyze new-report push."""
+    if not update.effective_chat:
+        return
+    chat_id = update.effective_chat.id
+    if manager.subscribe(chat_id, "uanalyze"):
+        await update.message.reply_text("✅ 已訂閱 UAnalyze 新報告推播")
+    else:
+        await update.message.reply_text("ℹ️ 您已經訂閱 UAnalyze 新報告推播")
+
+
+async def unsub_uanalyze_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /unsub_ua_reports — unsubscribe from UAnalyze new-report push."""
+    if not update.effective_chat:
+        return
+    chat_id = update.effective_chat.id
+    if manager.unsubscribe(chat_id, "uanalyze"):
+        await update.message.reply_text("✅ 已取消 UAnalyze 新報告推播")
+    else:
+        await update.message.reply_text("ℹ️ 您尚未訂閱 UAnalyze 新報告推播")
+
+
 def _news_menu_keyboard() -> InlineKeyboardMarkup:
     """Build the /news source-selection keyboard (全部 + 15 sources, 3 per row)."""
     from tools.fetch_news import SOURCES
@@ -290,6 +312,8 @@ def register_subscription_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("unsub_news", unsub_news_handler))
     application.add_handler(CommandHandler("sub_threads", sub_threads_handler))
     application.add_handler(CommandHandler("unsub_threads", unsub_threads_handler))
+    application.add_handler(CommandHandler("sub_ua_reports", sub_uanalyze_handler))
+    application.add_handler(CommandHandler("unsub_ua_reports", unsub_uanalyze_handler))
     application.add_handler(CommandHandler("news", news_now_handler))
     application.add_handler(
         CallbackQueryHandler(news_source_callback, pattern=r"^news:")
