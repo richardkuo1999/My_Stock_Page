@@ -77,19 +77,38 @@ docker compose up -d
 `@bot` 問問題時，Bot 透過 `AntigravityCLIBridge` 呼叫 `agy -p "..." --output-format json`。
 需先在本機安裝並登入 Antigravity CLI（`agy` 指令）。未安裝時 `@mention` 會回覆錯誤訊息，其餘功能不受影響。
 
+每次 `@mention` 會由 `agent/prompts.py` 的 `build_mention_prompt()` 組合 system prompt
+（角色=台股助理 + 7 個工具清單 + 執行流程）再送給 Agent，Agent 據此決定要跑哪些工具。
+
+> ⚠️ **安全暫時方案**：目前 bridge 用 `--dangerously-skip-permissions` 讓 headless Agent
+> 能執行工具，這會授予 Agent 無限制指令執行權限（對不特定使用者開放有 prompt-injection
+> 風險）。正解是把工具做成 MCP server（見 ARCHITECTURE.md「權限與安全」），尚未實作。
+
 ## 工具（獨立 CLI）
 
-每個工具都能單獨在命令列執行，回傳 JSON：
+每個工具都能單獨在命令列執行，回傳 JSON。所有工具皆為純粹確定性程式，**本身不呼叫 AI**
+（由 Agent 協調 `chat_bot → AI → tool → AI → tool`）：
 
 ```bash
 python tools/get_stock_price.py 2330                       # 即時股價
 python tools/draw_kchart.py 2330 --period 60               # K 線圖 → 圖片路徑
 python tools/fetch_news.py --all                           # 全部 15 來源最新新聞
-python tools/fetch_news.py 2330 --limit 5                  # 指定股票新聞
+python tools/fetch_news.py 2330 --limit 5                  # 指定股票新聞（本地過濾）
 python tools/fetch_threads.py --check-new                  # 追蹤帳號 Threads 貼文
 python tools/uanalyze.py 2330                              # UAnalyze AI 估值分析
 python tools/summarize_document.py https://example.com/x   # URL/PDF 摘要
+python tools/lookup_stock_name.py 2330                     # 查代號→公司名（對照表）
+python tools/lookup_stock_name.py --set 9999 某公司        # 寫回對照表
 ```
+
+### 個股新聞如何過濾
+
+台股新聞標題寫公司中文名（「台積電」）而非代號（2330）。`fetch_news.py <代號>` 會：
+1. 查 `lookup_stock_name.py` 的代號↔名稱對照表，補上公司名當關鍵字；
+2. 從已抓取的 15 來源新聞池，本地過濾出標題/摘要含關鍵字的文章。
+
+對照表（`data/stock_names.json`）內建 20 檔大型股 seed，並會**自我成長**：Agent 遇到
+未知代號時自行判斷公司名，用 `--set` 寫回，下次即命中。工具本身不呼叫 AI。
 
 ## 新聞來源（15 個）
 
@@ -107,6 +126,7 @@ CNYES、MoneyDJ、Yahoo股市、UDN財經、UAnalyze、Fugle、Vocus（特定作
 - `subscriptions.json` — 訂閱清單
 - `pushed_news.json` — 已推新聞 URL（保留 7 天）
 - `pushed_threads.json` — 已推 Threads ID（保留 3 天）
+- `stock_names.json` — 代號↔公司名對照表（seed 20 檔，自我成長）
 - `logs/bot.log` — WARNING 以上日誌（rotation，5MB × 5）
 
 ## 測試
@@ -115,6 +135,20 @@ CNYES、MoneyDJ、Yahoo股市、UDN財經、UAnalyze、Fugle、Vocus（特定作
 source .venv/bin/activate
 python -m pytest tests/ -q
 ```
+
+目前 **223 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
+
+### 端到端驗證現況
+
+| 項目 | 狀態 |
+|------|------|
+| 15 個新聞來源（真網路抓取） | ✅ 已手動實測（~175 篇） |
+| `fetch_news <代號>` 個股過濾 | ✅ 已手動實測 |
+| 代號對照表 命中/miss/寫回/再命中 | ✅ CLI 實測 |
+| `@mention` → `agy` → 跑工具 → 回真實數據 | ✅ 透過真實 bridge 實測 |
+| **Telegram 整合層**（`python main.py` 連真 bot、手機收發、排程實際推播） | ❌ 尚未端到端測試 |
+| Threads 官方 API 真 token、UAnalyze 真登入、Docker build | ❌ 尚未實跑 |
+| 自動化 e2e 測試 | ❌ 無（目前僅單元測試） |
 
 ## 專案結構
 
@@ -129,7 +163,7 @@ bot/
 agent/
 ├── bridge.py           # AgentBridge ABC + AntigravityCLIBridge
 └── prompts.py          # Agent prompt templates
-tools/                  # 6 個工具 script（CLI + import 雙入口）
+tools/                  # 7 個工具 script（CLI + import 雙入口）
 data/                   # 執行期 JSON + 日誌
-tests/                  # 212 個測試
+tests/                  # 223 個測試
 ```

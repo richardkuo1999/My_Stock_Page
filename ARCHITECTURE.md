@@ -93,7 +93,7 @@ class AntigravityCLIBridge(AgentBridge):
 - **錯誤處理**：超時或 exit code 非 0 → 回覆用戶「Agent 暫時無法回應，請稍後再試」
 - **未來可切換**：有 API key 後可加 `AntigravitySDKBridge` 實作，呼叫端不改
 - **System prompt**：`agent/prompts.py` 的 `build_mention_prompt()` 在每次 @mention 前
-  組合角色（台股助理）+ 6 個工具清單 + cwd 說明，讓 Agent 知道有哪些工具、怎麼呼叫。
+  組合角色（台股助理）+ 7 個工具清單 + cwd 說明，讓 Agent 知道有哪些工具、怎麼呼叫。
 - **工作目錄固定**：bridge spawn `agy` 時指定 `cwd=REPO_ROOT`，工具用相對路徑 `tools/xxx.py`。
 
 ### ⚠️ 權限與安全（暫時方案）
@@ -101,9 +101,9 @@ class AntigravityCLIBridge(AgentBridge):
 目前 bridge 用 `--dangerously-skip-permissions` 讓 headless Agent 能執行工具指令。
 **這會授予 Agent 無限制的指令執行權限**，若 bot 對不特定使用者開放，存在 prompt-injection
 風險。已試過 `--sandbox` 與 `settings.json` 的 `permissions.allow` 白名單，皆無法在
-「只放行 6 個工具」與「Agent 正常運作」間取得平衡（Agent 仍需 read_file / find 等周邊權限）。
+「只放行 7 個工具」與「Agent 正常運作」間取得平衡（Agent 仍需 read_file / find 等周邊權限）。
 
-**正解（待辦）**：把 6 個工具註冊為 **MCP server**（`agy mcp add`），Agent 只能呼叫這 6 個
+**正解（待辦）**：把 7 個工具註冊為 **MCP server**（`agy mcp add`），Agent 只能呼叫這 7 個
 MCP 工具、完全不碰任意 shell，天生防 prompt injection。這也是 ticket 03 的原始設計方向。
 
 ### 為什麼不用 SDK
@@ -124,12 +124,23 @@ Google AI Pro 方案不提供 `GEMINI_API_KEY`，SDK 需要此 key 才能執行�
 
 | Script | 功能 | 範例用法 |
 |--------|------|----------|
-| `tools/fetch_news.py` | 抓指定股票/全部最新新聞 | `python tools/fetch_news.py 2330 --limit 5` |
+| `tools/fetch_news.py` | 抓指定股票/全部最新新聞（個股走本地過濾） | `python tools/fetch_news.py 2330 --limit 5` |
 | `tools/uanalyze.py` | AI 估值分析 | `python tools/uanalyze.py 2330` |
 | `tools/get_stock_price.py` | 即時股價 | `python tools/get_stock_price.py 2330` |
 | `tools/draw_kchart.py` | K 線圖（mplfinance 繪製，回傳圖片路徑） | `python tools/draw_kchart.py 2330 --period 60` |
 | `tools/fetch_threads.py` | 抓追蹤帳號 Threads 貼文 | `python tools/fetch_threads.py --check-new` |
 | `tools/summarize_document.py` | URL/PDF 文件摘要 | `python tools/summarize_document.py https://...` |
+| `tools/lookup_stock_name.py` | 代號↔公司名對照表（純資料讀/寫，自我成長） | `python tools/lookup_stock_name.py 2330` |
+
+> **工具不呼叫 AI**：所有工具皆為純粹確定性程式。「查未知代號的公司名」這種智能步驟
+> 由 Agent 負責（讀 `lookup_stock_name.py`，miss 時 Agent 自行判斷再 `--set` 寫回），
+> 維持 `chat_bot → AI → tool → AI → tool` 的協調管線，避免工具反向依賴 Agent。
+
+### 個股新聞過濾
+
+台股標題寫公司中文名而非代號。`fetch_news.py <代號>` 從 15 來源新聞池本地過濾出含
+關鍵字（代號 + 對照表補上的公司名）的文章。對照表 `data/stock_names.json` 內建 20 檔
+seed，Agent 遇未知代號寫回後自我成長。
 
 ### Script 結構範例
 
