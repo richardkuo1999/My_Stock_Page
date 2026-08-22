@@ -67,7 +67,7 @@ docker compose up -d
 | `/start` / `/help` | 歡迎訊息 / 指令與功能說明 |
 | `/sub_news` / `/unsub_news` | 訂閱 / 取消新聞推播（每小時） |
 | `/sub_threads` / `/unsub_threads` | 訂閱 / 取消 Threads 推播（每 15 分鐘） |
-| `/news` | 立即抓最新新聞並回覆（不受訂閱/去重限制） |
+| `/news` | 跳出選單選新聞來源（全部或指定 15 來源之一），再回覆該來源最新新聞 |
 | `/threads` | 立即抓最新 Threads 貼文並回覆 |
 | `/p <代號>` | 即時股價（直接跑工具，秒回），例 `/p 2330` |
 | `/k <代號> [天數]` | K 線圖（回傳圖片），例 `/k 2330 60` |
@@ -142,7 +142,7 @@ source .venv/bin/activate
 python -m pytest tests/ -q
 ```
 
-目前 **242 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
+目前 **244 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
 
 ### 端到端驗證現況
 
@@ -173,5 +173,5 @@ agent/
 └── prompts.py          # Agent prompt templates
 tools/                  # 7 個工具 script（CLI + import 雙入口）
 data/                   # 執行期 JSON + 日誌
-tests/                  # 242 個測試
+tests/                  # 244 個測試
 ```

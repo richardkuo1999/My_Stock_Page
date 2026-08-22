@@ -8,6 +8,7 @@ import pytest
 from bot.subscriptions import (
     SubscriptionManager,
     news_now_handler,
+    news_source_callback,
     sub_news_handler,
     sub_threads_handler,
     threads_now_handler,
@@ -284,73 +285,131 @@ def news_context():
 
 
 @pytest.mark.asyncio
-async def test_news_now_handler_success(update, news_context):
-    """news_now_handler should fetch and reply with a formatted list."""
+async def test_news_now_handler_shows_menu(update, news_context):
+    """/news replies with a source-selection inline keyboard (no fetch yet)."""
+    await news_now_handler(update, news_context)
+    kwargs = update.message.reply_text.call_args.kwargs
+    assert "reply_markup" in kwargs
+    assert "來源" in update.message.reply_text.call_args[0][0]
+
+
+def _make_news_callback_update(data: str):
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = data
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+    return update
+
+
+@pytest.mark.asyncio
+async def test_news_callback_all_sources(news_context):
+    """Selecting 全部來源 fetches and shows a diversified list."""
     fake = {"articles": [
         {"title": "台積電創新高", "source": "CNYES", "url": "https://x/1"},
-        {"title": "聯發科法說", "source": "CNYES", "url": "https://x/2"},
+        {"title": "聯發科法說", "source": "MoneyDJ", "url": "https://x/2"},
     ]}
+    update = _make_news_callback_update("news:all")
     with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value=fake):
-        await news_now_handler(update, news_context)
-
-    # First reply is the "fetching" notice, last is the results
-    assert update.message.reply_text.call_count == 2
-    last_msg = update.message.reply_text.call_args_list[-1][0][0]
-    assert "最新新聞" in last_msg
-    assert "台積電創新高" in last_msg
-    assert "https://x/1" in last_msg
+        await news_source_callback(update, news_context)
+    last = update.callback_query.edit_message_text.call_args_list[-1][0][0]
+    assert "台積電創新高" in last and "https://x/1" in last
 
 
 @pytest.mark.asyncio
-async def test_news_now_handler_empty(update, news_context):
-    """news_now_handler should report when no news found."""
+async def test_news_callback_single_source_filters(news_context):
+    """Selecting a specific source returns only that source's articles."""
+    from tools.fetch_news import SOURCES
+
+    fake = {"articles": [
+        {"title": "CNYES 新聞", "source": "CNYES", "url": "https://x/1"},
+        {"title": "MoneyDJ 新聞", "source": "MoneyDJ", "url": "https://x/2"},
+    ]}
+    cnyes_idx = next(i for i, s in enumerate(SOURCES) if s["name"] == "CNYES")
+    update = _make_news_callback_update(f"news:{cnyes_idx}")
+    with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value=fake):
+        await news_source_callback(update, news_context)
+    last = update.callback_query.edit_message_text.call_args_list[-1][0][0]
+    assert "CNYES 新聞" in last
+    assert "MoneyDJ 新聞" not in last
+
+
+@pytest.mark.asyncio
+async def test_news_callback_empty(news_context):
+    """No articles for the chosen source → friendly notice."""
+    update = _make_news_callback_update("news:all")
     with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value={"articles": []}):
-        await news_now_handler(update, news_context)
-    last_msg = update.message.reply_text.call_args_list[-1][0][0]
-    assert "沒有抓到" in last_msg
+        await news_source_callback(update, news_context)
+    last = update.callback_query.edit_message_text.call_args_list[-1][0][0]
+    assert "沒有新聞" in last
 
 
 @pytest.mark.asyncio
-async def test_news_now_handler_fetch_error(update, news_context):
-    """news_now_handler should report fetch errors."""
+async def test_news_callback_fetch_error(news_context):
+    """Fetch error is reported to the user."""
+    update = _make_news_callback_update("news:all")
     with patch("tools.fetch_news.latest", new_callable=AsyncMock, side_effect=RuntimeError("boom")):
-        await news_now_handler(update, news_context)
-    last_msg = update.message.reply_text.call_args_list[-1][0][0]
-    assert "錯誤" in last_msg
+        await news_source_callback(update, news_context)
+    last = update.callback_query.edit_message_text.call_args_list[-1][0][0]
+    assert "錯誤" in last
 
 
 @pytest.mark.asyncio
-async def test_news_now_handler_uses_agent_summary(update):
-    """news_now_handler should use agent summary when bridge available."""
+async def test_news_callback_uses_agent_summary():
+    """Callback uses agent summary when a bridge is available."""
     fake = {"articles": [{"title": "T", "source": "S", "url": "https://x/1"}]}
     bridge = MagicMock()
     bridge.send = AsyncMock(return_value="• [S] 摘要內容\n  └ https://x/1")
     ctx = MagicMock()
     ctx.bot_data = {"agent_bridge": bridge}
+    update = _make_news_callback_update("news:all")
 
     with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value=fake):
-        await news_now_handler(update, ctx)
+        await news_source_callback(update, ctx)
 
     bridge.send.assert_awaited_once()
-    last_msg = update.message.reply_text.call_args_list[-1][0][0]
-    assert "摘要內容" in last_msg
+    last = update.callback_query.edit_message_text.call_args_list[-1][0][0]
+    assert "摘要內容" in last
 
 
 @pytest.mark.asyncio
-async def test_news_now_handler_agent_fallback(update):
-    """news_now_handler should fall back to plain list if agent fails."""
+async def test_news_callback_agent_fallback():
+    """Callback falls back to a plain list if the agent fails."""
     fake = {"articles": [{"title": "標題X", "source": "CNYES", "url": "https://x/1"}]}
     bridge = MagicMock()
     bridge.send = AsyncMock(side_effect=TimeoutError())
     ctx = MagicMock()
     ctx.bot_data = {"agent_bridge": bridge}
+    update = _make_news_callback_update("news:all")
 
     with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value=fake):
-        await news_now_handler(update, ctx)
+        await news_source_callback(update, ctx)
 
-    last_msg = update.message.reply_text.call_args_list[-1][0][0]
-    assert "標題X" in last_msg
-    assert "https://x/1" in last_msg
+    last = update.callback_query.edit_message_text.call_args_list[-1][0][0]
+    assert "標題X" in last and "https://x/1" in last
+
+
+@pytest.mark.asyncio
+async def test_news_callback_result_has_back_button(news_context):
+    """The news result carries a '返回' button to reopen the source menu."""
+    fake = {"articles": [{"title": "T", "source": "CNYES", "url": "https://x/1"}]}
+    update = _make_news_callback_update("news:all")
+    with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value=fake):
+        await news_source_callback(update, news_context)
+    kwargs = update.callback_query.edit_message_text.call_args.kwargs
+    assert "reply_markup" in kwargs
+    kb = kwargs["reply_markup"].inline_keyboard
+    assert kb[0][0].callback_data == "news:back"
+
+
+@pytest.mark.asyncio
+async def test_news_callback_back_reopens_menu(news_context):
+    """Pressing 返回 re-shows the source menu."""
+    update = _make_news_callback_update("news:back")
+    await news_source_callback(update, news_context)
+    kwargs = update.callback_query.edit_message_text.call_args.kwargs
+    assert "reply_markup" in kwargs
+    assert "來源" in update.callback_query.edit_message_text.call_args[0][0]
 
 
 # --- /threads command handler tests ---

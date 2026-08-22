@@ -193,6 +193,16 @@ async def kchart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("⚠️ 圖片傳送失敗")
 
 
+def _ua_menu_keyboard(symbol: str) -> InlineKeyboardMarkup:
+    """Build the UAnalyze面向 selection keyboard for a symbol (3 per row)."""
+    buttons = [
+        InlineKeyboardButton(label, callback_data=f"ua:{symbol}:{i}")
+        for i, (label, _prompt) in enumerate(UA_PROMPTS)
+    ]
+    rows = [buttons[i : i + 3] for i in range(0, len(buttons), 3)]
+    return InlineKeyboardMarkup(rows)
+
+
 async def uanalyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /ua <代號> — show a prompt menu; the actual analysis runs when the
     user picks an angle (see uanalyze_callback)."""
@@ -202,29 +212,32 @@ async def uanalyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     symbol = symbol.strip().upper()
-    # Build an inline keyboard: 3 buttons per row. callback_data encodes the
-    # symbol + prompt index (keeps well under Telegram's 64-byte limit).
-    buttons = [
-        InlineKeyboardButton(label, callback_data=f"ua:{symbol}:{i}")
-        for i, (label, _prompt) in enumerate(UA_PROMPTS)
-    ]
-    rows = [buttons[i : i + 3] for i in range(0, len(buttons), 3)]
-    keyboard = InlineKeyboardMarkup(rows)
     await update.message.reply_text(
         f"🧠 要看 {symbol} 的哪個面向？請選擇：",
-        reply_markup=keyboard,
+        reply_markup=_ua_menu_keyboard(symbol),
     )
 
 
 async def uanalyze_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle a UAnalyze prompt-menu button press: run the chosen prompt."""
+    """Handle a UAnalyze prompt-menu button press: run the chosen prompt, or
+    return to the menu when the back button is pressed."""
     query = update.callback_query
     if not query or not query.data:
         return
     await query.answer()
 
+    parts = query.data.split(":", 2)
+    # Back button: ua:back:<symbol> → re-show the menu.
+    if len(parts) == 3 and parts[1] == "back":
+        symbol = parts[2]
+        await query.edit_message_text(
+            f"🧠 要看 {symbol} 的哪個面向？請選擇：",
+            reply_markup=_ua_menu_keyboard(symbol),
+        )
+        return
+
     try:
-        _, symbol, idx_str = query.data.split(":", 2)
+        _, symbol, idx_str = parts
         label, prompt = UA_PROMPTS[int(idx_str)]
     except (ValueError, IndexError):
         await query.edit_message_text("⚠️ 無效的選項")
@@ -251,8 +264,11 @@ async def uanalyze_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
         analysis = _json.dumps(analysis, ensure_ascii=False, indent=2)
     text = f"🧠 {symbol} · {label}\n{'=' * 20}\n{analysis}"
+    back = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("⬅️ 選其他面向", callback_data=f"ua:back:{symbol}")]]
+    )
     # Telegram message hard limit is 4096 chars.
-    await query.edit_message_text(text[:4096])
+    await query.edit_message_text(text[:4096], reply_markup=back)
 
 
 async def mention(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

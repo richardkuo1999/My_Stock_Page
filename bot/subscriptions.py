@@ -5,8 +5,13 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -135,45 +140,87 @@ async def unsub_threads_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("ℹ️ 您尚未訂閱 Threads 推播")
 
 
-async def news_now_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /news command — fetch latest news and reply to the caller immediately.
+def _news_menu_keyboard() -> InlineKeyboardMarkup:
+    """Build the /news source-selection keyboard (全部 + 15 sources, 3 per row)."""
+    from tools.fetch_news import SOURCES
 
-    Unlike the scheduled push, this always shows the caller the fetched
-    headlines directly (no subscription or dedup filtering), so it works as a
-    live "is it fetching?" check.
-    """
+    buttons = [InlineKeyboardButton("📚 全部來源", callback_data="news:all")]
+    buttons += [
+        InlineKeyboardButton(s["name"], callback_data=f"news:{i}")
+        for i, s in enumerate(SOURCES)
+    ]
+    rows = [buttons[i : i + 3] for i in range(0, len(buttons), 3)]
+    return InlineKeyboardMarkup(rows)
+
+
+async def news_now_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /news command — show a source-selection menu. The actual fetch runs
+    when the user picks a source (see news_source_callback)."""
     if not update.effective_chat:
         return
 
-    await update.message.reply_text("🔍 正在抓取最新新聞…")
+    await update.message.reply_text(
+        "📰 想看哪個來源的新聞？請選擇：",
+        reply_markup=_news_menu_keyboard(),
+    )
 
-    from tools.fetch_news import latest
+
+async def news_source_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle a /news source-menu button press: fetch and show that source (or all),
+    or return to the menu when the back button is pressed."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+
+    from tools.fetch_news import SOURCES
+
+    choice = query.data.split(":", 1)[1]
+
+    # Back button: news:back → re-show the source menu.
+    if choice == "back":
+        await query.edit_message_text(
+            "📰 想看哪個來源的新聞？請選擇：",
+            reply_markup=_news_menu_keyboard(),
+        )
+        return
+
+    source_name = None
+    if choice != "all":
+        try:
+            source_name = SOURCES[int(choice)]["name"]
+        except (ValueError, IndexError):
+            await query.edit_message_text("⚠️ 無效的來源")
+            return
+
+    label = source_name or "全部來源"
+    await query.edit_message_text(f"🔍 正在抓取 {label} 的最新新聞…")
+
+    from tools.fetch_news import _diversify_by_source, latest
 
     try:
         result = await latest()
         articles = result.get("articles", []) if isinstance(result, dict) else result
     except Exception as e:
-        logger.error("Manual /news fetch failed: %s", e)
-        await update.message.reply_text(f"⚠️ 抓取新聞時發生錯誤：{e}")
+        logger.error("/news fetch failed: %s", e)
+        await query.edit_message_text(f"⚠️ 抓取新聞時發生錯誤：{e}")
         return
 
-    if not articles:
-        await update.message.reply_text("😕 目前沒有抓到任何新聞")
+    # Filter to the chosen source, or diversify across all.
+    if source_name:
+        batch = [a for a in articles if a.get("source") == source_name][:10]
+    else:
+        batch = _diversify_by_source(articles, 10)
+
+    if not batch:
+        await query.edit_message_text(f"😕 {label} 目前沒有新聞")
         return
 
-    # Optionally summarize via Agent; fall back to a plain list.
-    # Spread the picks across sources so one prolific source (e.g. CNYES) doesn't
-    # dominate the whole batch.
-    from tools.fetch_news import _diversify_by_source
-
-    batch = _diversify_by_source(articles, 10)
     bridge = context.bot_data.get("agent_bridge")
     summary = None
     if bridge:
         try:
-            import json as _json
-
-            news_json = _json.dumps(
+            news_json = json.dumps(
                 [{"title": a.get("title", ""), "source": a.get("source", ""), "url": a["url"]} for a in batch],
                 ensure_ascii=False,
             )
@@ -186,13 +233,19 @@ async def news_now_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             logger.warning("Agent summarization failed for /news, using fallback: %s", e)
 
     if not summary:
-        lines = []
-        for a in batch:
-            lines.append(f"• [{a.get('source', '?')}] {a.get('title', '')}\n  └ {a['url']}")
+        lines = [
+            f"• [{a.get('source', '?')}] {a.get('title', '')}\n  └ {a['url']}"
+            for a in batch
+        ]
         summary = "\n".join(lines)
 
-    header = f"📰 最新新聞 ({len(batch)} 則)\n{'=' * 20}\n\n"
-    await update.message.reply_text(header + summary, disable_web_page_preview=True)
+    header = f"📰 {label} 最新新聞 ({len(batch)} 則)\n{'=' * 20}\n\n"
+    back = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("⬅️ 選其他來源", callback_data="news:back")]]
+    )
+    await query.edit_message_text(
+        (header + summary)[:4096], disable_web_page_preview=True, reply_markup=back
+    )
 
 
 async def threads_now_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -238,5 +291,8 @@ def register_subscription_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("sub_threads", sub_threads_handler))
     application.add_handler(CommandHandler("unsub_threads", unsub_threads_handler))
     application.add_handler(CommandHandler("news", news_now_handler))
+    application.add_handler(
+        CallbackQueryHandler(news_source_callback, pattern=r"^news:")
+    )
     application.add_handler(CommandHandler("threads", threads_now_handler))
     logger.info("Subscription handlers registered.")

@@ -279,6 +279,45 @@ async def test_uanalyze_callback_sends_full_long_prompt(context):
 
 
 @pytest.mark.asyncio
+async def test_uanalyze_result_has_back_button(context):
+    """The analysis result carries a '返回' button to reopen the menu."""
+    from bot.handlers import uanalyze_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "ua:2330:0"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    with patch("tools.uanalyze.analyze", new=AsyncMock(return_value={"analysis": "內容"})):
+        await uanalyze_callback(update, context)
+
+    kwargs = update.callback_query.edit_message_text.call_args.kwargs
+    assert "reply_markup" in kwargs
+    # back button callback_data returns to this symbol's menu
+    kb = kwargs["reply_markup"].inline_keyboard
+    assert kb[0][0].callback_data == "ua:back:2330"
+
+
+@pytest.mark.asyncio
+async def test_uanalyze_back_reopens_menu(context):
+    """Pressing 返回 re-shows the面向 menu for that symbol."""
+    from bot.handlers import uanalyze_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "ua:back:2330"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    await uanalyze_callback(update, context)
+
+    kwargs = update.callback_query.edit_message_text.call_args.kwargs
+    assert "reply_markup" in kwargs  # menu shown again
+    assert "2330" in update.callback_query.edit_message_text.call_args[0][0]
+
+
+@pytest.mark.asyncio
 async def test_uanalyze_callback_invalid_data(context):
     from bot.handlers import uanalyze_callback
 
