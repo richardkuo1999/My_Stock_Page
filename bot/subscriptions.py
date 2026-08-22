@@ -135,10 +135,104 @@ async def unsub_threads_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("ℹ️ 您尚未訂閱 Threads 推播")
 
 
+async def news_now_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /news command — fetch latest news and reply to the caller immediately.
+
+    Unlike the scheduled push, this always shows the caller the fetched
+    headlines directly (no subscription or dedup filtering), so it works as a
+    live "is it fetching?" check.
+    """
+    if not update.effective_chat:
+        return
+
+    await update.message.reply_text("🔍 正在抓取最新新聞…")
+
+    from tools.fetch_news import latest
+
+    try:
+        result = await latest()
+        articles = result.get("articles", []) if isinstance(result, dict) else result
+    except Exception as e:
+        logger.error("Manual /news fetch failed: %s", e)
+        await update.message.reply_text(f"⚠️ 抓取新聞時發生錯誤：{e}")
+        return
+
+    if not articles:
+        await update.message.reply_text("😕 目前沒有抓到任何新聞")
+        return
+
+    # Optionally summarize via Agent; fall back to a plain list.
+    batch = articles[:10]
+    bridge = context.bot_data.get("agent_bridge")
+    summary = None
+    if bridge:
+        try:
+            import json as _json
+
+            news_json = _json.dumps(
+                [{"title": a.get("title", ""), "source": a.get("source", ""), "url": a["url"]} for a in batch],
+                ensure_ascii=False,
+            )
+            prompt = (
+                "請用繁體中文摘要以下新聞，每則一行，"
+                "格式「• [來源] 標題摘要\\n  └ URL」：\n" + news_json
+            )
+            summary = await bridge.send(prompt)
+        except Exception as e:
+            logger.warning("Agent summarization failed for /news, using fallback: %s", e)
+
+    if not summary:
+        lines = []
+        for a in batch:
+            lines.append(f"• [{a.get('source', '?')}] {a.get('title', '')}\n  └ {a['url']}")
+        summary = "\n".join(lines)
+
+    header = f"📰 最新新聞 ({len(batch)} 則)\n{'=' * 20}\n\n"
+    await update.message.reply_text(header + summary, disable_web_page_preview=True)
+
+
+async def threads_now_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /threads command — fetch latest Threads posts and reply immediately.
+
+    Like /news, this always shows the caller the fetched posts directly
+    (no subscription or dedup filtering), as a live "is it fetching?" check.
+    """
+    if not update.effective_chat:
+        return
+
+    await update.message.reply_text("🔍 正在抓取最新 Threads 貼文…")
+
+    from bot.scheduler import _format_thread_post
+    from tools.fetch_threads import check_new
+
+    try:
+        result = await check_new()
+    except Exception as e:
+        logger.error("Manual /threads fetch failed: %s", e)
+        await update.message.reply_text(f"⚠️ 抓取 Threads 時發生錯誤：{e}")
+        return
+
+    if "error" in result:
+        await update.message.reply_text(f"⚠️ {result['error']}")
+        return
+
+    posts = result.get("posts", [])
+    if not posts:
+        await update.message.reply_text("😕 目前沒有抓到任何 Threads 貼文")
+        return
+
+    for post in posts[:10]:
+        await update.message.reply_text(
+            _format_thread_post(post), disable_web_page_preview=True
+        )
+
+
 def register_subscription_handlers(application: Application) -> None:
     """Register subscription command handlers."""
     application.add_handler(CommandHandler("sub_news", sub_news_handler))
     application.add_handler(CommandHandler("unsub_news", unsub_news_handler))
     application.add_handler(CommandHandler("sub_threads", sub_threads_handler))
     application.add_handler(CommandHandler("unsub_threads", unsub_threads_handler))
+    application.add_handler(CommandHandler("news", news_now_handler))
+    application.add_handler(CommandHandler("threads", threads_now_handler))
     logger.info("Subscription handlers registered.")

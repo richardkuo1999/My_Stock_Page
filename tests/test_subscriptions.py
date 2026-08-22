@@ -7,8 +7,10 @@ import pytest
 
 from bot.subscriptions import (
     SubscriptionManager,
+    news_now_handler,
     sub_news_handler,
     sub_threads_handler,
+    threads_now_handler,
     unsub_news_handler,
     unsub_threads_handler,
 )
@@ -268,3 +270,132 @@ async def test_handler_no_effective_chat(context):
         await sub_news_handler(update, context)
         mock_manager.subscribe.assert_not_called()
         update.message.reply_text.assert_not_called()
+
+
+# --- /news command handler tests ---
+
+
+@pytest.fixture
+def news_context():
+    """Context with an explicit bot_data (no agent bridge)."""
+    ctx = MagicMock()
+    ctx.bot_data = {"agent_bridge": None}
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_news_now_handler_success(update, news_context):
+    """news_now_handler should fetch and reply with a formatted list."""
+    fake = {"articles": [
+        {"title": "台積電創新高", "source": "CNYES", "url": "https://x/1"},
+        {"title": "聯發科法說", "source": "CNYES", "url": "https://x/2"},
+    ]}
+    with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value=fake):
+        await news_now_handler(update, news_context)
+
+    # First reply is the "fetching" notice, last is the results
+    assert update.message.reply_text.call_count == 2
+    last_msg = update.message.reply_text.call_args_list[-1][0][0]
+    assert "最新新聞" in last_msg
+    assert "台積電創新高" in last_msg
+    assert "https://x/1" in last_msg
+
+
+@pytest.mark.asyncio
+async def test_news_now_handler_empty(update, news_context):
+    """news_now_handler should report when no news found."""
+    with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value={"articles": []}):
+        await news_now_handler(update, news_context)
+    last_msg = update.message.reply_text.call_args_list[-1][0][0]
+    assert "沒有抓到" in last_msg
+
+
+@pytest.mark.asyncio
+async def test_news_now_handler_fetch_error(update, news_context):
+    """news_now_handler should report fetch errors."""
+    with patch("tools.fetch_news.latest", new_callable=AsyncMock, side_effect=RuntimeError("boom")):
+        await news_now_handler(update, news_context)
+    last_msg = update.message.reply_text.call_args_list[-1][0][0]
+    assert "錯誤" in last_msg
+
+
+@pytest.mark.asyncio
+async def test_news_now_handler_uses_agent_summary(update):
+    """news_now_handler should use agent summary when bridge available."""
+    fake = {"articles": [{"title": "T", "source": "S", "url": "https://x/1"}]}
+    bridge = MagicMock()
+    bridge.send = AsyncMock(return_value="• [S] 摘要內容\n  └ https://x/1")
+    ctx = MagicMock()
+    ctx.bot_data = {"agent_bridge": bridge}
+
+    with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value=fake):
+        await news_now_handler(update, ctx)
+
+    bridge.send.assert_awaited_once()
+    last_msg = update.message.reply_text.call_args_list[-1][0][0]
+    assert "摘要內容" in last_msg
+
+
+@pytest.mark.asyncio
+async def test_news_now_handler_agent_fallback(update):
+    """news_now_handler should fall back to plain list if agent fails."""
+    fake = {"articles": [{"title": "標題X", "source": "CNYES", "url": "https://x/1"}]}
+    bridge = MagicMock()
+    bridge.send = AsyncMock(side_effect=TimeoutError())
+    ctx = MagicMock()
+    ctx.bot_data = {"agent_bridge": bridge}
+
+    with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value=fake):
+        await news_now_handler(update, ctx)
+
+    last_msg = update.message.reply_text.call_args_list[-1][0][0]
+    assert "標題X" in last_msg
+    assert "https://x/1" in last_msg
+
+
+# --- /threads command handler tests ---
+
+
+@pytest.mark.asyncio
+async def test_threads_now_handler_success(update, news_context):
+    """threads_now_handler should fetch and reply with posts."""
+    fake = {"posts": [
+        {"id": "1", "user": "alice", "text": "貼文一", "timestamp": "2026-08-22T00:00:00", "url": "https://t/1"},
+        {"id": "2", "user": "bob", "text": "貼文二", "timestamp": "2026-08-21T00:00:00", "url": "https://t/2"},
+    ]}
+    with patch("tools.fetch_threads.check_new", new_callable=AsyncMock, return_value=fake):
+        await threads_now_handler(update, news_context)
+
+    # 1 fetching notice + 2 posts
+    assert update.message.reply_text.call_count == 3
+    msgs = "".join(c[0][0] for c in update.message.reply_text.call_args_list)
+    assert "貼文一" in msgs
+    assert "貼文二" in msgs
+
+
+@pytest.mark.asyncio
+async def test_threads_now_handler_empty(update, news_context):
+    """threads_now_handler should report when no posts found."""
+    with patch("tools.fetch_threads.check_new", new_callable=AsyncMock, return_value={"posts": []}):
+        await threads_now_handler(update, news_context)
+    last_msg = update.message.reply_text.call_args_list[-1][0][0]
+    assert "沒有抓到" in last_msg
+
+
+@pytest.mark.asyncio
+async def test_threads_now_handler_error_result(update, news_context):
+    """threads_now_handler should surface API error (e.g. token expired)."""
+    with patch("tools.fetch_threads.check_new", new_callable=AsyncMock,
+               return_value={"error": "Threads token 已過期，請重新獲取 access token"}):
+        await threads_now_handler(update, news_context)
+    last_msg = update.message.reply_text.call_args_list[-1][0][0]
+    assert "token" in last_msg.lower()
+
+
+@pytest.mark.asyncio
+async def test_threads_now_handler_fetch_exception(update, news_context):
+    """threads_now_handler should report unexpected fetch errors."""
+    with patch("tools.fetch_threads.check_new", new_callable=AsyncMock, side_effect=RuntimeError("boom")):
+        await threads_now_handler(update, news_context)
+    last_msg = update.message.reply_text.call_args_list[-1][0][0]
+    assert "錯誤" in last_msg
