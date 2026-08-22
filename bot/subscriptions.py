@@ -162,7 +162,11 @@ async def news_now_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     # Optionally summarize via Agent; fall back to a plain list.
-    batch = articles[:10]
+    # Spread the picks across sources so one prolific source (e.g. CNYES) doesn't
+    # dominate the whole batch.
+    from tools.fetch_news import _diversify_by_source
+
+    batch = _diversify_by_source(articles, 10)
     bridge = context.bot_data.get("agent_bridge")
     summary = None
     if bridge:

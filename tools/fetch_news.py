@@ -7,8 +7,10 @@ import asyncio
 import json
 import logging
 import sys
+import time
 import urllib.parse
 from datetime import datetime
+from pathlib import Path
 
 import feedparser
 import httpx
@@ -28,6 +30,11 @@ DEFAULT_LIMIT = 10
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) StockBot/1.0"
 # TLS-fingerprint impersonation profile for curl_cffi (bypasses Cloudflare)
 CFFI_IMPERSONATE = "chrome120"
+
+# News content cache: latest() writes here and reuses it within CACHE_TTL to
+# avoid re-hitting 15 sources on every /news, @mention, or scheduled run.
+NEWS_CACHE_FILE = Path(__file__).resolve().parent.parent / "data" / "news_cache.json"
+CACHE_TTL_SECONDS = 600  # 10 minutes
 
 
 # --- Source Definitions ---
@@ -639,6 +646,29 @@ def _deduplicate(articles: list[dict]) -> list[dict]:
     return unique
 
 
+def _diversify_by_source(articles: list[dict], limit: int) -> list[dict]:
+    """Pick up to `limit` articles spread across sources (round-robin).
+
+    Articles are assumed pre-sorted (e.g. by date desc). Group by source keeping
+    that order, then take one per source in rotation so a single prolific source
+    (e.g. CNYES) can't dominate the head of the list.
+    """
+    from collections import OrderedDict
+
+    groups: "OrderedDict[str, list[dict]]" = OrderedDict()
+    for a in articles:
+        groups.setdefault(a.get("source", "?"), []).append(a)
+
+    picked: list[dict] = []
+    while len(picked) < limit and any(groups.values()):
+        for src in list(groups.keys()):
+            if groups[src]:
+                picked.append(groups[src].pop(0))
+                if len(picked) >= limit:
+                    break
+    return picked
+
+
 def _sort_by_date(articles: list[dict]) -> list[dict]:
     """Sort articles by date descending. Articles without dates go to the end."""
 
@@ -652,12 +682,56 @@ def _sort_by_date(articles: list[dict]) -> list[dict]:
 # --- Public API ---
 
 
-async def latest() -> dict:
-    """Fetch from all 15 sources in parallel.
+async def latest(force_refresh: bool = False) -> dict:
+    """Fetch the latest news from all 15 sources, with a short-lived disk cache.
+
+    Within CACHE_TTL_SECONDS, repeated calls return the cached result instead of
+    re-hitting every source. Pass force_refresh=True to bypass the cache.
 
     Returns:
         dict with "articles" key containing list of article dicts.
     """
+    if not force_refresh:
+        cached = _read_news_cache()
+        if cached is not None:
+            logger.info("news: serving %d articles from cache", len(cached))
+            return {"articles": cached}
+
+    result = await _fetch_all_sources()
+    _write_news_cache(result["articles"])
+    return result
+
+
+def _read_news_cache() -> list[dict] | None:
+    """Return cached articles if the cache exists and is fresh, else None."""
+    try:
+        if not NEWS_CACHE_FILE.exists():
+            return None
+        data = json.loads(NEWS_CACHE_FILE.read_text(encoding="utf-8"))
+        fetched_at = data.get("fetched_at", 0)
+        if time.time() - fetched_at > CACHE_TTL_SECONDS:
+            return None  # stale
+        articles = data.get("articles")
+        return articles if isinstance(articles, list) else None
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Failed to read news cache: %s", e)
+        return None
+
+
+def _write_news_cache(articles: list[dict]) -> None:
+    """Persist articles with a fetch timestamp."""
+    try:
+        NEWS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        NEWS_CACHE_FILE.write_text(
+            json.dumps({"fetched_at": time.time(), "articles": articles}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError as e:
+        logger.warning("Failed to write news cache: %s", e)
+
+
+async def _fetch_all_sources() -> dict:
+    """Fetch from all 15 sources in parallel (no cache)."""
     headers = {"User-Agent": USER_AGENT}
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, headers=headers, follow_redirects=True) as client:
         # MoneyDJ needs verify=False, dispatched via type "rss" name "MoneyDJ" →
@@ -781,7 +855,8 @@ if __name__ == "__main__":
     args = sys.argv[1:]
 
     if "--all" in args:
-        result = asyncio.run(latest())
+        # CLI --all always hits live sources (bypasses cache) for debugging.
+        result = asyncio.run(latest(force_refresh=True))
     elif args and not args[0].startswith("--"):
         symbol = args[0]
         limit = DEFAULT_LIMIT

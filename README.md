@@ -129,6 +129,7 @@ CNYES、MoneyDJ、Yahoo股市、UDN財經、UAnalyze、Fugle、Vocus（特定作
 執行期資料存為 JSON（`data/`，已被 `.gitignore` 排除）：
 
 - `subscriptions.json` — 訂閱清單
+- `news_cache.json` — 新聞內容快取（TTL 10 分鐘，避免每次重抓 15 來源）
 - `pushed_news.json` — 已推新聞 URL（保留 7 天）
 - `pushed_threads.json` — 已推 Threads ID（保留 3 天）
 - `stock_names.json` — 代號↔公司名對照表（seed 20 檔，自我成長）
@@ -141,7 +142,7 @@ source .venv/bin/activate
 python -m pytest tests/ -q
 ```
 
-目前 **235 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
+目前 **242 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
 
 ### 端到端驗證現況
 
@@ -172,5 +173,5 @@ agent/
 └── prompts.py          # Agent prompt templates
 tools/                  # 7 個工具 script（CLI + import 雙入口）
 data/                   # 執行期 JSON + 日誌
-tests/                  # 235 個測試
+tests/                  # 242 個測試
 ```

@@ -10,16 +10,28 @@ from tools.fetch_news import (
     SOURCES,
     _cached_stock_name,
     _deduplicate,
+    _diversify_by_source,
     _dispatch_source,
     _fetch_cnyes,
     _fetch_forecastock,
     _filter_by_keywords,
     _fetch_rss,
     _make_article,
+    _read_news_cache,
     _sort_by_date,
+    _write_news_cache,
     fetch,
     latest,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_news_cache(tmp_path, monkeypatch):
+    """Redirect the news cache to a temp file so tests never touch real data/
+    and don't leak cached results into each other."""
+    import tools.fetch_news as fn
+
+    monkeypatch.setattr(fn, "NEWS_CACHE_FILE", tmp_path / "news_cache.json")
 
 
 # --- Helpers ---
@@ -581,3 +593,88 @@ def test_filter_by_keywords_empty_keywords_returns_all():
     """No keywords → no filtering (return everything)."""
     articles = [{"title": "a", "summary": ""}, {"title": "b", "summary": ""}]
     assert _filter_by_keywords(articles, []) == articles
+
+
+# --- Source diversification tests ---
+
+
+def test_diversify_spreads_across_sources():
+    """A prolific source must not dominate the head; round-robin one per source."""
+    articles = (
+        [{"source": "CNYES", "title": f"c{i}"} for i in range(40)]
+        + [{"source": "UDN", "title": f"u{i}"} for i in range(5)]
+        + [{"source": "Yahoo", "title": f"y{i}"} for i in range(5)]
+    )
+    picked = _diversify_by_source(articles, 6)
+    sources = [a["source"] for a in picked]
+    # First 3 should be one from each distinct source, not 6x CNYES
+    assert sources[:3] == ["CNYES", "UDN", "Yahoo"]
+    assert sources.count("CNYES") <= 2
+
+
+def test_diversify_respects_limit_and_exhaustion():
+    """Returns exactly `limit` when enough, or everything when fewer exist."""
+    articles = [{"source": "A", "title": "1"}, {"source": "B", "title": "2"}]
+    assert len(_diversify_by_source(articles, 10)) == 2  # fewer than limit
+    assert len(_diversify_by_source(articles, 1)) == 1  # capped at limit
+
+
+# --- News cache tests ---
+
+
+def test_news_cache_write_then_read_fresh(tmp_path, monkeypatch):
+    """A freshly written cache is read back."""
+    import tools.fetch_news as fn
+
+    monkeypatch.setattr(fn, "NEWS_CACHE_FILE", tmp_path / "news_cache.json")
+    arts = [{"title": "a", "source": "S", "url": "u"}]
+    fn._write_news_cache(arts)
+    assert fn._read_news_cache() == arts
+
+
+def test_news_cache_expired_returns_none(tmp_path, monkeypatch):
+    """A cache older than TTL is treated as stale (None)."""
+    import json as _json
+    import time as _time
+
+    import tools.fetch_news as fn
+
+    f = tmp_path / "news_cache.json"
+    monkeypatch.setattr(fn, "NEWS_CACHE_FILE", f)
+    monkeypatch.setattr(fn, "CACHE_TTL_SECONDS", 600)
+    f.write_text(
+        _json.dumps({"fetched_at": _time.time() - 601, "articles": [{"title": "old"}]}),
+        encoding="utf-8",
+    )
+    assert fn._read_news_cache() is None
+
+
+def test_news_cache_missing_returns_none(tmp_path, monkeypatch):
+    import tools.fetch_news as fn
+
+    monkeypatch.setattr(fn, "NEWS_CACHE_FILE", tmp_path / "nope.json")
+    assert fn._read_news_cache() is None
+
+
+@pytest.mark.asyncio
+async def test_latest_uses_cache(tmp_path, monkeypatch):
+    """latest() serves the cache when fresh and only fetches once."""
+    import tools.fetch_news as fn
+
+    monkeypatch.setattr(fn, "NEWS_CACHE_FILE", tmp_path / "news_cache.json")
+    fetch_calls = {"n": 0}
+
+    async def fake_fetch_all():
+        fetch_calls["n"] += 1
+        return {"articles": [{"title": "x", "source": "S", "url": "u"}]}
+
+    monkeypatch.setattr(fn, "_fetch_all_sources", fake_fetch_all)
+
+    r1 = await fn.latest()  # fetches
+    r2 = await fn.latest()  # cache hit
+    assert fetch_calls["n"] == 1  # only one real fetch
+    assert r1 == r2
+
+    r3 = await fn.latest(force_refresh=True)  # bypass cache
+    assert fetch_calls["n"] == 2
+    assert r3 == r1
