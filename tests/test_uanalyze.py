@@ -75,6 +75,29 @@ async def test_login_success():
 
 
 @pytest.mark.asyncio
+async def test_login_success_data_wrapped():
+    """Real UAnalyze API wraps tokens under a 'data' key — parse that too."""
+    login_resp = _make_httpx_response(
+        200, {"data": {"access_token": "tokWrapped", "refresh_token": "refWrapped"}}
+    )
+    mock_client = _mock_async_client(login_resp)
+
+    auth = UAnalyzeAuth()
+    with (
+        patch.dict(
+            "os.environ",
+            {"UANALYZE_EMAIL": "a@b.com", "UANALYZE_PASSWORD": "pass"},
+        ),
+        patch("httpx.AsyncClient", return_value=mock_client),
+    ):
+        result = await auth.login()
+
+    assert result is True
+    assert auth.access_token == "tokWrapped"
+    assert auth.refresh_token == "refWrapped"
+
+
+@pytest.mark.asyncio
 async def test_login_failure():
     """Login with bad credentials returns False."""
     login_resp = _make_httpx_response(401, {"error": "unauthorized"})

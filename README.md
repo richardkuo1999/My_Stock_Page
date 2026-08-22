@@ -151,8 +151,10 @@ python -m pytest tests/ -q
 | `fetch_news <代號>` 個股過濾 | ✅ 已手動實測 |
 | 代號對照表 命中/miss/寫回/再命中 | ✅ CLI 實測 |
 | `@mention` → `agy` → 跑工具 → 回真實數據 | ✅ 透過真實 bridge 實測 |
-| **Telegram 整合層**（`python main.py` 連真 bot、手機收發、排程實際推播） | ❌ 尚未端到端測試 |
-| Threads 官方 API 真 token、UAnalyze 真登入、Docker build | ❌ 尚未實跑 |
+| UAnalyze 真登入 + 分析 | ✅ 真憑證實測（`/ua`、`analyze()`） |
+| `python main.py` 啟動 → 連上 Telegram → 排程啟動 → 乾淨關閉 | ✅ 實際啟動驗證 |
+| **手機端互動**（真人發指令、`@mention`、排程實際推播到訂閱者） | ❌ 尚未測試（需真人操作） |
+| Threads 官方 API 真 token、Docker build | ❌ 尚未實跑 |
 | 自動化 e2e 測試 | ❌ 無（目前僅單元測試） |
 
 ## 專案結構

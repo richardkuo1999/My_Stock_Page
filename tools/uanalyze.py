@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 load_dotenv()
 logger = logging.getLogger(__name__)
 
+AUTH_BASE_URL = os.getenv("UANALYZE_AUTH_URL", "https://api.uanalyze.com.tw")
 BASE_URL = "https://data.uanalyze.twobitto.com"
 DEFAULT_TIMEOUT = 60.0
 DEFAULT_PROMPT = "近況發展"
@@ -40,13 +41,20 @@ class UAnalyzeAuth:
         try:
             async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
                 r = await client.post(
-                    f"{BASE_URL}/auth/token",
+                    f"{AUTH_BASE_URL}/auth/token",
                     json={"email": email, "password": password},
+                    headers={
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json",
+                        "Origin": "https://pro.uanalyze.com.tw",
+                        "Referer": "https://pro.uanalyze.com.tw/",
+                    },
                 )
                 if r.status_code == 200:
                     data = r.json()
-                    self.access_token = data.get("access_token")
-                    self.refresh_token = data.get("refresh_token")
+                    payload = data.get("data") if isinstance(data.get("data"), dict) else data
+                    self.access_token = payload.get("access_token")
+                    self.refresh_token = payload.get("refresh_token")
                     return bool(self.access_token)
                 logger.warning("UAnalyze login failed: HTTP %d", r.status_code)
                 return False
@@ -61,12 +69,19 @@ class UAnalyzeAuth:
         try:
             async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
                 r = await client.post(
-                    f"{BASE_URL}/auth/token/refresh",
+                    f"{AUTH_BASE_URL}/auth/token/refresh",
                     json={"refresh_token": self.refresh_token},
+                    headers={
+                        "User-Agent": "Mozilla/5.0",
+                        "Accept": "application/json",
+                        "Origin": "https://pro.uanalyze.com.tw",
+                        "Referer": "https://pro.uanalyze.com.tw/",
+                    },
                 )
                 if r.status_code == 200:
                     data = r.json()
-                    self.access_token = data.get("access_token")
+                    payload = data.get("data") if isinstance(data.get("data"), dict) else data
+                    self.access_token = payload.get("access_token")
                     return bool(self.access_token)
                 return False
         except Exception as e:
@@ -92,7 +107,12 @@ async def _request_with_auth(url: str, params: dict | None = None) -> dict | Non
     if not token:
         return None
 
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://pro.uanalyze.com.tw/",
+        "Accept": "application/json",
+    }
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
         r = await client.get(url, headers=headers, params=params)
 
