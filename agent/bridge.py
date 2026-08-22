@@ -3,11 +3,16 @@
 import asyncio
 import json
 import logging
+import os
 from abc import ABC, abstractmethod
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 120  # seconds
+
+# Repo root = parent of the `agent/` package. Used as the working directory for
+# the agy subprocess so the Agent can run tools via relative paths (tools/xxx.py).
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class AgentBridge(ABC):
@@ -39,9 +44,18 @@ class AntigravityCLIBridge(AgentBridge):
         """
         try:
             proc = await asyncio.create_subprocess_exec(
-                "agy", "-p", prompt, "--output-format", "json",
+                "agy", "-p", prompt,
+                "--output-format", "json",
+                # SECURITY / TEMPORARY: auto-approve all tool permissions so the
+                # Agent can run tools/*.py in headless mode. This grants the Agent
+                # UNRESTRICTED command execution — a prompt-injection risk if the
+                # bot is exposed to untrusted users. Planned proper fix: expose the
+                # 6 tools as an MCP server (agy mcp) so the Agent can ONLY call
+                # those tools and never arbitrary shell. See ticket 03 / ARCHITECTURE.
+                "--dangerously-skip-permissions",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                cwd=REPO_ROOT,  # tools are referenced as tools/xxx.py relative to here
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(), timeout=self.timeout

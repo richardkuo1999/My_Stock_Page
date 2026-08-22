@@ -4,21 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from bot.handlers import echo, mention
-
-
-@pytest.fixture
-def update_with_text():
-    """Create a mock Update with text message."""
-
-    def _make(text: str):
-        update = MagicMock()
-        update.message = AsyncMock()
-        update.message.text = text
-        update.message.reply_text = AsyncMock()
-        return update
-
-    return _make
+from bot.handlers import mention
 
 
 @pytest.fixture
@@ -58,33 +44,6 @@ def _make_mention_update(text: str, bot_name: str = "test_bot"):
     return update
 
 
-# --- Echo tests ---
-
-
-@pytest.mark.asyncio
-async def test_echo_replies_same_text(update_with_text, context):
-    """Echo handler should reply with the exact same text."""
-    update = update_with_text("Hello, world!")
-    await echo(update, context)
-    update.message.reply_text.assert_called_once_with("Hello, world!")
-
-
-@pytest.mark.asyncio
-async def test_echo_with_chinese_text(update_with_text, context):
-    """Echo handler should work with Chinese characters."""
-    update = update_with_text("台積電今天漲了")
-    await echo(update, context)
-    update.message.reply_text.assert_called_once_with("台積電今天漲了")
-
-
-@pytest.mark.asyncio
-async def test_echo_no_message(context):
-    """Echo handler should not crash when message is None."""
-    update = MagicMock()
-    update.message = None
-    await echo(update, context)  # Should not raise
-
-
 # --- Mention + Agent routing tests ---
 
 
@@ -96,7 +55,11 @@ async def test_mention_routes_to_bridge(context, mock_bridge):
 
     await mention(update, context)
 
-    mock_bridge.send.assert_called_once_with("分析台積電")
+    # The handler wraps the question with the system prompt before sending.
+    mock_bridge.send.assert_called_once()
+    sent_prompt = mock_bridge.send.call_args[0][0]
+    assert "分析台積電" in sent_prompt
+    assert "台股投資輔助助理" in sent_prompt  # system prompt is prepended
     update.message.reply_text.assert_called_once_with("Agent 回覆內容")
 
 

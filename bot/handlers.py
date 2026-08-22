@@ -13,12 +13,6 @@ from telegram.ext import (
 logger = logging.getLogger(__name__)
 
 
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Echo the user message back."""
-    if update.message and update.message.text:
-        await update.message.reply_text(update.message.text)
-
-
 async def mention(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Detect @bot_username mentions and route to Agent."""
     if not update.message or not update.message.entities:
@@ -46,7 +40,10 @@ async def mention(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     return
 
                 try:
-                    response = await bridge.send(text_after)
+                    from agent.prompts import build_mention_prompt
+
+                    prompt = build_mention_prompt(text_after)
+                    response = await bridge.send(prompt)
                     await update.message.reply_text(response)
                 except TimeoutError:
                     await update.message.reply_text("⚠️ Agent 暫時無法回應，請稍後再試")
@@ -60,8 +57,5 @@ def register_handlers(application: Application) -> None:
     """Register all message handlers."""
     application.add_handler(
         MessageHandler(filters.Entity("mention"), mention), group=0
-    )
-    application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, echo), group=1
     )
     logger.info("Handlers registered.")

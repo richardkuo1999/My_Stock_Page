@@ -92,6 +92,19 @@ class AntigravityCLIBridge(AgentBridge):
 - **非阻塞**：`asyncio.create_subprocess_exec` 不卡 event loop
 - **錯誤處理**：超時或 exit code 非 0 → 回覆用戶「Agent 暫時無法回應，請稍後再試」
 - **未來可切換**：有 API key 後可加 `AntigravitySDKBridge` 實作，呼叫端不改
+- **System prompt**：`agent/prompts.py` 的 `build_mention_prompt()` 在每次 @mention 前
+  組合角色（台股助理）+ 6 個工具清單 + cwd 說明，讓 Agent 知道有哪些工具、怎麼呼叫。
+- **工作目錄固定**：bridge spawn `agy` 時指定 `cwd=REPO_ROOT`，工具用相對路徑 `tools/xxx.py`。
+
+### ⚠️ 權限與安全（暫時方案）
+
+目前 bridge 用 `--dangerously-skip-permissions` 讓 headless Agent 能執行工具指令。
+**這會授予 Agent 無限制的指令執行權限**，若 bot 對不特定使用者開放，存在 prompt-injection
+風險。已試過 `--sandbox` 與 `settings.json` 的 `permissions.allow` 白名單，皆無法在
+「只放行 6 個工具」與「Agent 正常運作」間取得平衡（Agent 仍需 read_file / find 等周邊權限）。
+
+**正解（待辦）**：把 6 個工具註冊為 **MCP server**（`agy mcp add`），Agent 只能呼叫這 6 個
+MCP 工具、完全不碰任意 shell，天生防 prompt injection。這也是 ticket 03 的原始設計方向。
 
 ### 為什麼不用 SDK
 
