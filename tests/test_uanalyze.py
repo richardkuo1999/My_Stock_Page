@@ -330,26 +330,26 @@ async def test_get_reports_failure():
 
 @pytest.mark.asyncio
 async def test_list_latest_reports_success():
-    """Latest site-wide reports are parsed with id/stock_name for dedup + display."""
+    """Reports parsed with stock_code (name) / stock_name / title (question_type)."""
     _auth.access_token = "tok"
 
     reports_data = {
         "data": [
             {
                 "id": 102,
-                "name": "台積電 Q3 法說",
+                "name": "2330",
                 "stock_name": "台積電",
-                "content_date": "2024-10-15T00:00:00",
+                "question_type": "資本支出",
+                "content_date": "2024-10-15 00:00:00",
                 "summary": "毛利率創高",
-                "url": "https://example.com/r102",
             },
             {
                 "id": 101,
-                "name": "聯發科展望",
+                "name": "2454",
                 "stock_name": "聯發科",
-                "content_date": "2024-10-14T00:00:00",
+                "question_type": "近況發展",
+                "content_date": "2024-10-14 00:00:00",
                 "summary": "AI 手機拉貨",
-                "url": "https://example.com/r101",
             },
         ]
     }
@@ -363,11 +363,11 @@ async def test_list_latest_reports_success():
     assert len(result["reports"]) == 2
     r0 = result["reports"][0]
     assert r0["id"] == 102
-    assert r0["title"] == "台積電 Q3 法說"
+    assert r0["stock_code"] == "2330"
     assert r0["stock_name"] == "台積電"
+    assert r0["title"] == "資本支出"
     assert r0["date"] == "2024-10-15"
     assert r0["summary"] == "毛利率創高"
-    assert r0["url"] == "https://example.com/r102"
 
 
 @pytest.mark.asyncio
@@ -375,7 +375,9 @@ async def test_list_latest_reports_nested_data():
     """Handles the {data:{data:[...]}} wrapper some UAnalyze endpoints return."""
     _auth.access_token = "tok"
 
-    reports_data = {"data": {"data": [{"id": 5, "name": "X", "stock_name": "某股"}]}}
+    reports_data = {
+        "data": {"data": [{"id": 5, "name": "1101", "stock_name": "某股", "question_type": "產業地位"}]}
+    }
     api_resp = _make_httpx_response(200, reports_data)
     mock_client = _mock_async_client(api_resp)
 
@@ -383,7 +385,11 @@ async def test_list_latest_reports_nested_data():
         result = await list_latest_reports()
 
     assert "reports" in result
-    assert result["reports"][0]["id"] == 5
+    r0 = result["reports"][0]
+    assert r0["id"] == 5
+    assert r0["stock_code"] == "1101"
+    assert r0["stock_name"] == "某股"
+    assert r0["title"] == "產業地位"
 
 
 @pytest.mark.asyncio

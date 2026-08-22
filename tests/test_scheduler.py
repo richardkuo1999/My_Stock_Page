@@ -14,6 +14,7 @@ from bot.scheduler import (
     _cleanup_expired,
     _cleanup_expired_threads,
     _format_thread_post,
+    _format_uanalyze_report,
     _is_duplicate_title,
     _load_pushed_news,
     _load_pushed_threads,
@@ -743,14 +744,31 @@ def pushed_uanalyze_path(tmp_path):
 def sample_reports():
     """Sample reports as returned by uanalyze.list_latest_reports()."""
     return [
-        {"id": 102, "title": "台積電 Q3 法說", "stock_name": "台積電", "date": "2024-10-15", "summary": "毛利率創高", "url": "https://u/r102"},
-        {"id": 101, "title": "聯發科展望", "stock_name": "聯發科", "date": "2024-10-14", "summary": "AI 拉貨", "url": "https://u/r101"},
+        {"id": 102, "stock_code": "2330", "stock_name": "台積電", "title": "資本支出", "date": "2024-10-15", "summary": "毛利率創高"},
+        {"id": 101, "stock_code": "2454", "stock_name": "聯發科", "title": "近況發展", "date": "2024-10-14", "summary": "AI 拉貨"},
     ]
 
 
 def _recent_ts() -> str:
     """A timestamp inside the UAnalyze TTL window (so seeded state survives cleanup)."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def test_format_uanalyze_report_shows_code_name_title():
+    """Formatter shows 公司名(代號), 報告主題 and 日期, plus the summary."""
+    text = _format_uanalyze_report(
+        {"id": 1, "stock_code": "2330", "stock_name": "台積電", "title": "資本支出", "date": "2026-08-21", "summary": "擴產先進製程"}
+    )
+    assert "台積電 (2330)" in text
+    assert "資本支出（2026-08-21）" in text
+    assert "擴產先進製程" in text
+
+
+def test_format_uanalyze_report_missing_fields():
+    """Formatter degrades gracefully when code/title/date are missing."""
+    text = _format_uanalyze_report({"id": 2, "stock_name": "某股", "summary": "x"})
+    assert "某股" in text  # no code → just name, no parens
+    assert "(" not in text.split("\n")[0]
 
 
 @pytest.mark.asyncio
@@ -788,7 +806,7 @@ async def test_uanalyze_push_new_report(
     # New report 102 pushed to both subscribers.
     assert mock_bot.send_message.call_count == 2
     text = mock_bot.send_message.call_args_list[0].kwargs["text"]
-    assert "台積電" in text and "https://u/r102" in text
+    assert "台積電" in text and "2330" in text and "資本支出" in text
     saved = json.loads(pushed_uanalyze_path.read_text(encoding="utf-8"))
     assert {r["id"] for r in saved} == {101, 102}
 

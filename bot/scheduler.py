@@ -324,25 +324,30 @@ def _cleanup_expired_uanalyze(records: list[dict]) -> list[dict]:
 
 def _format_uanalyze_report(report: dict) -> str:
     """Format a single UAnalyze report for a Telegram message (plain, no HTML)."""
-    title = report.get("title", "")
+    stock_code = report.get("stock_code", "")
     stock_name = report.get("stock_name", "")
+    title = report.get("title", "")
     date = report.get("date", "")
     summary = report.get("summary", "")
-    url = report.get("url", "")
 
+    # Header: 公司名 (代號)
+    stock = stock_name
+    if stock_code:
+        stock = f"{stock_name} ({stock_code})" if stock_name else stock_code
     head = "📋 UAnalyze 新報告"
-    if stock_name:
-        head += f" · {stock_name}"
+    if stock:
+        head += f" · {stock}"
     parts = [head]
+
+    # Subtitle: 報告主題（日期）
     if title and date:
         parts.append(f"{title}（{date}）")
     elif title or date:
         parts.append(title or date)
+
     parts.append("━" * 10)
     if summary:
         parts.append(summary[:800])
-    if url:
-        parts.append(f"🔗 {url}")
     return "\n".join(parts)
 
 

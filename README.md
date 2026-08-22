@@ -146,7 +146,7 @@ source .venv/bin/activate
 python -m pytest tests/ -q
 ```
 
-目前 **260 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
+目前 **262 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
 
 ### 端到端驗證現況
 
@@ -177,5 +177,5 @@ agent/
 └── prompts.py          # Agent prompt templates
 tools/                  # 7 個工具 script（CLI + import 雙入口）
 data/                   # 執行期 JSON + 日誌
-tests/                  # 260 個測試
+tests/                  # 262 個測試
 ```

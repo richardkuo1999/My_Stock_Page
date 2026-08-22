@@ -1,6 +1,8 @@
 """uanalyze — UAnalyze AI 估值分析
 用法: python tools/uanalyze.py SYMBOL [--prompt PROMPT]
-回傳: JSON {"analysis": str} 或 {"reports": [{title, summary, date, url}]}
+     python tools/uanalyze.py --reports [--limit N]
+回傳: JSON {"analysis": str}
+   或 {"reports": [{id, stock_code, stock_name, title, date, summary}]}
 """
 
 import asyncio
@@ -189,11 +191,13 @@ async def list_latest_reports(limit: int = 50) -> dict:
         reports.append(
             {
                 "id": item.get("id"),
-                "title": item.get("name", "") or item.get("title", ""),
+                # Real UAnalyze schema: name=股票代號, stock_name=公司名,
+                # question_type=報告主題（當標題用；無獨立標題欄位）。
+                "stock_code": item.get("name", ""),
                 "stock_name": item.get("stock_name", ""),
+                "title": item.get("question_type", "") or item.get("title", ""),
                 "date": (item.get("content_date", "") or item.get("date", ""))[:10],
                 "summary": item.get("summary", ""),
-                "url": item.get("url", ""),
             }
         )
     return {"reports": reports}
