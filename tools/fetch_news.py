@@ -29,6 +29,7 @@ USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) StockBot/1.0"
 # TLS-fingerprint impersonation profile for curl_cffi (bypasses Cloudflare)
 CFFI_IMPERSONATE = "chrome120"
 
+
 # --- Source Definitions ---
 # Each source has a `name` and a `type` used for dispatch. Verified URLs live
 # inside the individual fetchers (from the old working news_parser.py).
@@ -683,10 +684,16 @@ async def latest() -> dict:
 
 
 async def fetch(symbol: str | None = None, limit: int = 10) -> dict:
-    """Fetch news, optionally filtered by stock symbol.
+    """Fetch news, optionally filtered by a stock keyword.
 
     Args:
-        symbol: Stock symbol to search for (e.g. '2330'). If None, returns latest from all sources.
+        symbol: A stock code (e.g. '2330') or company name (e.g. '台積電'). If a
+            code is found in the local name cache, the company name is added as
+            an extra search keyword (Taiwanese headlines use the name, not the
+            code). Resolving an *unknown* code is the Agent's job — it calls
+            tools/lookup_stock_name.py, which writes the answer back to the
+            cache. This tool itself never calls the AI. If None, returns the
+            latest news from all sources.
         limit: Maximum number of articles to return.
 
     Returns:
@@ -697,13 +704,74 @@ async def fetch(symbol: str | None = None, limit: int = 10) -> dict:
         result["articles"] = result["articles"][:limit]
         return result
 
-    headers = {"User-Agent": USER_AGENT}
-    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, headers=headers, follow_redirects=True) as client:
-        articles = await _fetch_cnyes(client, symbol=symbol, limit=limit)
+    # `symbol` is a stock code (e.g. 2330) or company name. Build search keywords:
+    # the raw symbol plus, if the code is already in the local name cache, the
+    # company name. The tool NEVER calls the AI itself — resolving an unknown
+    # code → name is the Agent's job (it reads/writes the cache via the
+    # lookup_stock_name.py tool). This keeps the pipeline:
+    #   chat_bot → AI → tool → AI → tool   (AI orchestrates; tools stay pure)
+    keywords = [symbol]
+    name = _cached_stock_name(symbol)
+    if name and name != symbol:
+        keywords.append(name)
 
-    articles = _deduplicate(articles)
-    articles = _sort_by_date(articles)
-    return {"articles": articles[:limit]}
+    # 1) "Database": the latest news already fetched from all 15 sources.
+    # 2) Supplement with CNYES keyword search (low precision, but occasional
+    #    exclusives). Merge, then filter locally by keyword relevance.
+    latest_result = await latest()
+    pool = list(latest_result.get("articles", []))
+
+    headers = {"User-Agent": USER_AGENT}
+    try:
+        async with httpx.AsyncClient(
+            timeout=DEFAULT_TIMEOUT, headers=headers, follow_redirects=True
+        ) as client:
+            pool.extend(await _fetch_cnyes(client, symbol=symbol, limit=limit))
+    except Exception as e:
+        logger.warning("CNYES supplement search failed for %s: %s", symbol, e)
+
+    pool = _deduplicate(pool)
+    matched = _filter_by_keywords(pool, keywords)
+    matched = _sort_by_date(matched)
+    return {"articles": matched[:limit]}
+
+
+def _filter_by_keywords(articles: list[dict], keywords: list[str]) -> list[dict]:
+    """Keep only articles whose title or summary contains any keyword."""
+    if not keywords:
+        return articles
+    lowered = [k.lower() for k in keywords if k]
+    result = []
+    for a in articles:
+        haystack = f"{a.get('title', '')} {a.get('summary', '')}".lower()
+        if any(k in haystack for k in lowered):
+            result.append(a)
+    return result
+
+
+def _cached_stock_name(symbol: str) -> str | None:
+    """Return the company name for a stock code from the local cache, or None.
+
+    Pure data lookup — no AI. Delegates to the shared lookup_stock_name tool so
+    both tools share one JSON file + seed. Resolving an *unknown* code is the
+    Agent's job (it calls tools/lookup_stock_name.py --set to write it back).
+    """
+    if not symbol.isdigit():
+        return None
+    return _lookup_get_name(symbol)
+
+
+def _lookup_get_name(symbol: str) -> str | None:
+    """Import-tolerant accessor to the shared name cache."""
+    try:
+        from tools.lookup_stock_name import get_name
+    except ImportError:  # pragma: no cover - when run as a script from tools/
+        try:
+            from lookup_stock_name import get_name
+        except ImportError:
+            return None
+    return get_name(symbol)
+
 
 
 # --- CLI Entry Point ---

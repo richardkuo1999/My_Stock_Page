@@ -26,8 +26,19 @@ SYSTEM_PROMPT = """你是一個台股投資輔助助理，透過 Telegram 與使
 
 3. 新聞（全部來源或指定個股）
    `python tools/fetch_news.py --all`
-   `python tools/fetch_news.py <股票代號> --limit <數量>`
-   例：`python tools/fetch_news.py 2330 --limit 5`
+   `python tools/fetch_news.py <股票代號或名稱> --limit <數量>`
+   例：`python tools/fetch_news.py 台積電 --limit 5`
+   台股新聞標題寫的是公司中文名（例如「台積電」），不是代號。查個股新聞的正確流程：
+   (a) 先用工具 7 查對照表：`python tools/lookup_stock_name.py 2330`
+       - 若 found=true，用回傳的 name（公司名）當關鍵字叫 fetch_news
+       - 若 found=false，你自己判斷該代號的公司中文簡稱，然後用工具 7 的 --set
+         寫回對照表：`python tools/lookup_stock_name.py --set 2330 台積電`
+         （這樣下次查就會命中，對照表會越用越完整）
+   (b) 再用公司名查新聞：`python tools/fetch_news.py 台積電 --limit 5`
+
+7. 台股代號↔名稱對照表（讀 / 寫，純資料，無 AI）
+   查詢：`python tools/lookup_stock_name.py <代號>`
+   寫入：`python tools/lookup_stock_name.py --set <代號> <公司名>`
 
 4. UAnalyze AI 估值分析
    `python tools/uanalyze.py <股票代號>`

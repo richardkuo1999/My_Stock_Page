@@ -8,10 +8,12 @@ import pytest
 
 from tools.fetch_news import (
     SOURCES,
+    _cached_stock_name,
     _deduplicate,
     _dispatch_source,
     _fetch_cnyes,
     _fetch_forecastock,
+    _filter_by_keywords,
     _fetch_rss,
     _make_article,
     _sort_by_date,
@@ -209,27 +211,43 @@ async def test_latest_returns_all_15_sources():
 
 
 @pytest.mark.asyncio
-async def test_fetch_with_symbol():
-    """fetch(symbol) queries CNYES with stock-specific keyword."""
-    with patch("tools.fetch_news.httpx.AsyncClient") as MockClient:
-        mock_client = AsyncMock()
-        response = _make_httpx_response(200, json_data=SAMPLE_CNYES_RESPONSE)
-        mock_client.get = AsyncMock(return_value=response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        MockClient.return_value = mock_client
+async def test_fetch_with_keyword():
+    """fetch(keyword) filters the multi-source pool locally, keeping only
+    articles mentioning the keyword (by name or code)."""
+    pool = {
+        "articles": [
+            {"title": "台積電法說會重點", "source": "Yahoo股市", "date": "2026-01-01", "url": "https://x/1", "summary": ""},
+            {"title": "航海王領漲", "source": "CNYES", "date": "2026-01-01", "url": "https://x/2", "summary": ""},
+            {"title": "某報告提到台積電供應鏈", "source": "Fugle", "date": "2026-01-01", "url": "https://x/3", "summary": ""},
+        ]
+    }
+    with patch("tools.fetch_news.latest", new=AsyncMock(return_value=pool)), patch(
+        "tools.fetch_news._fetch_cnyes", new=AsyncMock(return_value=[])
+    ), patch("tools.fetch_news._cached_stock_name", return_value="台積電"):
+        result = await fetch("台積電", limit=5)
 
+    titles = [a["title"] for a in result["articles"]]
+    assert "台積電法說會重點" in titles
+    assert "某報告提到台積電供應鏈" in titles
+    assert "航海王領漲" not in titles
+
+
+@pytest.mark.asyncio
+async def test_fetch_keyword_matches_bare_code():
+    """A bare code keyword (2330) still filters correctly when present in text."""
+    pool = {
+        "articles": [
+            {"title": "2330 上漲", "source": "CNYES", "date": "2026-01-01", "url": "https://x/1", "summary": ""},
+            {"title": "無關新聞", "source": "CNYES", "date": "2026-01-01", "url": "https://x/2", "summary": ""},
+        ]
+    }
+    with patch("tools.fetch_news.latest", new=AsyncMock(return_value=pool)), patch(
+        "tools.fetch_news._fetch_cnyes", new=AsyncMock(return_value=[])
+    ), patch("tools.fetch_news._cached_stock_name", return_value=None):
         result = await fetch("2330", limit=5)
 
-    assert "articles" in result
-    assert isinstance(result["articles"], list)
-    assert len(result["articles"]) <= 5
-    for article in result["articles"]:
-        assert "title" in article
-        assert "source" in article
-        assert "date" in article
-        assert "url" in article
-        assert "summary" in article
+    titles = [a["title"] for a in result["articles"]]
+    assert titles == ["2330 上漲"]
 
 
 @pytest.mark.asyncio
@@ -540,3 +558,26 @@ async def test_fetch_fintastic_blocked():
         articles = await _fetch_fintastic(AsyncMock())
 
     assert articles == []
+
+
+# --- Keyword filter tests ---
+
+
+def test_filter_by_keywords_matches_title_and_summary():
+    """Filter keeps articles matching any keyword in title or summary."""
+    articles = [
+        {"title": "台積電擴廠", "summary": ""},
+        {"title": "無關新聞", "summary": "內文提到 2330"},
+        {"title": "航運上漲", "summary": "與半導體無關"},
+    ]
+    result = _filter_by_keywords(articles, ["台積電", "2330"])
+    titles = [a["title"] for a in result]
+    assert "台積電擴廠" in titles
+    assert "無關新聞" in titles  # matched via summary
+    assert "航運上漲" not in titles
+
+
+def test_filter_by_keywords_empty_keywords_returns_all():
+    """No keywords → no filtering (return everything)."""
+    articles = [{"title": "a", "summary": ""}, {"title": "b", "summary": ""}]
+    assert _filter_by_keywords(articles, []) == articles
