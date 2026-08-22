@@ -11,6 +11,7 @@ from tools.fetch_news import (
     _deduplicate,
     _dispatch_source,
     _fetch_cnyes,
+    _fetch_forecastock,
     _fetch_rss,
     _make_article,
     _sort_by_date,
@@ -397,3 +398,145 @@ def test_sources_count():
     assert "SinoTrade" in names
     assert "Pocket學堂" in names
     assert "Buffett+Marks" in names
+
+
+# --- Forecastock direct-fetch tests ---
+
+
+FORECASTOCK_HTML = """
+<html><body>
+  <a class="articleListItem__link" href="/article/aaa-111">前往【美股研究報告】美光分析</a>
+  <a class="articleListItem__link" href="/article/bbb-222">前往【個股報告】台積電展望</a>
+  <a class="other" href="/ignore">不是文章</a>
+</body></html>
+"""
+
+
+@pytest.mark.asyncio
+async def test_fetch_forecastock_parses_articles():
+    """Forecastock direct fetch parses articleListItem__link and strips 前往 prefix."""
+    response = _make_httpx_response(200, text=FORECASTOCK_HTML)
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("tools.fetch_news.httpx.AsyncClient", return_value=mock_client):
+        articles = await _fetch_forecastock(AsyncMock())
+
+    assert len(articles) == 2
+    assert articles[0]["title"] == "【美股研究報告】美光分析"
+    assert articles[0]["url"] == "https://www.forecastock.tw/article/aaa-111"
+    assert articles[0]["source"] == "Forecastock"
+
+
+@pytest.mark.asyncio
+async def test_fetch_forecastock_http_error():
+    """Forecastock returns empty list on non-200."""
+    response = _make_httpx_response(403, text="")
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("tools.fetch_news.httpx.AsyncClient", return_value=mock_client):
+        articles = await _fetch_forecastock(AsyncMock())
+
+    assert articles == []
+
+
+# --- MacroMicro (curl_cffi) + Fintastic (WordPress API) tests ---
+
+
+@pytest.mark.asyncio
+async def test_fetch_macromicro_parses_rss():
+    """MacroMicro fetch via curl_cffi parses RSS feed."""
+    from tools.fetch_news import _fetch_macromicro
+
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.text = SAMPLE_RSS_XML
+
+    with patch("tools.fetch_news._cffi_get", return_value=resp):
+        articles = await _fetch_macromicro(AsyncMock())
+
+    assert len(articles) == 2
+    assert articles[0]["source"] == "MacroMicro"
+    assert articles[0]["title"] == "台積電法說重點整理"
+
+
+@pytest.mark.asyncio
+async def test_fetch_macromicro_blocked():
+    """MacroMicro returns empty on 403 (Cloudflare block)."""
+    from tools.fetch_news import _fetch_macromicro
+
+    resp = MagicMock()
+    resp.status_code = 403
+    resp.text = ""
+
+    with patch("tools.fetch_news._cffi_get", return_value=resp):
+        articles = await _fetch_macromicro(AsyncMock())
+
+    assert articles == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_macromicro_no_curl_cffi():
+    """MacroMicro returns empty gracefully if curl_cffi missing."""
+    from tools.fetch_news import _fetch_macromicro
+
+    with patch("tools.fetch_news._cffi_get", return_value=None):
+        articles = await _fetch_macromicro(AsyncMock())
+
+    assert articles == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_fintastic_parses_wp_api():
+    """Fintastic parses WordPress REST API posts."""
+    from tools.fetch_news import _fetch_fintastic
+
+    wp_posts = [
+        {
+            "title": {"rendered": "AI 的 Android 時刻"},
+            "link": "https://fintastic.trading/market_analysis/ai",
+            "date": "2026-08-17T04:18:11",
+            "excerpt": {"rendered": "<p>摘要內容</p>"},
+        },
+        {
+            "title": {"rendered": "TOP 30 成長股"},
+            "link": "https://fintastic.trading/stock/top30",
+            "date": "2026-04-24T22:52:14",
+            "excerpt": {"rendered": ""},
+        },
+    ]
+    resp = _make_httpx_response(200, json_data=wp_posts)
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("tools.fetch_news.httpx.AsyncClient", return_value=mock_client):
+        articles = await _fetch_fintastic(AsyncMock())
+
+    assert len(articles) == 2
+    assert articles[0]["source"] == "Fintastic"
+    assert articles[0]["title"] == "AI 的 Android 時刻"
+    assert articles[0]["summary"] == "摘要內容"  # HTML stripped
+
+
+@pytest.mark.asyncio
+async def test_fetch_fintastic_blocked():
+    """Fintastic returns empty on non-200."""
+    from tools.fetch_news import _fetch_fintastic
+
+    resp = _make_httpx_response(403, text="")
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("tools.fetch_news.httpx.AsyncClient", return_value=mock_client):
+        articles = await _fetch_fintastic(AsyncMock())
+
+    assert articles == []

@@ -6,14 +6,19 @@
 import asyncio
 import json
 import logging
-import os
 import sys
+import urllib.parse
 from datetime import datetime
-from typing import Any
 
 import feedparser
 import httpx
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+
+try:
+    from curl_cffi import requests as cffi_requests
+except ImportError:  # pragma: no cover - optional dependency
+    cffi_requests = None
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -21,29 +26,54 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT = 20.0
 DEFAULT_LIMIT = 10
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) StockBot/1.0"
+# TLS-fingerprint impersonation profile for curl_cffi (bypasses Cloudflare)
+CFFI_IMPERSONATE = "chrome120"
 
 # --- Source Definitions ---
+# Each source has a `name` and a `type` used for dispatch. Verified URLs live
+# inside the individual fetchers (from the old working news_parser.py).
 
 SOURCES = [
     {"name": "CNYES", "type": "json", "url": "https://news.cnyes.com/api/v3/news/category/headline?limit=10"},
-    {"name": "MoneyDJ", "type": "rss", "url": "https://www.moneydj.com/funddj/xml/newsfeed/newsfeed.aspx"},
-    {"name": "Yahoo股市", "type": "rss", "url": "https://tw.stock.yahoo.com/rss"},
-    {"name": "UDN財經", "type": "rss", "url": "https://udn.com/rssfeed/news/6/7241/0?ch=news"},
-    {"name": "UAnalyze", "type": "json", "url": "https://data.uanalyze.twobitto.com/api/report-summaries"},
-    {"name": "Fugle", "type": "json", "url": "https://www.fugle.tw/api/v1/posts?limit=10"},
+    {"name": "MoneyDJ", "type": "rss", "url": "https://www.moneydj.com/KMDJ/RssCenter.aspx?svc=NR&fno=1&arg=MB010000"},
+    {"name": "Yahoo股市", "type": "rss", "url": "https://tw.stock.yahoo.com/rss?category=news"},
+    {"name": "UDN財經", "type": "udn", "url": "https://money.udn.com/rssfeed/news/1001/5591"},
+    {"name": "UAnalyze", "type": "uanalyze", "url": "https://uanalyze.com.tw/articles"},
+    {"name": "Fugle", "type": "fugle", "url": "https://blog.fugle.tw/topic/industry-analysis"},
     {"name": "Vocus", "type": "vocus", "url": "https://vocus.cc"},
-    {"name": "MacroMicro", "type": "rss", "url": "https://morss.it/https://www.macromicro.me/blog/rss"},
-    {"name": "FinGuider", "type": "json", "url": "https://api.finguider.com/api/v1/reports?limit=10"},
-    {"name": "Fintastic", "type": "rss", "url": "https://morss.it/https://www.fintastic.com.tw/blog/rss"},
-    {"name": "Forecastock", "type": "rss", "url": "https://morss.it/https://www.forecastock.com/blog.xml"},
-    {"name": "NewsDigestAI", "type": "rss", "url": "https://www.newsdigestai.com/feed"},
-    {"name": "SinoTrade", "type": "json", "url": "https://richclub.sinotrade.com.tw/api/post/list?limit=10"},
-    {"name": "Pocket學堂", "type": "json", "url": "https://www.pocket.tw/api/articles?limit=10"},
+    {"name": "MacroMicro", "type": "macromicro", "url": "https://www.macromicro.me/rss"},
+    {"name": "FinGuider", "type": "finguider", "url": "https://finguider.cc/Api/article/"},
+    {"name": "Fintastic", "type": "fintastic", "url": "https://fintastic.trading/wp-json/wp/v2/posts"},
+    {
+        "name": "Forecastock",
+        "type": "forecastock",
+        "url": "https://www.forecastock.tw/category/%E5%80%8B%E8%82%A1%E5%A0%B1%E5%91%8A",
+    },
+    {"name": "NewsDigestAI", "type": "rss", "url": "https://feed.cqd.tw/ndai"},
+    {"name": "SinoTrade", "type": "sinotrade", "url": "https://www.sinotrade.com.tw/richclub/api/graphql"},
+    {"name": "Pocket學堂", "type": "pocket", "url": "https://www.pocket.tw/invest_news/api/invest_news/"},
     {"name": "Buffett+Marks", "type": "static", "url": ""},
 ]
 
 # Vocus authors to track
 VOCUS_AUTHORS = ["@ieobserve", "@miula", "65ab564cfd897800018a88cc"]
+
+# UDN money feeds (Industry / Stock / International / Cross-Strait)
+UDN_FEEDS = [
+    "https://money.udn.com/rssfeed/news/1001/5591",
+    "https://money.udn.com/rssfeed/news/1001/5590",
+    "https://money.udn.com/rssfeed/news/1001/5588",
+    "https://money.udn.com/rssfeed/news/1001/5589",
+]
+
+# Fugle blog category pages
+FUGLE_CATEGORIES = [
+    "https://blog.fugle.tw/topic/industry-analysis",
+    "https://blog.fugle.tw/topic/stock-analysis",
+    "https://blog.fugle.tw/topic/us-stock-summary",
+    "https://blog.fugle.tw/topic/earnings-call-memo",
+    "https://blog.fugle.tw/topic/current-events-commentary",
+]
 
 # Static resources (Buffett Letters + Howard Marks Memos)
 STATIC_ARTICLES = [
@@ -58,7 +88,7 @@ STATIC_ARTICLES = [
         "title": "Howard Marks Memos",
         "source": "Buffett+Marks",
         "date": "",
-        "url": "https://www.oaktreecapital.com/insights/memo-archive",
+        "url": "https://www.oaktreecapital.com/insights/memos",
         "summary": "Howard Marks investment memos archive",
     },
 ]
@@ -73,20 +103,6 @@ def _make_article(title: str, source: str, date: str, url: str, summary: str = "
         "url": url.strip() if url else "",
         "summary": summary.strip() if summary else "",
     }
-
-
-def _parse_date(date_str: str | None) -> str:
-    """Try to parse a date string into ISO format. Return empty string on failure."""
-    if not date_str:
-        return ""
-    try:
-        # feedparser's time struct
-        if hasattr(date_str, "tm_year"):
-            dt = datetime(*date_str[:6])
-            return dt.isoformat()
-        return date_str
-    except Exception:
-        return date_str if isinstance(date_str, str) else ""
 
 
 def _parse_rss_date(entry: dict) -> str:
@@ -106,6 +122,19 @@ def _parse_rss_date(entry: dict) -> str:
     return ""
 
 
+def _parse_feed_text(text: str, name: str) -> list[dict]:
+    """Parse RSS/Atom feed text into article dicts."""
+    feed = feedparser.parse(text)
+    articles = []
+    for entry in feed.entries[:DEFAULT_LIMIT]:
+        title = entry.get("title", "")
+        link = entry.get("link", "")
+        date = _parse_rss_date(entry)
+        summary = entry.get("summary", "") or entry.get("description", "")
+        articles.append(_make_article(title, name, date, link, summary))
+    return articles
+
+
 # --- Fetch Coroutines ---
 
 
@@ -118,17 +147,27 @@ async def _fetch_rss(source: dict, client: httpx.AsyncClient) -> list[dict]:
         if r.status_code != 200:
             logger.warning("RSS %s returned status %d", name, r.status_code)
             return []
-        feed = feedparser.parse(r.text)
-        articles = []
-        for entry in feed.entries[:DEFAULT_LIMIT]:
-            title = entry.get("title", "")
-            link = entry.get("link", "")
-            date = _parse_rss_date(entry)
-            summary = entry.get("summary", "") or entry.get("description", "")
-            articles.append(_make_article(title, name, date, link, summary))
-        return articles
+        return _parse_feed_text(r.text, name)
     except Exception as e:
         logger.warning("RSS fetch failed for %s: %s", name, e)
+        return []
+
+
+async def _fetch_moneydj(client: httpx.AsyncClient) -> list[dict]:
+    """MoneyDJ RSS. Has SSL cert issues → use a short-lived verify=False client."""
+    url = "https://www.moneydj.com/KMDJ/RssCenter.aspx?svc=NR&fno=1&arg=MB010000"
+    headers = {"User-Agent": USER_AGENT}
+    try:
+        async with httpx.AsyncClient(
+            timeout=DEFAULT_TIMEOUT, headers=headers, follow_redirects=True, verify=False
+        ) as insecure:
+            r = await insecure.get(url)
+            if r.status_code != 200:
+                logger.warning("MoneyDJ returned status %d", r.status_code)
+                return []
+            return _parse_feed_text(r.text, "MoneyDJ")
+    except Exception as e:
+        logger.warning("MoneyDJ fetch failed: %s", e)
         return []
 
 
@@ -146,7 +185,6 @@ async def _fetch_cnyes(client: httpx.AsyncClient, symbol: str | None = None, lim
         data = r.json()
         items = data.get("items", {}).get("data", [])
         if not items:
-            # Try alternate response structure
             items = data.get("data", [])
         articles = []
         for item in items[:limit]:
@@ -160,7 +198,7 @@ async def _fetch_cnyes(client: httpx.AsyncClient, symbol: str | None = None, lim
                     date = datetime.fromtimestamp(pub_at).isoformat()
                 except (ValueError, OSError):
                     date = str(pub_at)
-            summary = item.get("summary", "") or item.get("content", "")[:200]
+            summary = item.get("summary", "") or (item.get("content", "") or "")[:200]
             articles.append(_make_article(title, "CNYES", date, url_link, summary))
         return articles
     except Exception as e:
@@ -168,99 +206,178 @@ async def _fetch_cnyes(client: httpx.AsyncClient, symbol: str | None = None, lim
         return []
 
 
+async def _fetch_udn(client: httpx.AsyncClient) -> list[dict]:
+    """UDN財經: fetch 4 RSS feeds in parallel and merge."""
+
+    async def fetch_one(url: str) -> list[dict]:
+        try:
+            r = await client.get(url)
+            if r.status_code != 200:
+                return []
+            return _parse_feed_text(r.text, "UDN財經")
+        except Exception as e:
+            logger.warning("UDN feed failed %s: %s", url, e)
+            return []
+
+    results = await asyncio.gather(*[fetch_one(u) for u in UDN_FEEDS], return_exceptions=True)
+    merged: list[dict] = []
+    for res in results:
+        if isinstance(res, list):
+            merged.extend(res)
+    return merged
+
+
 async def _fetch_uanalyze(client: httpx.AsyncClient) -> list[dict]:
-    """Fetch from UAnalyze API."""
-    url = "https://data.uanalyze.twobitto.com/api/report-summaries"
+    """UAnalyze: HTML page parsed with BeautifulSoup."""
+    url = "https://uanalyze.com.tw/articles"
     try:
         r = await client.get(url)
         if r.status_code != 200:
             logger.warning("UAnalyze returned status %d", r.status_code)
             return []
-        data = r.json()
-        items = data if isinstance(data, list) else data.get("data", [])
+        soup = BeautifulSoup(r.text, "html.parser")
+        block = soup.select(".article-list")
+        items = block[0].select(".article-content") if block else []
         articles = []
         for item in items[:DEFAULT_LIMIT]:
-            title = item.get("title", "") or item.get("name", "")
-            url_link = item.get("url", "") or item.get("link", "")
-            date = item.get("date", "") or item.get("publishedAt", "")
-            summary = item.get("summary", "") or item.get("description", "")
-            articles.append(_make_article(title, "UAnalyze", date, url_link, summary))
+            title_elem = item.select_one(".article-content__title")
+            link_elem = item.select_one("a")
+            if title_elem and link_elem and link_elem.get("href"):
+                title = title_elem.get_text(strip=True)
+                link = link_elem["href"]
+                articles.append(_make_article(title, "UAnalyze", "", link, ""))
         return articles
     except Exception as e:
         logger.warning("UAnalyze fetch failed: %s", e)
         return []
 
 
-async def _fetch_fugle_posts(client: httpx.AsyncClient) -> list[dict]:
-    """Fetch from Fugle posts API."""
-    url = "https://www.fugle.tw/api/v1/posts?limit=10"
-    try:
-        r = await client.get(url)
-        if r.status_code != 200:
-            logger.warning("Fugle posts returned status %d", r.status_code)
+async def _fetch_fugle(client: httpx.AsyncClient) -> list[dict]:
+    """Fugle blog: fetch category pages in parallel, extract /post/ links."""
+
+    async def fetch_cat(cat_url: str) -> list[dict]:
+        try:
+            r = await client.get(cat_url)
+            if r.status_code != 200:
+                return []
+            soup = BeautifulSoup(r.text, "html.parser")
+            found = []
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                title = a.get_text(strip=True)
+                if not title:
+                    continue
+                if "/post/" in href:
+                    full = f"https://blog.fugle.tw{href}" if href.startswith("/") else href
+                    found.append(_make_article(title, "Fugle", "", full, ""))
+            return found
+        except Exception as e:
+            logger.warning("Fugle category failed %s: %s", cat_url, e)
             return []
-        data = r.json()
-        items = data if isinstance(data, list) else data.get("data", [])
-        articles = []
-        for item in items[:DEFAULT_LIMIT]:
-            title = item.get("title", "")
-            url_link = item.get("url", "") or item.get("link", "")
-            date = item.get("date", "") or item.get("publishedAt", "") or item.get("createdAt", "")
-            summary = item.get("summary", "") or item.get("description", "")
-            articles.append(_make_article(title, "Fugle", date, url_link, summary))
-        return articles
-    except Exception as e:
-        logger.warning("Fugle posts fetch failed: %s", e)
-        return []
+
+    results = await asyncio.gather(*[fetch_cat(u) for u in FUGLE_CATEGORIES], return_exceptions=True)
+    articles: list[dict] = []
+    seen: set[str] = set()
+    for res in results:
+        if isinstance(res, list):
+            for art in res:
+                if art["url"] not in seen:
+                    seen.add(art["url"])
+                    articles.append(art)
+    return articles[:DEFAULT_LIMIT]
 
 
 async def _fetch_vocus(client: httpx.AsyncClient) -> list[dict]:
-    """Fetch from Vocus for tracked authors."""
-    articles = []
-    for author in VOCUS_AUTHORS:
-        author_id = author.lstrip("@")
-        url = f"https://vocus.cc/api/users/{author_id}/articles"
+    """Vocus: Next.js SSR page. Parse __NEXT_DATA__ JSON, fallback to /article/ links."""
+    link_prefix = "https://vocus.cc"
+    articles: list[dict] = []
+    for user_id in VOCUS_AUTHORS:
+        url = f"https://vocus.cc/user/{user_id}"
         try:
             r = await client.get(url)
             if r.status_code != 200:
-                # Try alternative URL pattern
-                url_alt = f"https://vocus.cc/user/{author}"
-                r = await client.get(url_alt)
-                if r.status_code != 200:
-                    continue
-                # Can't parse HTML easily; skip this author
                 continue
-            data = r.json()
-            items = data if isinstance(data, list) else data.get("articles", [])
-            for item in items[:5]:
-                title = item.get("title", "")
-                slug = item.get("slug", "") or item.get("_id", "")
-                url_link = f"https://vocus.cc/{author_id}/{slug}" if slug else ""
-                date = item.get("publishedAt", "") or item.get("createdAt", "")
-                summary = item.get("summary", "") or item.get("description", "")
-                articles.append(_make_article(title, "Vocus", date, url_link, summary))
+            soup = BeautifulSoup(r.text, "html.parser")
+            found: list[dict] = []
+
+            nd = soup.find("script", id="__NEXT_DATA__")
+            if nd and nd.string:
+                try:
+                    data = json.loads(nd.string)
+                    props = data.get("props", {}).get("pageProps", {})
+                    items = props.get("articles") or props.get("articleList") or []
+                    if isinstance(items, dict):
+                        items = items.get("items") or items.get("data") or []
+                    for art in items:
+                        if not isinstance(art, dict):
+                            continue
+                        title = art.get("title", "")
+                        slug = art.get("slug") or art.get("_id") or art.get("id", "")
+                        if title and slug:
+                            url_path = f"/article/{slug}" if "/" not in str(slug) else str(slug)
+                            found.append(_make_article(title, "Vocus", "", link_prefix + url_path, ""))
+                except (ValueError, KeyError):
+                    pass
+
+            # Fallback: scan a[href*='/article/']
+            if not found:
+                seen = set()
+                for a in soup.find_all("a", href=True):
+                    href = a["href"]
+                    if "/article/" not in href:
+                        continue
+                    title = a.get_text(strip=True)
+                    if not title or len(title) < 4:
+                        continue
+                    full_url = href if href.startswith("http") else link_prefix + href
+                    if full_url not in seen:
+                        seen.add(full_url)
+                        found.append(_make_article(title, "Vocus", "", full_url, ""))
+
+            articles.extend(found[:5])
         except Exception as e:
-            logger.warning("Vocus fetch failed for %s: %s", author, e)
+            logger.warning("Vocus fetch failed for %s: %s", user_id, e)
     return articles
 
 
 async def _fetch_finguider(client: httpx.AsyncClient) -> list[dict]:
-    """Fetch from FinGuider API."""
-    url = "https://api.finguider.com/api/v1/reports?limit=10"
+    """FinGuider: public JSON API. May have SSL issue → fallback to verify=False."""
+    url = "https://finguider.cc/Api/article/"
+    params = {"hot_new": "new", "page": 1}
+
+    async def do_fetch(cli: httpx.AsyncClient) -> httpx.Response:
+        return await cli.get(url, params=params)
+
     try:
-        r = await client.get(url)
+        try:
+            r = await do_fetch(client)
+        except (httpx.ConnectError, httpx.TransportError) as ssl_err:
+            logger.warning("FinGuider retrying with verify=False: %s", ssl_err)
+            headers = {"User-Agent": USER_AGENT}
+            async with httpx.AsyncClient(
+                timeout=DEFAULT_TIMEOUT, headers=headers, follow_redirects=True, verify=False
+            ) as insecure:
+                r = await do_fetch(insecure)
         if r.status_code != 200:
             logger.warning("FinGuider returned status %d", r.status_code)
             return []
         data = r.json()
-        items = data if isinstance(data, list) else data.get("data", [])
+        items = data.get("results", [])
         articles = []
         for item in items[:DEFAULT_LIMIT]:
+            if not isinstance(item, dict):
+                continue
             title = item.get("title", "")
-            url_link = item.get("url", "") or item.get("link", "")
-            date = item.get("date", "") or item.get("publishedAt", "")
-            summary = item.get("summary", "") or item.get("description", "")
-            articles.append(_make_article(title, "FinGuider", date, url_link, summary))
+            art_id = item.get("id")
+            if not title:
+                continue
+            link = (
+                f"https://finguider.cc/Article/ArticleIndex/{art_id}"
+                if art_id
+                else "https://finguider.cc/Article"
+            )
+            summary = item.get("content", "") or item.get("describe", "")
+            articles.append(_make_article(str(title), "FinGuider", "", link, str(summary)))
         return articles
     except Exception as e:
         logger.warning("FinGuider fetch failed: %s", e)
@@ -268,22 +385,49 @@ async def _fetch_finguider(client: httpx.AsyncClient) -> list[dict]:
 
 
 async def _fetch_sinotrade(client: httpx.AsyncClient) -> list[dict]:
-    """Fetch from SinoTrade Rich Club API."""
-    url = "https://richclub.sinotrade.com.tw/api/post/list?limit=10"
+    """SinoTrade Rich Club: GraphQL POST with verify=False."""
+    endpoint = "https://www.sinotrade.com.tw/richclub/api/graphql"
+    limit = 20
+    query = (
+        "query {"
+        f' clientGetArticleList(input:{{channel:"industry",limit:{limit},page:0}}) {{'
+        "   filtered { _id title pubDate image }"
+        " }"
+        "}"
+    )
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Origin": "https://www.sinotrade.com.tw",
+        "Referer": "https://www.sinotrade.com.tw/richclub/industry",
+        "User-Agent": USER_AGENT,
+    }
     try:
-        r = await client.get(url)
-        if r.status_code != 200:
-            logger.warning("SinoTrade returned status %d", r.status_code)
-            return []
-        data = r.json()
-        items = data if isinstance(data, list) else data.get("data", data.get("posts", []))
+        async with httpx.AsyncClient(
+            timeout=DEFAULT_TIMEOUT, follow_redirects=True, verify=False
+        ) as insecure:
+            r = await insecure.post(endpoint, json={"query": query}, headers=headers)
+            if r.status_code != 200:
+                logger.warning("SinoTrade returned status %d", r.status_code)
+                return []
+            data = r.json()
+        items = (data or {}).get("data", {}).get("clientGetArticleList", {}).get("filtered", [])
         articles = []
         for item in items[:DEFAULT_LIMIT]:
-            title = item.get("title", "")
-            url_link = item.get("url", "") or item.get("link", "")
-            date = item.get("date", "") or item.get("publishedAt", "") or item.get("createdAt", "")
-            summary = item.get("summary", "") or item.get("description", "")
-            articles.append(_make_article(title, "SinoTrade", date, url_link, summary))
+            if not isinstance(item, dict):
+                continue
+            title = item.get("title")
+            cid = item.get("_id")
+            if not title:
+                continue
+            url = "https://www.sinotrade.com.tw/richclub/industry"
+            if cid:
+                article_key = urllib.parse.quote(f"x-{cid}")
+                url = (
+                    f"https://www.sinotrade.com.tw/richclub/content?article={article_key}"
+                    "&channel=industry&type=article"
+                )
+            articles.append(_make_article(str(title), "SinoTrade", "", url, ""))
         return articles
     except Exception as e:
         logger.warning("SinoTrade fetch failed: %s", e)
@@ -291,22 +435,36 @@ async def _fetch_sinotrade(client: httpx.AsyncClient) -> list[dict]:
 
 
 async def _fetch_pocket(client: httpx.AsyncClient) -> list[dict]:
-    """Fetch from Pocket學堂 API."""
-    url = "https://www.pocket.tw/api/articles?limit=10"
+    """Pocket學堂: JSON API with verify=False (SSL cert issue)."""
+    url = "https://www.pocket.tw/invest_news/api/invest_news/"
+    params = {"page": 1, "category": "", "keyword": ""}
+    headers = {"User-Agent": USER_AGENT}
     try:
-        r = await client.get(url)
-        if r.status_code != 200:
-            logger.warning("Pocket學堂 returned status %d", r.status_code)
+        async with httpx.AsyncClient(
+            timeout=DEFAULT_TIMEOUT, headers=headers, follow_redirects=True, verify=False
+        ) as insecure:
+            r = await insecure.get(url, params=params)
+            if r.status_code != 200:
+                logger.warning("Pocket學堂 returned status %d", r.status_code)
+                return []
+            payload = r.json()
+        if not isinstance(payload, dict) or str(payload.get("code")) != "0":
+            logger.warning("Pocket學堂 unexpected payload code")
             return []
-        data = r.json()
-        items = data if isinstance(data, list) else data.get("data", data.get("articles", []))
+        items = payload.get("data") or []
         articles = []
         for item in items[:DEFAULT_LIMIT]:
-            title = item.get("title", "")
-            url_link = item.get("url", "") or item.get("link", "")
-            date = item.get("date", "") or item.get("publishedAt", "")
-            summary = item.get("summary", "") or item.get("description", "")
-            articles.append(_make_article(title, "Pocket學堂", date, url_link, summary))
+            if not isinstance(item, dict):
+                continue
+            title = item.get("Title") or item.get("title")
+            slug = item.get("slug")
+            if not title or not slug:
+                continue
+            link = str(slug)
+            if link.startswith("/"):
+                link = f"https://www.pocket.tw{link}"
+            summary = item.get("description") or item.get("meta_description") or ""
+            articles.append(_make_article(str(title), "Pocket學堂", "", link, str(summary)))
         return articles
     except Exception as e:
         logger.warning("Pocket學堂 fetch failed: %s", e)
@@ -315,7 +473,111 @@ async def _fetch_pocket(client: httpx.AsyncClient) -> list[dict]:
 
 async def _fetch_static() -> list[dict]:
     """Return static reference articles (Buffett + Marks)."""
-    return STATIC_ARTICLES.copy()
+    return [dict(a) for a in STATIC_ARTICLES]
+
+
+async def _fetch_forecastock(client: httpx.AsyncClient) -> list[dict]:
+    """Forecastock: direct HTML scrape (morss proxy is unreliable).
+
+    Extracts article links via the `a.articleListItem__link` selector,
+    same target the old morss proxy config used.
+    """
+    url = "https://www.forecastock.tw/category/%E5%80%8B%E8%82%A1%E5%A0%B1%E5%91%8A"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+        ),
+        "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+    }
+    try:
+        async with httpx.AsyncClient(
+            timeout=DEFAULT_TIMEOUT, headers=headers, follow_redirects=True, verify=False
+        ) as cli:
+            r = await cli.get(url)
+            if r.status_code != 200:
+                logger.warning("Forecastock returned status %d", r.status_code)
+                return []
+        soup = BeautifulSoup(r.text, "html.parser")
+        articles = []
+        for a in soup.select("a.articleListItem__link")[:DEFAULT_LIMIT]:
+            href = a.get("href", "")
+            title = a.get_text(strip=True)
+            # Titles are prefixed with 前往 on this site; strip it.
+            if title.startswith("前往"):
+                title = title[2:]
+            if not href or not title:
+                continue
+            full = href if href.startswith("http") else f"https://www.forecastock.tw{href}"
+            articles.append(_make_article(title, "Forecastock", "", full, ""))
+        return articles
+    except Exception as e:
+        logger.warning("Forecastock fetch failed: %s", e)
+        return []
+
+
+def _cffi_get(url: str, params: dict | None = None):
+    """Blocking curl_cffi GET with Chrome TLS fingerprint. Returns response or None."""
+    if cffi_requests is None:
+        logger.warning("curl_cffi not installed; cannot bypass Cloudflare for %s", url)
+        return None
+    return cffi_requests.get(
+        url, params=params, impersonate=CFFI_IMPERSONATE, timeout=DEFAULT_TIMEOUT
+    )
+
+
+async def _fetch_macromicro(client: httpx.AsyncClient) -> list[dict]:
+    """MacroMicro RSS behind Cloudflare — fetch via curl_cffi TLS impersonation."""
+    url = "https://www.macromicro.me/rss"
+    try:
+        r = await asyncio.to_thread(_cffi_get, url)
+        if r is None or r.status_code != 200:
+            logger.warning("MacroMicro returned status %s", getattr(r, "status_code", "N/A"))
+            return []
+        return _parse_feed_text(r.text, "MacroMicro")
+    except Exception as e:
+        logger.warning("MacroMicro fetch failed: %s", e)
+        return []
+
+
+async def _fetch_fintastic(client: httpx.AsyncClient) -> list[dict]:
+    """Fintastic WordPress JSON API. A full browser UA is enough to pass its
+    Cloudflare rule (curl_cffi's TLS fingerprint is actually blocked here)."""
+    url = "https://fintastic.trading/wp-json/wp/v2/posts"
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "application/json",
+        "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
+    }
+    try:
+        async with httpx.AsyncClient(
+            timeout=DEFAULT_TIMEOUT, headers=headers, follow_redirects=True, verify=False
+        ) as cli:
+            r = await cli.get(url, params={"per_page": DEFAULT_LIMIT})
+            if r.status_code != 200:
+                logger.warning("Fintastic returned status %d", r.status_code)
+                return []
+            posts = r.json()
+        articles = []
+        for post in posts[:DEFAULT_LIMIT]:
+            if not isinstance(post, dict):
+                continue
+            title = (post.get("title") or {}).get("rendered", "")
+            link = post.get("link", "")
+            date = post.get("date", "")
+            excerpt = (post.get("excerpt") or {}).get("rendered", "")
+            # Strip HTML tags from WordPress excerpt
+            if excerpt:
+                excerpt = BeautifulSoup(excerpt, "html.parser").get_text(strip=True)
+            if title and link:
+                articles.append(_make_article(title, "Fintastic", date, link, excerpt))
+        return articles
+    except Exception as e:
+        logger.warning("Fintastic fetch failed: %s", e)
+        return []
 
 
 # --- Dispatch ---
@@ -331,26 +593,33 @@ async def _dispatch_source(source: dict, client: httpx.AsyncClient) -> list[dict
     elif stype == "json":
         if name == "CNYES":
             return await _fetch_cnyes(client)
-        elif name == "UAnalyze":
-            return await _fetch_uanalyze(client)
-        elif name == "Fugle":
-            return await _fetch_fugle_posts(client)
-        elif name == "FinGuider":
-            return await _fetch_finguider(client)
-        elif name == "SinoTrade":
-            return await _fetch_sinotrade(client)
-        elif name == "Pocket學堂":
-            return await _fetch_pocket(client)
-        else:
-            logger.warning("Unknown JSON source: %s", name)
-            return []
+        logger.warning("Unknown JSON source: %s", name)
+        return []
+    elif stype == "udn":
+        return await _fetch_udn(client)
+    elif stype == "uanalyze":
+        return await _fetch_uanalyze(client)
+    elif stype == "fugle":
+        return await _fetch_fugle(client)
     elif stype == "vocus":
         return await _fetch_vocus(client)
+    elif stype == "finguider":
+        return await _fetch_finguider(client)
+    elif stype == "sinotrade":
+        return await _fetch_sinotrade(client)
+    elif stype == "pocket":
+        return await _fetch_pocket(client)
+    elif stype == "forecastock":
+        return await _fetch_forecastock(client)
+    elif stype == "macromicro":
+        return await _fetch_macromicro(client)
+    elif stype == "fintastic":
+        return await _fetch_fintastic(client)
     elif stype == "static":
         return await _fetch_static()
-    else:
-        logger.warning("Unknown source type: %s for %s", stype, name)
-        return []
+
+    logger.warning("Unknown source type: %s for %s", stype, name)
+    return []
 
 
 # --- Deduplication and Sorting ---
@@ -390,7 +659,14 @@ async def latest() -> dict:
     """
     headers = {"User-Agent": USER_AGENT}
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, headers=headers, follow_redirects=True) as client:
-        tasks = [_dispatch_source(source, client) for source in SOURCES]
+        # MoneyDJ needs verify=False, dispatched via type "rss" name "MoneyDJ" →
+        # route it to its dedicated fetcher instead.
+        tasks = []
+        for source in SOURCES:
+            if source["name"] == "MoneyDJ":
+                tasks.append(_fetch_moneydj(client))
+            else:
+                tasks.append(_dispatch_source(source, client))
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
     all_articles: list[dict] = []
@@ -448,7 +724,6 @@ if __name__ == "__main__":
                 pass
         result = asyncio.run(fetch(symbol, limit))
     else:
-        # No symbol, no --all → latest with default limit
         limit = DEFAULT_LIMIT
         if "--limit" in args:
             try:

@@ -9,6 +9,7 @@ pandas==2.2.3
 feedparser==6.0.11
 beautifulsoup4==4.12.3
 PyMuPDF==1.24.14
+curl_cffi==0.16.1
 
 # dev / test
 pytest==8.3.3
