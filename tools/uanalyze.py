@@ -286,6 +286,147 @@ async def analyze(symbol: str, prompt: str = DEFAULT_PROMPT) -> dict:
     return await get_completion(symbol, prompt)
 
 
+def _latest_periods(data_map: dict, n: int) -> list[tuple[str, float]]:
+    """Sort a {period: value} dict by period key (ascending) and take the last n.
+
+    Periods are strings like '2025Q3' or '07' — lexical sort matches chronology
+    for these fixed-width formats. Returns [(period, value), ...] newest-last.
+    """
+    if not isinstance(data_map, dict) or not data_map:
+        return []
+    items = sorted(data_map.items(), key=lambda kv: kv[0])
+    return items[-n:]
+
+
+async def fetch_eps_consensus(symbol: str, recent: int = 4) -> dict:
+    """A3 法人共識：單季 EPS 實際 vs 法人預估（cronjob）+ 月營收共識（gidp）。
+
+    純資料函式（不呼叫 AI，用 async httpx）。兩段各自 best-effort：任一失敗/空
+    不影響另一段。回摘要 dict（只取最新幾期），兩段都空回 error dict。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {"error": "請輸入股票代號"}
+    if not await _auth.ensure_token():
+        return {"error": "UAnalyze 登入失敗（請確認 UANALYZE_EMAIL / UANALYZE_PASSWORD）"}
+
+    result: dict = {"symbol": symbol}
+
+    # --- 單季 EPS 追蹤（cronjob domain，cookie 認證）---
+    eps_summary: dict = {}
+    try:
+        cookies, headers = _auth.cookie_context()
+        url = f"{CRONJOB_BASE_URL}/data_fetch/api/EPSTrackingActualVSForecastModule/{symbol}"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(url, cookies=cookies, headers=headers)
+        if r.status_code == 200:
+            rows = (r.json().get("data") or {}).get("data") or {}
+            # rows is a dict keyed by uaXXXXX_cp; match by ChineseAccount label.
+            for row in rows.values() if isinstance(rows, dict) else []:
+                if not isinstance(row, dict):
+                    continue
+                label = row.get("ChineseAccount", "")
+                data_map = row.get("Data", {})
+                if "實際EPS" in label:
+                    eps_summary["實際EPS"] = [
+                        {"period": p, "value": v} for p, v in _latest_periods(data_map, recent)
+                    ]
+                elif "法人共識" in label:
+                    eps_summary["法人共識預估EPS"] = [
+                        {"period": p, "value": v} for p, v in _latest_periods(data_map, recent)
+                    ]
+    except Exception as e:
+        logger.warning("fetch_eps_consensus EPS section failed for %s: %s", symbol, e)
+
+    # --- 月營收共識（gidp domain，GIDP token）---
+    rev_summary: dict = {}
+    try:
+        headers = _auth.gidp_headers()
+        url = f"{GIDP_BASE_URL}/data_fetch/api/MonthlyRevenueTrackingConcensuslModule/{symbol}"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(url, headers=headers, params={"country": "TW"})
+        if r.status_code == 200:
+            rows = (r.json().get("data") or {}).get("data") or {}
+            for row in rows.values() if isinstance(rows, dict) else []:
+                if not isinstance(row, dict):
+                    continue
+                label = row.get("ChineseAccount", "")
+                data_map = row.get("Data", {})
+                if "法人共識" in label:
+                    rev_summary["法人共識估計月營收"] = [
+                        {"month": p, "value": v} for p, v in _latest_periods(data_map, recent)
+                    ]
+                elif "累計今年月營收" in label:
+                    rev_summary["累計今年月營收"] = [
+                        {"month": p, "value": v} for p, v in _latest_periods(data_map, recent)
+                    ]
+                elif "超法人預期" in label:
+                    rev_summary["累計營收超法人預期(%)"] = [
+                        {"month": p, "value": v} for p, v in _latest_periods(data_map, recent)
+                    ]
+    except Exception as e:
+        logger.warning("fetch_eps_consensus revenue section failed for %s: %s", symbol, e)
+
+    if not eps_summary and not rev_summary:
+        return {"error": f"查無 {symbol} 的法人共識資料"}
+
+    if eps_summary:
+        result["eps"] = eps_summary
+    if rev_summary:
+        result["revenue"] = rev_summary
+    return result
+
+
+async def fetch_per_share_metrics(symbol: str, years: int = 5) -> dict:
+    """A4 財務指標：每股自由現金流/EPS/EBITDA/ROE/ROIC/股利等（cronjob）。
+
+    純資料函式（不呼叫 AI，用 async httpx）。來源是多年份時間序列，每列一個
+    指標（row_title_left）+ 各年份欄位（D2025...）。只取最新 `years` 年，回摘要。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {"error": "請輸入股票代號"}
+    if not await _auth.ensure_token():
+        return {"error": "UAnalyze 登入失敗（請確認 UANALYZE_EMAIL / UANALYZE_PASSWORD）"}
+
+    try:
+        cookies, headers = _auth.cookie_context()
+        url = f"{CRONJOB_BASE_URL}/data_fetch/api/PerShareValueForValuationModel/{symbol}"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(url, cookies=cookies, headers=headers)
+    except Exception as e:
+        logger.warning("fetch_per_share_metrics failed for %s: %s", symbol, e)
+        return {"error": f"查無 {symbol} 的財務指標資料"}
+
+    if r.status_code != 200:
+        return {"error": f"查無 {symbol} 的財務指標資料"}
+
+    rows = (r.json().get("data") or {}).get("data") or []
+    if not isinstance(rows, list) or not rows:
+        return {"error": f"查無 {symbol} 的財務指標資料"}
+
+    metrics: list[dict] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = row.get("row_title_left", "")
+        if not name:
+            continue
+        # Year columns look like 'D2025'; sort descending, take newest `years`.
+        year_cols = sorted(
+            (k for k in row if k.startswith("D") and k[1:].isdigit()),
+            reverse=True,
+        )[:years]
+        values = {col[1:]: row[col] for col in year_cols}
+        if values:
+            metrics.append({"name": name, "values": values})
+
+    if not metrics:
+        return {"error": f"查無 {symbol} 的財務指標資料"}
+
+    return {"symbol": symbol, "metrics": metrics}
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     if not args:
@@ -314,6 +455,28 @@ if __name__ == "__main__":
             except (IndexError, ValueError):
                 pass
         result = asyncio.run(list_latest_reports(limit))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
+
+    if args[0] == "--consensus":
+        # A3 法人共識摘要（Agent 用）。
+        try:
+            sym = args[1]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --consensus <代號>"}, ensure_ascii=False))
+            sys.exit(1)
+        result = asyncio.run(fetch_eps_consensus(sym))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
+
+    if args[0] == "--pershare":
+        # A4 財務指標摘要（Agent 用）。
+        try:
+            sym = args[1]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --pershare <代號>"}, ensure_ascii=False))
+            sys.exit(1)
+        result = asyncio.run(fetch_per_share_metrics(sym))
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(1 if "error" in result else 0)
 

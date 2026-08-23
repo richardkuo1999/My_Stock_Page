@@ -329,3 +329,156 @@ async def test_uanalyze_callback_invalid_data(context):
 
     await uanalyze_callback(update, context)
     assert "無效" in update.callback_query.edit_message_text.call_args[0][0]
+
+
+# --- /data command + callback tests (Ticket 04) ---
+
+
+@pytest.mark.asyncio
+async def test_data_command_shows_menu(context):
+    """/data <代號> replies with an inline keyboard menu."""
+    from bot.handlers import data_command
+
+    update = _make_command_update("/data 2330")
+    await data_command(update, context)
+    kwargs = update.message.reply_text.call_args.kwargs
+    assert "reply_markup" in kwargs
+    assert "2330" in update.message.reply_text.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_data_command_no_arg(context):
+    from bot.handlers import data_command
+
+    update = _make_command_update("/data")
+    await data_command(update, context)
+    assert "用法" in update.message.reply_text.call_args[0][0]
+
+
+def test_data_menu_keyboard_options():
+    """Menu keyboard has consensus + pershare buttons with data: callbacks."""
+    from bot.handlers import _data_menu_keyboard
+
+    kb = _data_menu_keyboard("2330").inline_keyboard
+    flat = [btn for row in kb for btn in row]
+    callbacks = {btn.callback_data for btn in flat}
+    assert "data:2330:consensus" in callbacks
+    assert "data:2330:pershare" in callbacks
+
+
+@pytest.mark.asyncio
+async def test_data_callback_consensus(context):
+    """Pressing 法人共識 calls fetch_eps_consensus and renders text."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:2330:consensus"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    fake = {
+        "symbol": "2330",
+        "eps": {"實際EPS": [{"period": "2026Q1", "value": 22.08}]},
+        "revenue": {"法人共識估計月營收": [{"month": "12", "value": 5421984179}]},
+    }
+    with patch("tools.uanalyze.fetch_eps_consensus", new=AsyncMock(return_value=fake)) as mock_fn:
+        await data_callback(update, context)
+
+    mock_fn.assert_awaited_once_with("2330")
+    assert any("法人共識" in c.args[0] for c in update.callback_query.edit_message_text.call_args_list)
+    assert any("22.08" in c.args[0] for c in update.callback_query.edit_message_text.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_data_callback_pershare(context):
+    """Pressing 財務指標 calls fetch_per_share_metrics and renders text."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:2330:pershare"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    fake = {
+        "symbol": "2330",
+        "metrics": [{"name": "每股EPS(元)", "values": {"2025": 66.26, "2024": 45.25}}],
+    }
+    with patch("tools.uanalyze.fetch_per_share_metrics", new=AsyncMock(return_value=fake)) as mock_fn:
+        await data_callback(update, context)
+
+    mock_fn.assert_awaited_once_with("2330")
+    assert any("每股EPS" in c.args[0] for c in update.callback_query.edit_message_text.call_args_list)
+    assert any("66.26" in c.args[0] for c in update.callback_query.edit_message_text.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_data_callback_has_back_button(context):
+    """The result carries a back button returning to the menu."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:2330:consensus"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    fake = {"symbol": "2330", "eps": {"實際EPS": [{"period": "2026Q1", "value": 22.08}]}}
+    with patch("tools.uanalyze.fetch_eps_consensus", new=AsyncMock(return_value=fake)):
+        await data_callback(update, context)
+
+    kwargs = update.callback_query.edit_message_text.call_args.kwargs
+    assert "reply_markup" in kwargs
+    kb = kwargs["reply_markup"].inline_keyboard
+    assert kb[0][0].callback_data == "data:back:2330"
+
+
+@pytest.mark.asyncio
+async def test_data_back_reopens_menu(context):
+    """Pressing back re-shows the data menu for that symbol."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:back:2330"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    await data_callback(update, context)
+
+    kwargs = update.callback_query.edit_message_text.call_args.kwargs
+    assert "reply_markup" in kwargs
+    assert "2330" in update.callback_query.edit_message_text.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_data_callback_error_dict(context):
+    """An error dict from the fetch → friendly message, no back button."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:9999:consensus"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    with patch("tools.uanalyze.fetch_eps_consensus", new=AsyncMock(return_value={"error": "查無 9999 的法人共識資料"})):
+        await data_callback(update, context)
+
+    assert any("查無" in c.args[0] for c in update.callback_query.edit_message_text.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_data_callback_invalid_key(context):
+    """Unknown key → invalid option message."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:2330:bogus"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    await data_callback(update, context)
+    assert "無效" in update.callback_query.edit_message_text.call_args[0][0]

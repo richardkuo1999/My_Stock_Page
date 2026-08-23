@@ -13,6 +13,8 @@ from tools.uanalyze import (
     _auth,
     _request_with_auth,
     analyze,
+    fetch_eps_consensus,
+    fetch_per_share_metrics,
     get_completion,
     get_reports,
     list_latest_reports,
@@ -493,6 +495,203 @@ async def test_list_latest_reports_failure():
     with patch("httpx.AsyncClient", return_value=mock_client):
         result = await list_latest_reports()
 
+    assert "error" in result
+
+
+# --- fetch_eps_consensus() tests (Ticket 04, A3) ---
+
+
+def _eps_module_payload():
+    """Mimic the real EPSTracking response: data.data keyed by uaXXXXX_cp."""
+    return {
+        "data": {
+            "data": {
+                "ua60286_cp": {
+                    "ChineseAccount": "實際EPS(A)",
+                    "Data": {"2025Q1": 13.95, "2025Q2": 15.36, "2025Q3": 17.44, "2025Q4": 19.51, "2026Q1": 22.08},
+                },
+                "ua60285_cp": {
+                    "ChineseAccount": "法人共識(F)",
+                    "Data": {"2026Q2": 25.44, "2026Q3": 28.55, "2026Q4": 30.94, "2027Q1": 32.01, "2027Q2": 34.45},
+                },
+            }
+        }
+    }
+
+
+def _rev_module_payload():
+    """Mimic the real MonthlyRevenueTrackingConcensusl response."""
+    return {
+        "data": {
+            "data": {
+                "ua70274_cp": {
+                    "ChineseAccount": "法人共識估計值",
+                    "Data": {"09": 3850857083, "10": 4404409353, "11": 4926115010, "12": 5421984179},
+                },
+                "ua70248_cp": {
+                    "ChineseAccount": "累計今年月營收",
+                    "Data": {"05": 1961803721, "06": 2404483690, "07": 2872064238},
+                },
+            }
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_eps_consensus_success():
+    """Both domains return data → summary with eps + revenue (latest few only)."""
+    _auth.access_token = "tok"
+    _auth.refresh_token = "ref"
+
+    eps_resp = _make_httpx_response(200, _eps_module_payload())
+    rev_resp = _make_httpx_response(200, _rev_module_payload())
+
+    # fetch_eps_consensus opens two AsyncClient contexts (cronjob, then gidp).
+    eps_client = _mock_async_client(eps_resp)
+    rev_client = _mock_async_client(rev_resp)
+    clients = iter([eps_client, rev_client])
+
+    with patch("httpx.AsyncClient", side_effect=lambda **kwargs: next(clients)):
+        result = await fetch_eps_consensus("2330", recent=4)
+
+    assert result["symbol"] == "2330"
+    # Only the latest 4 quarters kept.
+    assert len(result["eps"]["實際EPS"]) == 4
+    assert result["eps"]["實際EPS"][-1] == {"period": "2026Q1", "value": 22.08}
+    assert result["eps"]["法人共識預估EPS"][-1] == {"period": "2027Q2", "value": 34.45}
+    assert result["revenue"]["法人共識估計月營收"][-1]["month"] == "12"
+    assert len(result["revenue"]["累計今年月營收"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_fetch_eps_consensus_partial_gidp_fails():
+    """cronjob ok, gidp fails → still return the eps section (best-effort)."""
+    _auth.access_token = "tok"
+    _auth.refresh_token = "ref"
+
+    eps_resp = _make_httpx_response(200, _eps_module_payload())
+    rev_resp = _make_httpx_response(500, {"error": "boom"})
+    eps_client = _mock_async_client(eps_resp)
+    rev_client = _mock_async_client(rev_resp)
+    clients = iter([eps_client, rev_client])
+
+    with patch("httpx.AsyncClient", side_effect=lambda **kwargs: next(clients)):
+        result = await fetch_eps_consensus("2330")
+
+    assert "eps" in result
+    assert "revenue" not in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_eps_consensus_both_empty():
+    """Both domains empty → error dict."""
+    _auth.access_token = "tok"
+    _auth.refresh_token = "ref"
+
+    empty_resp = _make_httpx_response(200, {"data": {"data": {}}})
+    c1 = _mock_async_client(empty_resp)
+    c2 = _mock_async_client(empty_resp)
+    clients = iter([c1, c2])
+
+    with patch("httpx.AsyncClient", side_effect=lambda **kwargs: next(clients)):
+        result = await fetch_eps_consensus("9999")
+
+    assert "error" in result
+    assert "9999" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_eps_consensus_no_token():
+    """Login fails → error dict, no requests made."""
+    with patch.dict("os.environ", {"UANALYZE_EMAIL": "", "UANALYZE_PASSWORD": ""}):
+        result = await fetch_eps_consensus("2330")
+    assert "error" in result
+
+
+# --- fetch_per_share_metrics() tests (Ticket 04, A4) ---
+
+
+def _pershare_payload():
+    """Mimic the real PerShareValueForValuationModel response: data.data is a list."""
+    return {
+        "data": {
+            "data": [
+                {
+                    "row_title_left": "每股自由現金流(元)",
+                    "D2025": 43.61, "D2024": 37.08, "D2023": 12.95, "D2022": 16.18,
+                    "D2021": 10.64, "D2020": 12.22, "D2019": 6.03,
+                },
+                {
+                    "row_title_left": "每股EPS(元)",
+                    "D2025": 66.26, "D2024": 45.25, "D2023": 32.34, "D2022": 39.2,
+                    "D2021": 23.01, "D2020": 19.97,
+                },
+                {
+                    "row_title_left": "年度ROE",
+                    "D2025": 35.39, "D2024": 30.29, "D2023": 26.18,
+                },
+            ]
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_per_share_metrics_success():
+    """List parsed; only the latest N years kept per metric."""
+    _auth.access_token = "tok"
+    _auth.refresh_token = "ref"
+
+    resp = _make_httpx_response(200, _pershare_payload())
+    mock_client = _mock_async_client(resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await fetch_per_share_metrics("2330", years=4)
+
+    assert result["symbol"] == "2330"
+    metrics = {m["name"]: m["values"] for m in result["metrics"]}
+    # Free cash flow row has 7 years but only latest 4 kept.
+    assert list(metrics["每股自由現金流(元)"].keys()) == ["2025", "2024", "2023", "2022"]
+    assert metrics["每股自由現金流(元)"]["2025"] == 43.61
+    # ROE row only has 3 years → all 3 kept.
+    assert list(metrics["年度ROE"].keys()) == ["2025", "2024", "2023"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_per_share_metrics_empty():
+    """Empty list → error dict."""
+    _auth.access_token = "tok"
+    _auth.refresh_token = "ref"
+
+    resp = _make_httpx_response(200, {"data": {"data": []}})
+    mock_client = _mock_async_client(resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await fetch_per_share_metrics("9999")
+
+    assert "error" in result
+    assert "9999" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_per_share_metrics_http_error():
+    """Non-200 → error dict."""
+    _auth.access_token = "tok"
+    _auth.refresh_token = "ref"
+
+    resp = _make_httpx_response(500, {"error": "boom"})
+    mock_client = _mock_async_client(resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await fetch_per_share_metrics("2330")
+
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_per_share_metrics_no_token():
+    """Login fails → error dict."""
+    with patch.dict("os.environ", {"UANALYZE_EMAIL": "", "UANALYZE_PASSWORD": ""}):
+        result = await fetch_per_share_metrics("2330")
     assert "error" in result
 
 

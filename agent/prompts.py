@@ -53,6 +53,14 @@ SYSTEM_PROMPT = """你是一個台股投資輔助助理，透過 Telegram 與使
    再把各面向結果「彙整、去重、綜合」成一份結構清楚的繁體中文報告
    （用標題分段），而不是只跑單一面向。依問題挑選最相關的 3-6 個面向即可。
 
+8. UAnalyze data 工具（純數據，非 AI 生成，回摘要 JSON）
+   `python tools/uanalyze.py --consensus <股票代號>`（法人共識：單季 EPS 實際 vs
+   法人預估 + 月營收共識摘要）
+   `python tools/uanalyze.py --pershare <股票代號>`（近年每股財務指標摘要：每股自由
+   現金流 / EPS / EBITDA / 現金股息 / 年度 ROE / ROIC 等）
+   例：`python tools/uanalyze.py --consensus 2330`、`python tools/uanalyze.py --pershare 2330`
+   回傳為濃縮摘要 JSON（只取最新幾期 / 近年），適合直接引用具體數字。
+
 5. Threads 貼文（追蹤帳號）
    `python tools/fetch_threads.py --check-new`
 

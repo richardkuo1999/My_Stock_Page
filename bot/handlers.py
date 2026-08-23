@@ -24,6 +24,7 @@ HELP_TEXT = (
     "/p `<代號>` — 即時股價，例 `/p 2330`\n"
     "/k `<代號> [天數]` — K 線圖，例 `/k 2330 60`\n"
     "/ua `<代號>` — UAnalyze 估值分析，例 `/ua 2330`\n"
+    "/data `<代號>` — 法人共識/財務指標選單，例 `/data 2330`\n"
     "/news — 立即抓最新新聞\n"
     "/threads — 立即抓 Threads 貼文\n\n"
     "*問 AI（自然語言，會自動組合工具）*\n"
@@ -99,6 +100,14 @@ UA_PROMPTS: list[tuple[str, str]] = [
         "庫存循環",
         "描述該公司的庫存情形，並在每一段敘述之後標註資料來源日期。我想更加了解該公司自身的庫存水位以及終端需求或客戶的庫存水位，接著想利用公司的接單情況來預判未來庫存循環方向",
     ),
+]
+
+
+# /data 選單。每項 (按鈕標籤, callback key)。key 對應 tools/uanalyze.py 的資料函式。
+# 預留結構：05/06 之後可再加 supply / order / dcf 等選項。
+DATA_OPTIONS: list[tuple[str, str]] = [
+    ("法人共識", "consensus"),
+    ("財務指標", "pershare"),
 ]
 
 
@@ -272,6 +281,137 @@ async def uanalyze_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await query.edit_message_text(text[:4096], reply_markup=back)
 
 
+def _data_menu_keyboard(symbol: str) -> InlineKeyboardMarkup:
+    """Build the /data option menu for a symbol (2 per row).
+
+    callback_data format: data:{symbol}:{key} where key ∈ {consensus, pershare}.
+    Structure leaves room for later tickets to append supply/order/dcf options.
+    """
+    buttons = [
+        InlineKeyboardButton(label, callback_data=f"data:{symbol}:{key}")
+        for label, key in DATA_OPTIONS
+    ]
+    rows = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
+    return InlineKeyboardMarkup(rows)
+
+
+async def data_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /data <代號> — show a data-menu; the actual fetch runs when the
+    user picks an option (see data_callback)."""
+    symbol = _command_arg(update)
+    if not symbol:
+        await update.message.reply_text("用法：/data <股票代號>，例 /data 2330")
+        return
+
+    symbol = symbol.strip().upper()
+    await update.message.reply_text(
+        f"📑 要看 {symbol} 的哪類資料？請選擇：",
+        reply_markup=_data_menu_keyboard(symbol),
+    )
+
+
+def _format_consensus(symbol: str, r: dict) -> str:
+    """Condense the fetch_eps_consensus summary into readable Chinese text."""
+    lines = [f"📑 {symbol} · 法人共識", "=" * 20]
+
+    eps = r.get("eps") or {}
+    if eps:
+        lines.append("【單季 EPS】")
+        actual = eps.get("實際EPS") or []
+        if actual:
+            parts = [f"{x['period']} {x['value']}" for x in actual]
+            lines.append("實際：" + "、".join(parts))
+        forecast = eps.get("法人共識預估EPS") or []
+        if forecast:
+            parts = [f"{x['period']} {x['value']}" for x in forecast]
+            lines.append("法人共識預估：" + "、".join(parts))
+
+    rev = r.get("revenue") or {}
+    if rev:
+        lines.append("")
+        lines.append("【月營收共識（千元）】")
+        est = rev.get("法人共識估計月營收") or []
+        if est:
+            parts = [f"{x['month']}月 {x['value']:,}" for x in est]
+            lines.append("法人共識估計：" + "、".join(parts))
+        ytd = rev.get("累計今年月營收") or []
+        if ytd:
+            parts = [f"{x['month']}月 {x['value']:,}" for x in ytd]
+            lines.append("累計實際：" + "、".join(parts))
+        exceed = rev.get("累計營收超法人預期(%)") or []
+        if exceed:
+            parts = [f"{x['month']}月 {x['value']}%" for x in exceed]
+            lines.append("超法人預期：" + "、".join(parts))
+
+    return "\n".join(lines)
+
+
+def _format_pershare(symbol: str, r: dict) -> str:
+    """Condense the fetch_per_share_metrics summary into readable Chinese text."""
+    lines = [f"📑 {symbol} · 財務指標（近年）", "=" * 20]
+    for m in r.get("metrics") or []:
+        name = m.get("name", "")
+        values = m.get("values") or {}
+        # values dict is newest-first (D2025, D2024...).
+        parts = [f"{year} {val}" for year, val in values.items()]
+        lines.append(f"{name}：" + "、".join(parts))
+    return "\n".join(lines)
+
+
+async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle a /data menu button press: fetch the chosen data set, or return
+    to the menu when the back button is pressed."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+
+    parts = query.data.split(":", 2)
+    # Back button: data:back:<symbol> → re-show the menu.
+    if len(parts) == 3 and parts[1] == "back":
+        symbol = parts[2]
+        await query.edit_message_text(
+            f"📑 要看 {symbol} 的哪類資料？請選擇：",
+            reply_markup=_data_menu_keyboard(symbol),
+        )
+        return
+
+    if len(parts) != 3:
+        await query.edit_message_text("⚠️ 無效的選項")
+        return
+    _, symbol, key = parts
+
+    labels = {k: label for label, k in DATA_OPTIONS}
+    if key not in labels:
+        await query.edit_message_text("⚠️ 無效的選項")
+        return
+
+    await query.edit_message_text(f"📑 正在查詢 {symbol}（{labels[key]}）…")
+
+    from tools.uanalyze import fetch_eps_consensus, fetch_per_share_metrics
+
+    try:
+        if key == "consensus":
+            r = await fetch_eps_consensus(symbol)
+        else:
+            r = await fetch_per_share_metrics(symbol)
+    except Exception as e:
+        logger.error("/data callback failed for %s (%s): %s", symbol, key, e)
+        await query.edit_message_text(f"⚠️ 查詢失敗：{e}")
+        return
+
+    if "error" in r:
+        await query.edit_message_text(f"😕 {r['error']}")
+        return
+
+    text = _format_consensus(symbol, r) if key == "consensus" else _format_pershare(symbol, r)
+    back = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("⬅️ 選其他資料", callback_data=f"data:back:{symbol}")]]
+    )
+    # Telegram message hard limit is 4096 chars.
+    await query.edit_message_text(text[:4096], reply_markup=back)
+
+
 async def mention(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Detect @bot_username mentions and route to Agent."""
     if not update.message or not update.message.entities:
@@ -321,6 +461,10 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("ua", uanalyze_command), group=0)
     application.add_handler(
         CallbackQueryHandler(uanalyze_callback, pattern=r"^ua:"), group=0
+    )
+    application.add_handler(CommandHandler("data", data_command), group=0)
+    application.add_handler(
+        CallbackQueryHandler(data_callback, pattern=r"^data:"), group=0
     )
     application.add_handler(
         MessageHandler(filters.Entity("mention"), mention), group=0
