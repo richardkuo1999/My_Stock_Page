@@ -4,5 +4,6 @@
   "news_schedule_interval_min": 60,
   "threads_schedule_interval_min": 15,
   "uanalyze_schedule_interval_min": 30,
+  "log_audit_interval_min": 360,
   "threads_users": []
 }

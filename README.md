@@ -43,6 +43,7 @@ THREADS_ACCESS_TOKEN=     # Meta Threads 官方 API long-lived token
   "news_schedule_interval_min": 60,
   "threads_schedule_interval_min": 15,
   "uanalyze_schedule_interval_min": 30,
+  "log_audit_interval_min": 360,
   "threads_users": []
 }
 ```
@@ -103,6 +104,22 @@ Agent 這一輪**實際呼叫的工具序列**（`run_command`/`find_by_name`/`v
   usage、conversation_id）會 append 一行 JSON 到 `data/logs/agent_conversations.jsonl`
   （已被 `.gitignore` 排除；寫入為 best-effort，失敗只記 log 不影響回覆）。
 
+### 定時 AI Log 稽核（`bot/log_audit.py`）
+
+每隔 `log_audit_interval_min` 分鐘（預設 360 = 6 小時）跑一次排程 job，把**上次稽核後新增**
+的 log 交給 Agent（AI）判讀，發現問題就通知 `TELEGRAM_ADMIN_CHAT_ID`：
+
+- **執行問題**：`data/logs/bot.log` 的錯誤、例外堆疊、重複失敗、連線異常。
+- **對話異常 / 惡意使用**：`agent_conversations.jsonl` 中的 prompt injection 嘗試、誘導 Agent
+  執行破壞性或與台股無關的系統指令、濫用/探測系統等。
+
+AI 只需回傳 `OK` 或 `ISSUES` + 條列問題；判為 `ISSUES` 才發告警。稽核游標存在
+`data/logs/audit_state.json`（bot.log offset + 對話行數），確保每次只看新內容、不重複稽核；
+AI 呼叫失敗時不推進游標，下一輪會重試同一區間。
+
+> 🔒 **prompt-injection 防護**：稽核 prompt 明確要求 AI 把 BEGIN/END 標記間的所有 log 內容
+> 當「待稽核資料」而非指令，即使 log 中出現「忽略先前指示」等字樣也不遵從。
+
 ## 工具（獨立 CLI）
 
 每個工具都能單獨在命令列執行，回傳 JSON。所有工具皆為純粹確定性程式，**本身不呼叫 AI**
@@ -162,6 +179,7 @@ CNYES、MoneyDJ、Yahoo股市、UDN財經、UAnalyze、UAnalyze專欄、Fugle、
 - `stock_names.json` — 代號↔公司名對照表（UAnalyze StockPool 全表 ~12,361 檔，每週刷新，`--set` 手動後援）
 - `stock_names_meta.json` — 對照表刷新時間戳（判斷是否過期需重抓）
 - `logs/agent_conversations.jsonl` — 每次 `@mention` 對話記錄（問題/回覆/工具清單/usage，append-only）
+- `logs/audit_state.json` — Log 稽核游標（已稽核到的 bot.log offset 與對話行數，避免重複稽核）
 - `logs/bot.log` — WARNING 以上日誌（rotation，5MB × 5）
 
 ## 測試

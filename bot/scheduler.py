@@ -459,6 +459,7 @@ def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict, notif
     from datetime import datetime as _dt
 
     from bot.error_notify import run_with_retry
+    from bot.log_audit import log_audit_job
 
     scheduler = AsyncIOScheduler()
 
@@ -477,6 +478,7 @@ def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict, notif
     news_interval = config.get("news_schedule_interval_min", 60)
     threads_interval = config.get("threads_schedule_interval_min", 15)
     uanalyze_interval = config.get("uanalyze_schedule_interval_min", 30)
+    log_audit_interval = config.get("log_audit_interval_min", 360)
 
     if notifier:
         # Wrapped jobs with retry + error notification
@@ -488,6 +490,9 @@ def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict, notif
 
         async def wrapped_uanalyze_job():
             await run_with_retry(uanalyze_push_job, "uanalyze_push", notifier, bot, subscription_manager)
+
+        async def wrapped_log_audit_job():
+            await run_with_retry(log_audit_job, "log_audit", notifier, bot, agent_bridge)
 
         scheduler.add_job(
             wrapped_news_job,
@@ -512,6 +517,14 @@ def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict, notif
             id="uanalyze_push",
             name="UAnalyze Report Push",
             misfire_grace_time=300,
+        )
+        scheduler.add_job(
+            wrapped_log_audit_job,
+            "interval",
+            minutes=log_audit_interval,
+            id="log_audit",
+            name="Log Audit (AI)",
+            misfire_grace_time=600,
         )
     else:
         # Direct jobs (backward compatible, no retry wrapper)
@@ -542,11 +555,21 @@ def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict, notif
             name="UAnalyze Report Push",
             misfire_grace_time=300,
         )
+        scheduler.add_job(
+            log_audit_job,
+            "interval",
+            minutes=log_audit_interval,
+            args=[bot, agent_bridge],
+            id="log_audit",
+            name="Log Audit (AI)",
+            misfire_grace_time=600,
+        )
 
     logger.info(
-        "Scheduler configured: news=%dmin, threads=%dmin, uanalyze=%dmin",
+        "Scheduler configured: news=%dmin, threads=%dmin, uanalyze=%dmin, log_audit=%dmin",
         news_interval,
         threads_interval,
         uanalyze_interval,
+        log_audit_interval,
     )
     return scheduler

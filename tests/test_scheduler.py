@@ -369,11 +369,14 @@ def test_setup_scheduler_default_interval():
 
     scheduler = setup_scheduler(bot, mgr, bridge, {})
     jobs = scheduler.get_jobs()
-    assert len(jobs) == 4  # news + threads + uanalyze + stock_pool_refresh
+    assert len(jobs) == 5  # news + threads + uanalyze + stock_pool_refresh + log_audit
     news_job = next(j for j in jobs if j.id == "news_push")
     # Interval trigger
     trigger = news_job.trigger
     assert trigger.interval == timedelta(minutes=60)
+    # Log audit job registered with default 360-min interval.
+    audit_job = next(j for j in jobs if j.id == "log_audit")
+    assert audit_job.trigger.interval == timedelta(minutes=360)
 
 
 def test_setup_scheduler_custom_interval():
@@ -702,7 +705,8 @@ def test_setup_scheduler_both_jobs():
     assert "threads_push" in job_ids
     assert "uanalyze_push" in job_ids
     assert "stock_pool_refresh" in job_ids
-    assert len(jobs) == 4
+    assert "log_audit" in job_ids
+    assert len(jobs) == 5
 
 
 def test_setup_scheduler_threads_default_interval():
