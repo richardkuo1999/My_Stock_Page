@@ -139,17 +139,18 @@ Google AI Pro 方案不提供 `GEMINI_API_KEY`，SDK 需要此 key 才能執行�
 | `tools/draw_kchart.py` | K 線圖（mplfinance 繪製，回傳圖片路徑） | `python tools/draw_kchart.py 2330 --period 60` |
 | `tools/fetch_threads.py` | 抓追蹤帳號 Threads 貼文 | `python tools/fetch_threads.py --check-new` |
 | `tools/summarize_document.py` | URL/PDF 文件摘要 | `python tools/summarize_document.py https://...` |
-| `tools/lookup_stock_name.py` | 代號↔公司名對照表（純資料讀/寫，自我成長） | `python tools/lookup_stock_name.py 2330` |
+| `tools/lookup_stock_name.py` | 代號↔公司名對照表（純資料讀/寫；主資料為 UAnalyze StockPool 全表） | `python tools/lookup_stock_name.py 2330` |
 
-> **工具不呼叫 AI**：所有工具皆為純粹確定性程式。「查未知代號的公司名」這種智能步驟
-> 由 Agent 負責（讀 `lookup_stock_name.py`，miss 時 Agent 自行判斷再 `--set` 寫回），
-> 維持 `chat_bot → AI → tool → AI → tool` 的協調管線，避免工具反向依賴 Agent。
+> **工具不呼叫 AI**：所有工具皆為純粹確定性程式。對照表主資料由 `lookup_stock_name.py`
+> `--refresh` 從 UAnalyze StockPool 全表拉取灌入（純資料拉取，非 AI）；StockPool 仍未涵蓋
+> 某檔時，才回退給 Agent 判斷公司名再 `--set` 寫回（後援），維持
+> `chat_bot → AI → tool → AI → tool` 的協調管線，避免工具反向依賴 Agent。
 
 ### 個股新聞過濾
 
 台股標題寫公司中文名而非代號。`fetch_news.py <代號>` 從 15 來源新聞池本地過濾出含
-關鍵字（代號 + 對照表補上的公司名）的文章。對照表 `data/stock_names.json` 內建 20 檔
-seed，Agent 遇未知代號寫回後自我成長。
+關鍵字（代號 + 對照表補上的公司名）的文章。對照表 `data/stock_names.json` 主資料為
+UAnalyze StockPool 全台股名對照（~12,361 檔，每週刷新），未命中時 Agent 才 `--set` 補後援。
 
 ### Script 結構範例
 

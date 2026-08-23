@@ -112,7 +112,8 @@ python tools/uanalyze.py --order 2330                      # 訂單能見度（�
 python tools/uanalyze.py --dcf 2330                        # DCF 估值（時間加權動態 DCF，純計算回內在價值/前瞻價值/信心度，非 AI）
 python tools/summarize_document.py https://example.com/x   # URL/PDF 摘要
 python tools/lookup_stock_name.py 2330                     # 查代號→公司名（對照表）
-python tools/lookup_stock_name.py --set 9999 某公司        # 寫回對照表
+python tools/lookup_stock_name.py --set 9999 某公司        # 手動寫回對照表（後援）
+python tools/lookup_stock_name.py --refresh                # 從 UAnalyze StockPool 全表刷新對照表
 ```
 
 ### 個股新聞如何過濾
@@ -121,8 +122,10 @@ python tools/lookup_stock_name.py --set 9999 某公司        # 寫回對照表
 1. 查 `lookup_stock_name.py` 的代號↔名稱對照表，補上公司名當關鍵字；
 2. 從已抓取的 15 來源新聞池，本地過濾出標題/摘要含關鍵字的文章。
 
-對照表（`data/stock_names.json`）內建 20 檔大型股 seed，並會**自我成長**：Agent 遇到
-未知代號時自行判斷公司名，用 `--set` 寫回，下次即命中。工具本身不呼叫 AI。
+對照表（`data/stock_names.json`）主資料來自 **UAnalyze 官方 gidp StockPool 全台股名對照
+（~12,361 檔）**，由 `--refresh` 灌入、之後每週自動刷新（過期才重抓）。首次部署請先跑一次
+`python tools/lookup_stock_name.py --refresh`。`--set` 手動寫回退化為**後援**：只在
+StockPool 未涵蓋某檔時補一筆（刷新不會碾掉手動項），內建 20 檔 seed 為最後後援。工具本身不呼叫 AI。
 
 ## 新聞來源（15 個）
 
@@ -142,7 +145,8 @@ CNYES、MoneyDJ、Yahoo股市、UDN財經、UAnalyze、Fugle、Vocus（特定作
 - `pushed_news.json` — 已推新聞 URL（保留 7 天）
 - `pushed_threads.json` — 已推 Threads ID（保留 3 天）
 - `pushed_uanalyze.json` — 已推 UAnalyze 報告 id（保留 14 天，監控去重用）
-- `stock_names.json` — 代號↔公司名對照表（seed 20 檔，自我成長）
+- `stock_names.json` — 代號↔公司名對照表（UAnalyze StockPool 全表 ~12,361 檔，每週刷新，`--set` 手動後援）
+- `stock_names_meta.json` — 對照表刷新時間戳（判斷是否過期需重抓）
 - `logs/bot.log` — WARNING 以上日誌（rotation，5MB × 5）
 
 ## 測試

@@ -428,11 +428,44 @@ async def uanalyze_push_job(bot, subscription_manager) -> None:
     )
 
 
+async def stock_pool_refresh_job() -> None:
+    """Scheduled job: refresh the stock code→name map from UAnalyze StockPool.
+
+    Non-blocking on startup (runs on the event loop). refresh_pool() is a no-op
+    when the local table is still fresh (<7 days), so the weekly cadence plus the
+    boot-time run keeps the ~12k-entry table current without hammering the API."""
+    from tools.lookup_stock_name import refresh_pool
+
+    logger.info("Stock pool refresh job started")
+    try:
+        count = await refresh_pool()
+        if count:
+            logger.info("Stock pool refreshed: %d entries", count)
+        else:
+            logger.info("Stock pool still fresh or unavailable, kept existing table")
+    except Exception as e:
+        logger.warning("Stock pool refresh failed: %s", e)
+
+
 def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict, notifier=None) -> AsyncIOScheduler:
     """Create and configure the APScheduler with news and threads push jobs."""
+    from datetime import datetime as _dt
+
     from bot.error_notify import run_with_retry
 
     scheduler = AsyncIOScheduler()
+
+    # Stock name pool: refresh weekly, plus a one-shot run shortly after startup
+    # (does NOT block run_polling; refresh_pool is a no-op if the table is fresh).
+    scheduler.add_job(
+        stock_pool_refresh_job,
+        "interval",
+        weeks=1,
+        id="stock_pool_refresh",
+        name="Stock Pool Refresh",
+        misfire_grace_time=3600,
+        next_run_time=_dt.now(),
+    )
 
     news_interval = config.get("news_schedule_interval_min", 60)
     threads_interval = config.get("threads_schedule_interval_min", 15)

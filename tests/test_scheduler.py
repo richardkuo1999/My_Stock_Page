@@ -367,7 +367,7 @@ def test_setup_scheduler_default_interval():
 
     scheduler = setup_scheduler(bot, mgr, bridge, {})
     jobs = scheduler.get_jobs()
-    assert len(jobs) == 3
+    assert len(jobs) == 4  # news + threads + uanalyze + stock_pool_refresh
     news_job = next(j for j in jobs if j.id == "news_push")
     # Interval trigger
     trigger = news_job.trigger
@@ -691,7 +691,8 @@ def test_setup_scheduler_both_jobs():
     assert "news_push" in job_ids
     assert "threads_push" in job_ids
     assert "uanalyze_push" in job_ids
-    assert len(jobs) == 3
+    assert "stock_pool_refresh" in job_ids
+    assert len(jobs) == 4
 
 
 def test_setup_scheduler_threads_default_interval():

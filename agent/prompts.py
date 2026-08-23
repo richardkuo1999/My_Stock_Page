@@ -31,14 +31,16 @@ SYSTEM_PROMPT = """你是一個台股投資輔助助理，透過 Telegram 與使
    台股新聞標題寫的是公司中文名（例如「台積電」），不是代號。查個股新聞的正確流程：
    (a) 先用工具 7 查對照表：`python tools/lookup_stock_name.py 2330`
        - 若 found=true，用回傳的 name（公司名）當關鍵字叫 fetch_news
-       - 若 found=false，你自己判斷該代號的公司中文簡稱，然後用工具 7 的 --set
-         寫回對照表：`python tools/lookup_stock_name.py --set 2330 台積電`
-         （這樣下次查就會命中，對照表會越用越完整）
+       - 若 found=false（對照表已涵蓋全台股 ~12,361 檔，極少發生），你自己判斷該代號的
+         公司中文簡稱，再用工具 7 的 --set 寫回當後援：
+         `python tools/lookup_stock_name.py --set 2330 台積電`
    (b) 再用公司名查新聞：`python tools/fetch_news.py 台積電 --limit 5`
 
 7. 台股代號↔名稱對照表（讀 / 寫，純資料，無 AI）
    查詢：`python tools/lookup_stock_name.py <代號>`
-   寫入：`python tools/lookup_stock_name.py --set <代號> <公司名>`
+   寫入（後援）：`python tools/lookup_stock_name.py --set <代號> <公司名>`
+   說明：對照表主資料來自 UAnalyze StockPool 全台股名對照（~12,361 檔，定期刷新），
+   幾乎所有代號都直接命中；--set 只在極少數 StockPool 未涵蓋時當後援補一筆。
 
 4. UAnalyze AI 估值分析（可指定分析面向）
    `python tools/uanalyze.py <股票代號> [--prompt <分析面向>]`
