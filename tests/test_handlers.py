@@ -356,7 +356,7 @@ async def test_data_command_no_arg(context):
 
 
 def test_data_menu_keyboard_options():
-    """Menu keyboard has all four data buttons with data: callbacks."""
+    """Menu keyboard has all five data buttons with data: callbacks."""
     from bot.handlers import _data_menu_keyboard
 
     kb = _data_menu_keyboard("2330").inline_keyboard
@@ -366,7 +366,8 @@ def test_data_menu_keyboard_options():
     assert "data:2330:pershare" in callbacks
     assert "data:2330:supply" in callbacks
     assert "data:2330:order" in callbacks
-    assert len(flat) == 4
+    assert "data:2330:dcf" in callbacks
+    assert len(flat) == 5
 
 
 @pytest.mark.asyncio
@@ -414,6 +415,56 @@ async def test_data_callback_pershare(context):
     mock_fn.assert_awaited_once_with("2330")
     assert any("每股EPS" in c.args[0] for c in update.callback_query.edit_message_text.call_args_list)
     assert any("66.26" in c.args[0] for c in update.callback_query.edit_message_text.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_data_callback_dcf(context):
+    """Pressing DCF 估值 calls fetch_dcf_valuation and renders key numbers."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:2330:dcf"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    fake = {
+        "symbol": "2330",
+        "每股合理內在價值": 3101.0,
+        "1年後前瞻合理價值": 3363.54,
+        "當前時間加權基期": 91.57,
+        "營收動能": "+0.1%",
+        "2025實際獲利": 66.26,
+        "2026E": 109.58,
+        "最遠預估年份及獲利": "2030E:293.74元",
+        "信心度": "高 (法人完全直連 N=5)",
+    }
+    with patch("tools.uanalyze.fetch_dcf_valuation", new=AsyncMock(return_value=fake)) as mock_fn:
+        await data_callback(update, context)
+
+    mock_fn.assert_awaited_once_with("2330")
+    assert any("DCF" in c.args[0] for c in update.callback_query.edit_message_text.call_args_list)
+    assert any("3101.0" in c.args[0] for c in update.callback_query.edit_message_text.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_data_callback_dcf_eps_insufficient(context):
+    """EPS-insufficient error dict → friendly '資料不足' prompt via error branch."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:2330:dcf"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    fake = {"error": "2330 EPS 資料不足，無法計算 DCF"}
+    with patch("tools.uanalyze.fetch_dcf_valuation", new=AsyncMock(return_value=fake)):
+        await data_callback(update, context)
+
+    assert any(
+        "資料不足" in c.args[0] for c in update.callback_query.edit_message_text.call_args_list
+    )
 
 
 @pytest.mark.asyncio

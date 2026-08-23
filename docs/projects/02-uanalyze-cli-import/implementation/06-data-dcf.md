@@ -4,10 +4,10 @@
 
 **Blocked by:** 04（選單骨架；且 DCF 吃 A3/A4 資料）。
 
-**Status:** ready-for-agent
+**Status:** DONE
 
-- [ ] `/data` 選單多「DCF 估值」，回內在價值/前瞻價值/營收動能/時間加權基期
-- [ ] DCF 計算為純函式，不呼叫 AI；EPS 資料不足時回清楚提示
-- [ ] Agent 支援：CLI 帶參數（如 `--dcf`）回**估值關鍵數字摘要 JSON**；`agent/prompts.py` 補說明
-- [ ] 文件同步：README、ARCHITECTURE、`HELP_TEXT`（若涉及）、map/ticket 狀態
-- [ ] `tests/test_uanalyze.py`：DCF 純計算以「EPS 輸入→內在價值輸出」斷言（最好測的純函式）；全套測試綠
+- [x] `/data` 選單多「DCF 估值」，回內在價值/前瞻價值/營收動能/時間加權基期
+- [x] DCF 計算為純函式，不呼叫 AI；EPS 資料不足時回清楚提示
+- [x] Agent 支援：CLI 帶參數（如 `--dcf`）回**估值關鍵數字摘要 JSON**；`agent/prompts.py` 補說明
+- [x] 文件同步：README、ARCHITECTURE、`HELP_TEXT`（若涉及）、map/ticket 狀態
+- [x] `tests/test_uanalyze.py`：DCF 純計算以「EPS 輸入→內在價值輸出」斷言（最好測的純函式）；全套測試綠

@@ -9,10 +9,13 @@ import pytest
 
 from tools.uanalyze import (
     GIDP_TOKEN,
+    WACC,
     UAnalyzeAuth,
     _auth,
+    _compute_dcf,
     _request_with_auth,
     analyze,
+    fetch_dcf_valuation,
     fetch_eps_consensus,
     fetch_order_visibility,
     fetch_per_share_metrics,
@@ -890,3 +893,188 @@ def test_cli_no_args():
     output = json.loads(proc.stdout)
     assert "error" in output
     assert "用法" in output["error"]
+
+
+# --- DCF valuation tests (Ticket 06, A5) ---
+
+
+def _dcf_eps_payload():
+    """Mimic real EPSRevenueConsensusEstimate: ua50187_cp.Data year->EPS, (f)=forecast.
+
+    Matches the shape verified against the live gidp endpoint for 2330.
+    """
+    return {
+        "data": {
+            "data": {
+                "ua50187_cp": {
+                    "ChineseAccount": "EPS",
+                    "Data": {
+                        "2023": 32.34,
+                        "2024": 45.25,
+                        "2025": 66.26,
+                        "2026(f)": 109.58,
+                        "2027(f)": 151.15,
+                        "2028(f)": 190.09,
+                        "2029(f)": 239.09,
+                        "2030(f)": 293.74,
+                    },
+                }
+            }
+        }
+    }
+
+
+def _dcf_rev_payload():
+    """Mimic real MonthlyRevenueTrackingConcensuslModule: ua70306_cp.Data month->pct."""
+    return {
+        "data": {
+            "data": {
+                "ua70306_cp": {
+                    "ChineseAccount": "累計營收超法人預期(%)",
+                    "Data": {"01": -1.9, "02": -5.1, "03": 0, "04": -1.3, "05": -1.9, "06": 0.1, "07": 0.1},
+                }
+            }
+        }
+    }
+
+
+def _dcf_client_router(eps_payload, rev_payload):
+    """Return an httpx.AsyncClient side_effect that routes by request URL.
+
+    fetch_dcf_valuation opens two AsyncClient contexts concurrently (asyncio.gather);
+    route on the URL passed to get() rather than relying on creation order.
+    """
+    eps_resp = _make_httpx_response(200, eps_payload) if eps_payload is not None else _make_httpx_response(500, {})
+    rev_resp = _make_httpx_response(200, rev_payload) if rev_payload is not None else _make_httpx_response(500, {})
+
+    def _make_get():
+        async def _get(url, *args, **kwargs):
+            if "EPSRevenueConsensusEstimate" in url:
+                return eps_resp
+            return rev_resp
+
+        return _get
+
+    def _factory(**kwargs):
+        client = AsyncMock()
+        client.get = _make_get()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        return client
+
+    return _factory
+
+
+# --- _compute_dcf pure-function tests (the most testable part) ---
+
+
+def test_compute_dcf_regression_base_year_2024():
+    """Regression lock: fixed base_year + fixed 2330-shaped inputs → exact outputs.
+
+    Values computed once from the ported formula and frozen here so any accidental
+    change to the DCF math is caught. base_year injected to avoid time dependence.
+    """
+    eps_hist = {2023: 32.34, 2024: 45.25, 2025: 66.26}
+    eps_fore = {2026: 109.58, 2027: 151.15, 2028: 190.09, 2029: 239.09, 2030: 293.74}
+
+    (
+        base_ttm,
+        v_2025,
+        v_2026E,
+        v_2027E,
+        far_fore_yr,
+        far_fore_eps,
+        confidence_level,
+        intrinsic_val,
+    ) = _compute_dcf(eps_hist, eps_fore, "+0.1%", 0.1, current_month=8, base_year=2025)
+
+    assert v_2025 == 66.26
+    assert v_2026E == 109.58
+    assert v_2027E == 151.15
+    assert far_fore_yr == 2030
+    assert far_fore_eps == 293.74
+    assert confidence_level == "高 (法人完全直連 N=5)"
+    # Frozen regression values (see report; recomputed from the ported formula).
+    assert round(base_ttm, 2) == 91.57
+    assert intrinsic_val == 3101.0
+
+
+def test_compute_dcf_high_growth_discount_confidence():
+    """High-growth, short horizon (N=2, marginal YoY>50%) → confidence discount path."""
+    eps_hist = {2024: 5.0, 2025: 8.0}
+    eps_fore = {2026: 20.0, 2027: 40.0}
+
+    (
+        base_ttm,
+        v_2025,
+        v_2026E,
+        v_2027E,
+        far_fore_yr,
+        far_fore_eps,
+        confidence_level,
+        intrinsic_val,
+    ) = _compute_dcf(eps_hist, eps_fore, "+5.0%", 5.0, current_month=8, base_year=2025)
+
+    # N = far_fore_yr(2027) - base_year(2025) = 2 → triggers the N<=2 discount branch.
+    assert far_fore_yr == 2027
+    assert confidence_level == "⚠️ 低 (N≤2極端外推打折)"
+    # Frozen regression value under the discounted-growth path.
+    assert intrinsic_val == 512.55
+
+
+def test_compute_dcf_no_revenue_multiplier():
+    """rev_gap_pct_str == '-' → rev_multiplier neutral (1.0); base_ttm is pure weighting."""
+    eps_hist = {2024: 10.0, 2025: 10.0}
+    eps_fore = {2026: 10.0, 2027: 10.0, 2028: 10.0}
+
+    base_ttm, *_ = _compute_dcf(eps_hist, eps_fore, "-", 0.0, current_month=8, base_year=2025)
+    # w_hist*v_2025 + w_fore*v_2026 = (5/12)*10 + (7/12)*10 = 10.0 exactly.
+    assert round(base_ttm, 6) == 10.0
+
+
+# --- fetch_dcf_valuation tests (mock httpx) ---
+
+
+@pytest.mark.asyncio
+async def test_fetch_dcf_valuation_success():
+    """Both gidp endpoints return data → key-number summary dict."""
+    _auth.access_token = "tok"
+
+    factory = _dcf_client_router(_dcf_eps_payload(), _dcf_rev_payload())
+    with patch("httpx.AsyncClient", side_effect=factory):
+        result = await fetch_dcf_valuation("2330")
+
+    assert result["symbol"] == "2330"
+    assert "每股合理內在價值" in result
+    assert "1年後前瞻合理價值" in result
+    assert "當前時間加權基期" in result
+    assert result["營收動能"] == "+0.1%"
+    assert result["2025實際獲利"] == 66.26
+    assert result["2026E"] == 109.58
+    assert result["最遠預估年份及獲利"] == "2030E:293.74元"
+    assert "信心度" in result
+    # forward = intrinsic*(1+WACC) - v_2026E; sanity: numeric and consistent.
+    expected_fwd = round(result["每股合理內在價值"] * (1.0 + WACC) - result["2026E"], 2)
+    assert result["1年後前瞻合理價值"] == expected_fwd
+
+
+@pytest.mark.asyncio
+async def test_fetch_dcf_valuation_eps_insufficient():
+    """EPS endpoint empty → clear '資料不足' error, no crash."""
+    _auth.access_token = "tok"
+
+    empty_eps = {"data": {"data": {"ua50187_cp": {"Data": {}}}}}
+    factory = _dcf_client_router(empty_eps, _dcf_rev_payload())
+    with patch("httpx.AsyncClient", side_effect=factory):
+        result = await fetch_dcf_valuation("2330")
+
+    assert "error" in result
+    assert "EPS 資料不足" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_dcf_valuation_no_token():
+    """Login fails → error dict."""
+    with patch.dict("os.environ", {"UANALYZE_EMAIL": "", "UANALYZE_PASSWORD": ""}):
+        result = await fetch_dcf_valuation("2330")
+    assert "error" in result

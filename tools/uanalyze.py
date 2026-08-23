@@ -14,8 +14,10 @@
 import asyncio
 import json
 import logging
+import math
 import os
 import sys
+from datetime import datetime
 
 import httpx
 from dotenv import load_dotenv
@@ -33,6 +35,17 @@ GIDP_BASE_URL = "https://gidp.uanalyze.com.tw"
 GIDP_TOKEN = "tquEQGIZfck2lYDdBst9LBF5p6jfQepV"
 DEFAULT_TIMEOUT = 60.0
 DEFAULT_PROMPT = "近況發展"
+
+# ── DCF 估值固定參數（一字不改搬自 uanalyze_cli/dcf_valuation_calculator.py）──
+WACC = 0.12  # 折現率
+TERMINAL_G = 0.03  # 永續成長率
+REV_SENSITIVITY = 0.4  # 營收超越預期調節強度
+LAMBDA_BASE = 0.50  # 衰減速度基礎值
+LAMBDA_N_STEP = 0.12  # 每少一年 N 加快衰減的幅度
+N_MAX_CONVERGE = 5  # 收斂時最大可信年數
+N_MAX_DIVERGE = 3  # 發散時最大可信年數
+# 來源 BASE_YEAR = datetime.now().year - 1 為模組全域常數（時間依賴，難測）；
+# 這裡改成 _compute_dcf 的可注入參數（見下），公式本體不變。
 
 
 class UAnalyzeAuth:
@@ -544,6 +557,222 @@ async def fetch_order_visibility(symbol: str) -> dict:
     return result
 
 
+# ── A5 時間加權動態 DCF 估值（only_dcf 純數字路徑；不呼叫 AI）───────────────
+
+
+def _compute_dcf(
+    eps_hist: dict,
+    eps_fore: dict,
+    rev_gap_pct_str: str,
+    rev_gap_val: float,
+    current_month: int = 8,
+    base_year: int | None = None,
+) -> tuple:
+    """
+    回傳 (base_ttm, v_2025, v_2026E, v_2027E, far_fore_yr, far_fore_eps,
+          confidence_level, intrinsic_val)
+
+    純數學函式（一字不改搬自 dcf_valuation_calculator.py 的 _compute_dcf）。
+    唯一差異：來源用模組全域 BASE_YEAR = datetime.now().year - 1；這裡改成可注入
+    的 base_year 參數（None 時退回相同的當下計算），公式本體不變、便於測試。
+    """
+    if base_year is None:
+        base_year = datetime.now().year - 1
+    BASE_YEAR = base_year
+
+    sorted_fore_yrs = sorted(eps_fore.keys())
+    v_2025 = eps_hist[max(eps_hist.keys())]
+    v_2026E = eps_fore[sorted_fore_yrs[0]]
+    v_2027E = eps_fore.get(BASE_YEAR + 2)  # 2027E
+
+    # 營收超越/落後預期調節乘數
+    rev_multiplier = math.exp(REV_SENSITIVITY * (rev_gap_val / 100.0)) if rev_gap_pct_str != "-" else 1.0
+
+    # Base TTM（時間加權，受營收預期調節）
+    w_hist = (12 - (current_month - 1)) / 12.0
+    w_fore = (current_month - 1) / 12.0
+    base_ttm = (w_hist * v_2025 + w_fore * v_2026E) * rev_multiplier
+
+    # ── 法人預估年數 N 判定（完全信任法人數據，不設發散 N 上限截斷）────────
+    far_fore_yr = sorted_fore_yrs[-1]
+    n_known_years = max(1, far_fore_yr - BASE_YEAR)
+    last_known_fore_yr = far_fore_yr
+    last_known_eps = eps_fore[far_fore_yr]
+
+    # ── 衰減起點成長率（邊際 YoY 與 CAGR 調和防暴衝）───────────────────────────
+    prev_fore_eps = eps_fore.get(last_known_fore_yr - 1)
+    if prev_fore_eps is not None and prev_fore_eps > 0 and last_known_eps > 0:
+        marginal_yoy = (last_known_eps / prev_fore_eps) - 1.0
+    elif last_known_eps > 0:
+        cagr_base = max(1.0, base_ttm) if base_ttm > 0 else max(1.0, abs(v_2026E))
+        marginal_yoy = (last_known_eps / cagr_base) - 1.0
+    else:
+        marginal_yoy = 0.0
+
+    # 全期間同等 CAGR (從 Base TTM 到 last_known_fore_yr)
+    if base_ttm > 0 and last_known_eps > 0 and n_known_years > 0:
+        overall_cagr = (last_known_eps / base_ttm) ** (1.0 / n_known_years) - 1.0
+    else:
+        overall_cagr = marginal_yoy
+
+    rev_multiplier = math.exp(REV_SENSITIVITY * (rev_gap_val / 100.0)) if rev_gap_pct_str != "-" else 1.0
+    raw_marginal_g = max(0.0, marginal_yoy) * rev_multiplier
+    raw_cagr_g = max(0.0, overall_cagr) * rev_multiplier
+
+    # 衰減起點成長率取平滑調和值，並設定長線衰減天花板 (Cap at 50%)
+    raw_decay_start_g = min(raw_marginal_g, max(raw_cagr_g, 0.50))
+    raw_decay_start_g = min(raw_decay_start_g, 0.50)
+
+    # ── N 門檻與衰減速度設定 ──────────────────────────────────────
+    confidence_level = f"高 (法人完全直連 N={n_known_years})"
+    decay_start_g = raw_decay_start_g
+    lambda_decay = LAMBDA_BASE + LAMBDA_N_STEP * (3 - min(3, n_known_years))
+
+    # 若單一年 YoY 暴增 (>50%)，自動加大衰減速度 lambda，加速收斂至永續 3%
+    if marginal_yoy > 0.50:
+        lambda_decay += max(0.0, (marginal_yoy - 0.50) * 0.50)
+
+    if n_known_years <= 2:
+        if raw_marginal_g > 0.50:
+            # 短預估期 (N<=2) 且邊際年增率暴增 >50%
+            # 實施信心度打折：設定上限 50% 並加快衰減速度
+            decay_start_g = min(raw_marginal_g * 0.40, 0.50)
+            confidence_level = "⚠️ 低 (N≤2極端外推打折)"
+            lambda_decay = max(lambda_decay, 0.70)
+        else:
+            confidence_level = "中低 (N≤2)"
+
+    # ── 10 年 DCF 折現 ───────────────────────────────────────
+    current_eps = base_ttm
+    pv_sum = 0.0
+    for yr in range(1, 11):
+        target_year = BASE_YEAR + yr
+        if target_year in eps_fore and target_year <= last_known_fore_yr:
+            # Phase 1：法人直連
+            current_eps = eps_fore[target_year]
+        else:
+            # Phase 2：負指數衰減，不低於永續成長率
+            t = target_year - last_known_fore_yr
+            curr_g = TERMINAL_G + (decay_start_g - TERMINAL_G) * math.exp(-lambda_decay * t)
+            curr_g = max(curr_g, TERMINAL_G)
+            current_eps = current_eps * (1.0 + curr_g)
+        pv_sum += current_eps / ((1.0 + WACC) ** yr)
+
+    # Terminal Value
+    tv_10 = (current_eps * (1.0 + TERMINAL_G)) / (WACC - TERMINAL_G)
+    pv_tv = tv_10 / ((1.0 + WACC) ** 10)
+    intrinsic_val = round(pv_sum + pv_tv, 2)
+
+    return base_ttm, v_2025, v_2026E, v_2027E, far_fore_yr, eps_fore[far_fore_yr], confidence_level, intrinsic_val
+
+
+async def _fetch_eps_consensus_dcf(symbol: str) -> tuple[dict, dict]:
+    """DCF 專用 EPS 來源（gidp，GIDP token）。回 (eps_hist, eps_fore)。
+
+    端點 EPSRevenueConsensusEstimate，取 data.data.ua50187_cp.Data（年份->EPS，
+    帶 (f) 後綴的是 forecast）。與 fetch_eps_consensus 不同端點，勿混用。best-effort。
+    """
+    eps_hist: dict[int, float] = {}
+    eps_fore: dict[int, float] = {}
+    try:
+        headers = _auth.gidp_headers()
+        url = f"{GIDP_BASE_URL}/data_fetch/api/EPSRevenueConsensusEstimate/{symbol}"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(url, headers=headers, params={"country": "TW"})
+        if r.status_code == 200:
+            eps_data = (
+                (r.json().get("data") or {}).get("data", {}).get("ua50187_cp", {}).get("Data", {}) or {}
+            )
+            for k, v in eps_data.items():
+                if isinstance(v, (int, float)):
+                    clean_k = str(k).replace("(f)", "").strip()
+                    if "(f)" in str(k):
+                        eps_fore[int(clean_k)] = float(v)
+                    else:
+                        eps_hist[int(clean_k)] = float(v)
+    except Exception as e:
+        logger.warning("_fetch_eps_consensus_dcf failed for %s: %s", symbol, e)
+    return eps_hist, eps_fore
+
+
+async def _fetch_revenue_tracking_dcf(symbol: str) -> tuple[str, str, float]:
+    """DCF 專用營收動能（gidp）。回 (rev_gap_pct_str, rev_trend_str, rev_gap_val)。
+
+    端點 MonthlyRevenueTrackingConcensuslModule，取 data.data.ua70306_cp.Data
+    （月份->百分比），最後一個月當 rev_gap_val。best-effort（失敗回預設）。
+    """
+    try:
+        headers = _auth.gidp_headers()
+        url = f"{GIDP_BASE_URL}/data_fetch/api/MonthlyRevenueTrackingConcensuslModule/{symbol}"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(url, headers=headers, params={"country": "TW"})
+        if r.status_code == 200:
+            diff_data = (
+                (r.json().get("data") or {}).get("data", {}).get("ua70306_cp", {}).get("Data", {})
+            )
+            if isinstance(diff_data, dict) and diff_data:
+                m_keys = sorted(diff_data.keys())
+                last_diff = diff_data[m_keys[-1]]
+                if isinstance(last_diff, (int, float)):
+                    rev_gap_val = float(last_diff)
+                    rev_gap_pct_str = f"{last_diff:+.1f}%"
+                    trend_parts = [
+                        f"{m}月:{diff_data[m]:+.1f}%" if isinstance(diff_data[m], (int, float)) else f"{m}月:-"
+                        for m in m_keys[-3:]
+                    ]
+                    return rev_gap_pct_str, " | ".join(trend_parts), rev_gap_val
+    except Exception as e:
+        logger.warning("_fetch_revenue_tracking_dcf failed for %s: %s", symbol, e)
+    return "-", "-", 0.0
+
+
+async def fetch_dcf_valuation(symbol: str) -> dict:
+    """A5 時間加權動態 DCF 估值（純計算，不呼叫 AI）。
+
+    ensure_token → asyncio.gather 並行抓 gidp EPS 共識 + 月營收動能 → EPS 不足回
+    error → 否則跑 _compute_dcf + 1 年 roll-forward，回關鍵數字摘要 dict。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {"error": "請輸入股票代號"}
+    if not await _auth.ensure_token():
+        return {"error": "UAnalyze 登入失敗（請確認 UANALYZE_EMAIL / UANALYZE_PASSWORD）"}
+
+    (eps_hist, eps_fore), (rev_gap_pct_str, rev_trend_str, rev_gap_val) = await asyncio.gather(
+        _fetch_eps_consensus_dcf(symbol),
+        _fetch_revenue_tracking_dcf(symbol),
+    )
+
+    if not eps_hist or not eps_fore:
+        return {"error": f"{symbol} EPS 資料不足，無法計算 DCF"}
+
+    (
+        base_ttm,
+        v_2025,
+        v_2026E,
+        v_2027E,
+        far_fore_yr,
+        far_fore_eps,
+        confidence_level,
+        intrinsic_val,
+    ) = _compute_dcf(eps_hist, eps_fore, rev_gap_pct_str, rev_gap_val)
+
+    # 1-Year Roll-Forward DCF: V1 = V0 * (1 + WACC) - EPS_2026
+    forward_val_1yr = round(intrinsic_val * (1.0 + WACC) - v_2026E, 2)
+
+    return {
+        "symbol": symbol,
+        "每股合理內在價值": intrinsic_val,
+        "1年後前瞻合理價值": forward_val_1yr,
+        "當前時間加權基期": round(base_ttm, 2),
+        "營收動能": rev_gap_pct_str,
+        "2025實際獲利": round(v_2025, 2),
+        "2026E": round(v_2026E, 2),
+        "最遠預估年份及獲利": f"{far_fore_yr}E:{round(far_fore_eps, 2)}元",
+        "信心度": confidence_level,
+    }
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     if not args:
@@ -616,6 +845,17 @@ if __name__ == "__main__":
             print(json.dumps({"error": "用法: python tools/uanalyze.py --order <代號>"}, ensure_ascii=False))
             sys.exit(1)
         result = asyncio.run(fetch_order_visibility(sym))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
+
+    if args[0] == "--dcf":
+        # A5 時間加權動態 DCF 估值摘要（Agent 用；純計算，不呼叫 AI）。
+        try:
+            sym = args[1]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --dcf <代號>"}, ensure_ascii=False))
+            sys.exit(1)
+        result = asyncio.run(fetch_dcf_valuation(sym))
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(1 if "error" in result else 0)
 

@@ -61,6 +61,8 @@ SYSTEM_PROMPT = """你是一個台股投資輔助助理，透過 Telegram 與使
    `python tools/uanalyze.py --supply <股票代號>`（供應鏈：同業/供應鏈對照標的代號清單）
    `python tools/uanalyze.py --order <股票代號>`（訂單能見度：訂單能見度 + 合約負債，
    資料稀疏，多數個股可能無資料）
+   `python tools/uanalyze.py --dcf <股票代號>`（時間加權動態 DCF 估值：純計算回關鍵數字
+   —每股合理內在價值 / 1 年後前瞻合理價值 / 時間加權基期 / 營收動能 / 信心度，非 AI）
    例：`python tools/uanalyze.py --consensus 2330`、`python tools/uanalyze.py --pershare 2330`
    回傳為濃縮摘要 JSON（只取最新幾期 / 近年），適合直接引用具體數字。
 

@@ -24,7 +24,7 @@ HELP_TEXT = (
     "/p `<代號>` — 即時股價，例 `/p 2330`\n"
     "/k `<代號> [天數]` — K 線圖，例 `/k 2330 60`\n"
     "/ua `<代號>` — UAnalyze 估值分析，例 `/ua 2330`\n"
-    "/data `<代號>` — 法人共識/財務指標/供應鏈/訂單能見度選單，例 `/data 2330`\n"
+    "/data `<代號>` — 法人共識/財務指標/供應鏈/訂單能見度/DCF 估值選單，例 `/data 2330`\n"
     "/news — 立即抓最新新聞\n"
     "/threads — 立即抓 Threads 貼文\n\n"
     "*問 AI（自然語言，會自動組合工具）*\n"
@@ -110,6 +110,7 @@ DATA_OPTIONS: list[tuple[str, str]] = [
     ("財務指標", "pershare"),
     ("供應鏈", "supply"),
     ("訂單能見度", "order"),
+    ("DCF 估值", "dcf"),
 ]
 
 
@@ -392,6 +393,24 @@ def _format_order(symbol: str, r: dict) -> str:
     return "\n".join(lines)
 
 
+def _format_dcf(symbol: str, r: dict) -> str:
+    """Condense the fetch_dcf_valuation summary into readable Chinese text.
+
+    時間加權動態 DCF（純計算，非 AI）：內在價值/前瞻價值/時間加權基期/營收動能/信心度。
+    """
+    lines = [f"📑 {symbol} · DCF 估值（時間加權動態）", "=" * 20]
+    lines.append(f"每股合理內在價值：{r.get('每股合理內在價值')} 元")
+    lines.append(f"1 年後前瞻合理價值：{r.get('1年後前瞻合理價值')} 元")
+    lines.append(f"當前時間加權基期：{r.get('當前時間加權基期')} 元")
+    lines.append(f"營收動能：{r.get('營收動能')}")
+    lines.append(f"2025 實際獲利：{r.get('2025實際獲利')}｜2026E：{r.get('2026E')}")
+    lines.append(f"最遠預估：{r.get('最遠預估年份及獲利')}")
+    lines.append(f"信心度：{r.get('信心度')}")
+    lines.append("")
+    lines.append("＊純數學估值（WACC/時間加權/成長衰減），非 AI；僅供參考。")
+    return "\n".join(lines)
+
+
 async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle a /data menu button press: fetch the chosen data set, or return
     to the menu when the back button is pressed."""
@@ -423,6 +442,7 @@ async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await query.edit_message_text(f"📑 正在查詢 {symbol}（{labels[key]}）…")
 
     from tools.uanalyze import (
+        fetch_dcf_valuation,
         fetch_eps_consensus,
         fetch_order_visibility,
         fetch_per_share_metrics,
@@ -436,6 +456,8 @@ async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             r = await fetch_per_share_metrics(symbol)
         elif key == "supply":
             r = await fetch_supply_chain(symbol)
+        elif key == "dcf":
+            r = await fetch_dcf_valuation(symbol)
         else:
             r = await fetch_order_visibility(symbol)
     except Exception as e:
@@ -453,6 +475,8 @@ async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         text = _format_pershare(symbol, r)
     elif key == "supply":
         text = _format_supply(symbol, r)
+    elif key == "dcf":
+        text = _format_dcf(symbol, r)
     else:
         text = _format_order(symbol, r)
     back = InlineKeyboardMarkup(
