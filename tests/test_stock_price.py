@@ -262,6 +262,145 @@ def test_cli_unknown_symbol():
     assert "error" in output
 
 
+# --- Best-effort UAnalyze fundamentals augmentation (ticket 03) ---
+
+
+@pytest.mark.asyncio
+async def test_fetch_price_fundamentals_success():
+    """Price OK + fundamentals OK → result carries both price and fundamentals."""
+    fugle_data = {
+        "closePrice": 580.0,
+        "previousClose": 575.0,
+        "change": 5.0,
+        "changePercent": 0.87,
+        "name": "台積電",
+        "tradeVolume": 25000,
+    }
+    mock_resp = _make_httpx_response(200, fugle_data)
+    mock_client = _mock_async_client(mock_resp)
+
+    fake_fundamentals = {"本益比": 27.9, "最新財報": "2026年Q2"}
+    with (
+        patch("tools.get_stock_price._get_fugle_api_key", return_value="key"),
+        patch("httpx.AsyncClient", return_value=mock_client),
+        patch(
+            "tools.uanalyze.fetch_stock_fundamentals",
+            new=AsyncMock(return_value=fake_fundamentals),
+        ),
+    ):
+        result = await fetch_price("2330")
+
+    # Price/volume intact...
+    assert result["price"] == 580.0
+    assert result["change"] == 5.0
+    assert result["source"] == "fugle"
+    # ...and fundamentals attached.
+    assert result["fundamentals"] == fake_fundamentals
+
+
+@pytest.mark.asyncio
+async def test_fetch_price_fundamentals_exception_still_returns_price():
+    """核心鐵則：基本面抓取拋異常時，價量仍完整回、且無 fundamentals 鍵。"""
+    fugle_data = {
+        "closePrice": 580.0,
+        "previousClose": 575.0,
+        "change": 5.0,
+        "changePercent": 0.87,
+        "name": "台積電",
+        "tradeVolume": 25000,
+    }
+    mock_resp = _make_httpx_response(200, fugle_data)
+    mock_client = _mock_async_client(mock_resp)
+
+    with (
+        patch("tools.get_stock_price._get_fugle_api_key", return_value="key"),
+        patch("httpx.AsyncClient", return_value=mock_client),
+        patch(
+            "tools.uanalyze.fetch_stock_fundamentals",
+            new=AsyncMock(side_effect=RuntimeError("UAnalyze down")),
+        ),
+    ):
+        result = await fetch_price("2330")
+
+    assert result["price"] == 580.0
+    assert result["change"] == 5.0
+    assert result["change_pct"] == 0.87
+    assert result["volume"] == 25000
+    assert result["source"] == "fugle"
+    assert "fundamentals" not in result
+    assert "error" not in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_price_fundamentals_timeout_still_returns_price():
+    """基本面逾時（asyncio.wait_for 觸發）時，價量仍完整回、無 fundamentals。"""
+    fugle_data = {
+        "closePrice": 100.0,
+        "previousClose": 95.0,
+        "name": "測試",
+        "tradeVolume": 1000,
+    }
+    mock_resp = _make_httpx_response(200, fugle_data)
+    mock_client = _mock_async_client(mock_resp)
+
+    async def _hang(_symbol):
+        raise TimeoutError("simulated wait_for timeout")
+
+    with (
+        patch("tools.get_stock_price._get_fugle_api_key", return_value="key"),
+        patch("httpx.AsyncClient", return_value=mock_client),
+        patch("tools.uanalyze.fetch_stock_fundamentals", new=AsyncMock(side_effect=_hang)),
+    ):
+        result = await fetch_price("9999")
+
+    assert result["price"] == 100.0
+    assert result["change"] == 5.0
+    assert "fundamentals" not in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_price_fundamentals_empty_no_key():
+    """基本面回 {}（無憑證/無資料）時不加 fundamentals 鍵，價量照回。"""
+    fugle_data = {
+        "closePrice": 580.0,
+        "previousClose": 575.0,
+        "name": "台積電",
+        "tradeVolume": 25000,
+    }
+    mock_resp = _make_httpx_response(200, fugle_data)
+    mock_client = _mock_async_client(mock_resp)
+
+    with (
+        patch("tools.get_stock_price._get_fugle_api_key", return_value="key"),
+        patch("httpx.AsyncClient", return_value=mock_client),
+        patch("tools.uanalyze.fetch_stock_fundamentals", new=AsyncMock(return_value={})),
+    ):
+        result = await fetch_price("2330")
+
+    assert result["price"] == 580.0
+    assert "fundamentals" not in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_price_error_does_not_call_fundamentals():
+    """找不到代號時：回 error，且不觸發基本面抓取（error 情形不變）。"""
+    mock_resp_fail = _make_httpx_response(404, {})
+    mock_client = _mock_async_client(mock_resp_fail)
+
+    mock_fund = AsyncMock(return_value={"本益比": 1.0})
+    with (
+        patch("tools.get_stock_price._get_fugle_api_key", return_value="key"),
+        patch("tools.get_stock_price._get_finmind_tokens", return_value=["tok"]),
+        patch("httpx.AsyncClient", return_value=mock_client),
+        patch("tools.uanalyze.fetch_stock_fundamentals", new=mock_fund),
+    ):
+        result = await fetch_price("XXXXX")
+
+    assert "error" in result
+    assert "fundamentals" not in result
+    mock_fund.assert_not_awaited()
+
+
 # --- Token parsing tests ---
 
 

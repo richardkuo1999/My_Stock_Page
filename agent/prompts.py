@@ -19,6 +19,7 @@ SYSTEM_PROMPT = """你是一個台股投資輔助助理，透過 Telegram 與使
 1. 即時股價
    `python tools/get_stock_price.py <股票代號>`
    例：`python tools/get_stock_price.py 2330`
+   回價量，並 best-effort 附上 UAnalyze 基本面（收盤價、當日漲跌幅、本益比、最新財報、月營收、掛牌類別等，在 `fundamentals` 欄位；UAnalyze 逾時/失敗時略過、不影響價量）。
 
 2. K 線圖（產生圖檔，回傳圖片路徑）
    `python tools/draw_kchart.py <股票代號> --period <天數>`

@@ -65,7 +65,7 @@
 | `/unsub_ua_reports` | 取消 UAnalyze 新研究報告推播 |
 | `/news` | 跳選單選新聞來源（全部或指定 15 來源之一）後回覆 |
 | `/threads` | 立即抓最新 Threads 貼文並回覆呼叫者 |
-| `/p <代號>` | 即時股價（直接 import 工具，不經 AI） |
+| `/p <代號>` | 即時股價（直接 import 工具，不經 AI），best-effort 附 UAnalyze 基本面 |
 | `/k <代號> [天數]` | K 線圖（回傳圖片） |
 | `/ua <代號>` | UAnalyze 估值分析：跳選單選分析面向 |
 | `/data <代號>` | 跳選單選資料類型（法人共識 / 財務指標 / 供應鏈 / 訂單能見度 / DCF 估值）後回覆濃縮數據 |
@@ -135,7 +135,7 @@ Google AI Pro 方案不提供 `GEMINI_API_KEY`，SDK 需要此 key 才能執行�
 |--------|------|----------|
 | `tools/fetch_news.py` | 抓指定股票/全部最新新聞（個股走本地過濾） | `python tools/fetch_news.py 2330 --limit 5` |
 | `tools/uanalyze.py` | AI 估值分析 | `python tools/uanalyze.py 2330` |
-| `tools/get_stock_price.py` | 即時股價 | `python tools/get_stock_price.py 2330` |
+| `tools/get_stock_price.py` | 即時股價（best-effort 附 UAnalyze 基本面） | `python tools/get_stock_price.py 2330` |
 | `tools/draw_kchart.py` | K 線圖（mplfinance 繪製，回傳圖片路徑） | `python tools/draw_kchart.py 2330 --period 60` |
 | `tools/fetch_threads.py` | 抓追蹤帳號 Threads 貼文 | `python tools/fetch_threads.py --check-new` |
 | `tools/summarize_document.py` | URL/PDF 文件摘要 | `python tools/summarize_document.py https://...` |

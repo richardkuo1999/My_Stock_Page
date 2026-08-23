@@ -773,6 +773,86 @@ async def fetch_dcf_valuation(symbol: str) -> dict:
     }
 
 
+# ── A9 即時基本面（附加在 /p，best-effort，純資料不呼叫 AI）───────────────
+
+
+# WebStockInfo（gidp）實測回傳的 ChineseAccount → 我們挑用的基本面欄位。
+# 實打 WebStockInfo/2330?country=TW 看到 12 個欄位，本益比/殖利率不在其中，
+# 故本益比另從同 domain（gidp）的 HistoricalPer 月序列補（取最新一個月）。
+_WEBSTOCKINFO_FIELDS = {
+    "收盤價": "收盤價",
+    "當日漲跌幅": "當日漲跌幅(%)",
+    "最新財報": "最新財報",
+    "月營收": "最新月營收",
+    "掛牌類別": "掛牌類別",
+}
+
+
+async def fetch_stock_fundamentals(symbol: str) -> dict:
+    """A9 即時基本面（附加在 /p 用）。純資料，不呼叫 AI，async httpx，gidp 認證。
+
+    best-effort 附加物：任何失敗/逾時/無憑證都回 {}（**不是** error dict），
+    因為呼叫端（/p）拿到價量就一定要回，基本面只是加分。
+
+    來源：
+    - gidp `WebStockInfo/{symbol}?country=TW`：實打回收盤價/當日漲跌幅/最新財報/
+      月營收/掛牌類別/股本/股票分類等（key 為 uaXXXXX_cp，各帶 ChineseAccount+Data）。
+    - gidp `HistoricalPer/{symbol}?country=TW`：本益比月序列（WebStockInfo 沒有本益比），
+      取最新一個月。此段獨立 best-effort，失敗不影響 WebStockInfo 那段。
+
+    Returns:
+        摘要 dict（如 {'收盤價': 2410.0, '本益比': 27.9, ...}）；無資料/失敗回 {}。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {}
+
+    summary: dict = {}
+
+    # --- WebStockInfo（gidp）：基本市況欄位 ---
+    try:
+        headers = _auth.gidp_headers()
+        url = f"{GIDP_BASE_URL}/data_fetch/api/WebStockInfo/{symbol}"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(url, headers=headers, params={"country": "TW"})
+        if r.status_code == 200:
+            rows = (r.json().get("data") or {}).get("data") or {}
+            if isinstance(rows, dict):
+                for row in rows.values():
+                    if not isinstance(row, dict):
+                        continue
+                    label = row.get("ChineseAccount", "")
+                    if label in _WEBSTOCKINFO_FIELDS:
+                        value = row.get("Data")
+                        # 只收原子值（純數字/字串），跳過 list/dict 型欄位（如逐字稿/分類）。
+                        if isinstance(value, (int, float, str)) and value not in ("", None):
+                            summary[_WEBSTOCKINFO_FIELDS[label]] = value
+    except Exception as e:
+        logger.warning("fetch_stock_fundamentals WebStockInfo failed for %s: %s", symbol, e)
+
+    # --- HistoricalPer（gidp）：本益比（WebStockInfo 未含），取最新一個月 ---
+    try:
+        headers = _auth.gidp_headers()
+        url = f"{GIDP_BASE_URL}/data_fetch/api/HistoricalPer/{symbol}"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(url, headers=headers, params={"country": "TW"})
+        if r.status_code == 200:
+            rows = (r.json().get("data") or {}).get("data") or {}
+            if isinstance(rows, dict):
+                for row in rows.values():
+                    if not isinstance(row, dict):
+                        continue
+                    if "本益比" in row.get("ChineseAccount", ""):
+                        latest = _latest_periods(row.get("Data", {}), 1)
+                        if latest:
+                            summary["本益比"] = latest[-1][1]
+                        break
+    except Exception as e:
+        logger.warning("fetch_stock_fundamentals HistoricalPer failed for %s: %s", symbol, e)
+
+    return summary
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     if not args:
@@ -848,8 +928,18 @@ if __name__ == "__main__":
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(1 if "error" in result else 0)
 
-    if args[0] == "--dcf":
-        # A5 時間加權動態 DCF 估值摘要（Agent 用；純計算，不呼叫 AI）。
+    if args[0] == "--fundamentals":
+        # A9 即時基本面摘要（附加在 /p；best-effort，無資料回 {}）。
+        try:
+            sym = args[1]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --fundamentals <代號>"}, ensure_ascii=False))
+            sys.exit(1)
+        result = asyncio.run(fetch_stock_fundamentals(sym))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(0)
+
+    if args[0] == "--dcf":        # A5 時間加權動態 DCF 估值摘要（Agent 用；純計算，不呼叫 AI）。
         try:
             sym = args[1]
         except IndexError:

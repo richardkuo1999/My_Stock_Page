@@ -193,6 +193,40 @@ async def test_price_command_success(context):
 
 
 @pytest.mark.asyncio
+async def test_price_command_with_fundamentals(context):
+    """有 fundamentals 時，/p 除價量外多列基本面欄位。"""
+    update = _make_command_update("/p 2330")
+    fake = {
+        "symbol": "2330", "name": "台積電", "price": 2410.0, "change": 35.0,
+        "change_pct": 1.47, "volume": 0, "source": "fugle",
+        "fundamentals": {"本益比": 27.9, "最新財報": "2026年Q2"},
+    }
+    with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)):
+        await price_command(update, context)
+    text = update.message.reply_text.call_args[0][0]
+    assert "台積電" in text and "2410" in text
+    assert "基本面" in text
+    assert "本益比" in text and "27.9" in text
+    assert "最新財報" in text
+
+
+@pytest.mark.asyncio
+async def test_price_command_no_fundamentals_plain(context):
+    """UAnalyze 失敗（無 fundamentals）時，/p 只列價量，不出現基本面段落。"""
+    update = _make_command_update("/p 2330")
+    fake = {
+        "symbol": "2330", "name": "台積電", "price": 2410.0, "change": 35.0,
+        "change_pct": 1.47, "volume": 0, "source": "fugle",
+    }
+    with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)):
+        await price_command(update, context)
+    text = update.message.reply_text.call_args[0][0]
+    assert "台積電" in text and "2410" in text
+    assert "基本面" not in text
+    assert "本益比" not in text
+
+
+@pytest.mark.asyncio
 async def test_price_command_error(context):
     update = _make_command_update("/p 9999")
     with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value={"error": "找不到股票代號 9999"})):

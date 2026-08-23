@@ -22,6 +22,8 @@ FINMIND_TICK_URL = "https://api.finmindtrade.com/api/v4/taiwan_stock_tick_snapsh
 FUGLE_BASE = "https://api.fugle.tw/marketdata/v1.0/stock"
 
 DEFAULT_TIMEOUT = 15.0
+# UAnalyze 基本面附加抓取的短逾時（best-effort，不能拖累價量秒回）。
+FUNDAMENTALS_TIMEOUT = 8.0
 
 
 def _get_finmind_tokens() -> list[str]:
@@ -135,6 +137,32 @@ async def _fetch_finmind(symbol: str) -> dict | None:
         return None
 
 
+async def _augment_fundamentals(result: dict) -> None:
+    """Best-effort：補打 UAnalyze 基本面附在 result['fundamentals']（形態 a1）。
+
+    **鐵則：這是加分項，絕不能拖累/影響價量。** 用短 timeout + asyncio.wait_for
+    防拖，整段包在獨立 try，任何 Exception/逾時都吞掉 → 基本面略過，價量照常回。
+
+    fetch_stock_fundamentals 在 tools/uanalyze.py，用局部 import（tools.* 優先、
+    直接 import 後援），讓 get_stock_price.py 當獨立 CLI 跑時也能載入。
+    """
+    try:
+        try:
+            from tools.uanalyze import fetch_stock_fundamentals
+        except ImportError:
+            from uanalyze import fetch_stock_fundamentals  # CLI standalone fallback
+
+        symbol = result.get("symbol", "")
+        fundamentals = await asyncio.wait_for(
+            fetch_stock_fundamentals(symbol), timeout=FUNDAMENTALS_TIMEOUT
+        )
+        if fundamentals:
+            result["fundamentals"] = fundamentals
+    except Exception as e:
+        # 逾時/失敗/無憑證：略過基本面，價量不受影響。
+        logger.debug("Fundamentals augment skipped for %s: %s", result.get("symbol"), e)
+
+
 async def fetch_price(symbol: str) -> dict:
     """Fetch stock price. Try Fugle first (real-time), then FinMind.
 
@@ -143,6 +171,7 @@ async def fetch_price(symbol: str) -> dict:
 
     Returns:
         dict with symbol, name, price, change, change_pct, volume, source
+        （成功時另 best-effort 附 'fundamentals'；UAnalyze 失敗則無此鍵）
         On failure: dict with 'error' key
     """
     symbol = symbol.strip().upper()
@@ -151,15 +180,17 @@ async def fetch_price(symbol: str) -> dict:
 
     # 1. Try Fugle (real-time)
     result = await _fetch_fugle(symbol)
-    if result:
-        return result
 
     # 2. Try FinMind
-    result = await _fetch_finmind(symbol)
-    if result:
-        return result
+    if not result:
+        result = await _fetch_finmind(symbol)
 
-    return {"error": f"找不到股票代號 {symbol}"}
+    if not result:
+        return {"error": f"找不到股票代號 {symbol}"}
+
+    # 價量已到手 → best-effort 疊加 UAnalyze 基本面（絕不影響上面的價量回傳）。
+    await _augment_fundamentals(result)
+    return result
 
 
 if __name__ == "__main__":

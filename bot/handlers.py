@@ -21,7 +21,7 @@ HELP_TEXT = (
     "/sub\\_threads /unsub\\_threads — 訂閱/取消 Threads 推播（每 15 分）\n"
     "/sub\\_ua\\_reports /unsub\\_ua\\_reports — 訂閱/取消 UAnalyze 新研究報告推播（每 30 分）\n\n"
     "*即時查詢（直接跑工具，秒回）*\n"
-    "/p `<代號>` — 即時股價，例 `/p 2330`\n"
+    "/p `<代號>` — 即時股價（附基本面：本益比/最新財報等），例 `/p 2330`\n"
     "/k `<代號> [天數]` — K 線圖，例 `/k 2330 60`\n"
     "/ua `<代號>` — UAnalyze 估值分析，例 `/ua 2330`\n"
     "/data `<代號>` — 法人共識/財務指標/供應鏈/訂單能見度/DCF 估值選單，例 `/data 2330`\n"
@@ -159,13 +159,22 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     sign = "🔺" if (r.get("change") or 0) >= 0 else "🔻"
-    await update.message.reply_text(
-        f"📊 {r.get('name', symbol)} ({r.get('symbol', symbol)})\n"
-        f"股價：{r.get('price')}\n"
-        f"漲跌：{sign} {r.get('change')} ({r.get('change_pct')}%)\n"
-        f"成交量：{r.get('volume')}\n"
-        f"來源：{r.get('source')}"
-    )
+    lines = [
+        f"📊 {r.get('name', symbol)} ({r.get('symbol', symbol)})",
+        f"股價：{r.get('price')}",
+        f"漲跌：{sign} {r.get('change')} ({r.get('change_pct')}%)",
+        f"成交量：{r.get('volume')}",
+        f"來源：{r.get('source')}",
+    ]
+
+    # best-effort 基本面（UAnalyze）：有才多列，沒有就維持原本價量輸出。
+    fundamentals = r.get("fundamentals")
+    if fundamentals:
+        lines.append("— 基本面 —")
+        for label, value in fundamentals.items():
+            lines.append(f"{label}：{value}")
+
+    await update.message.reply_text("\n".join(lines))
 
 
 async def kchart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
