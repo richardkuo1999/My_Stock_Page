@@ -3,6 +3,12 @@
      python tools/uanalyze.py --reports [--limit N]
 回傳: JSON {"analysis": str}
    或 {"reports": [{id, stock_code, stock_name, title, date, summary}]}
+
+認證：一次帳密登入（UAnalyzeAuth.login）後，可依 domain 取得三種認證材料：
+  - jwt_headers():     data.uanalyze.twobitto.com / api.uanalyze.com.tw（Bearer <access_token>）
+  - cookie_context():  cronjob.uanalyze.com.tw（記憶體 4-cookie + Origin/Referer，不吃 Bearer）
+  - gidp_headers():    gidp.uanalyze.com.tw（前端寫死的固定 GIDP token，非登入產生）
+這三個 helper 皆為純組裝（不發 HTTP、不呼叫 AI）。
 """
 
 import asyncio
@@ -19,6 +25,12 @@ logger = logging.getLogger(__name__)
 
 AUTH_BASE_URL = os.getenv("UANALYZE_AUTH_URL", "https://api.uanalyze.com.tw")
 BASE_URL = "https://data.uanalyze.twobitto.com"
+# cronjob domain（cookie 認證，不吃 Bearer；供後續 ticket 用）。
+CRONJOB_BASE_URL = "https://cronjob.uanalyze.com.tw"
+# gidp domain（GIDP 固定 token 認證；供後續 ticket 用）。
+GIDP_BASE_URL = "https://gidp.uanalyze.com.tw"
+# UAnalyze 前端 JS 公開寫死的固定 GIDP token，非登入產生，也不吃 JWT。
+GIDP_TOKEN = "tquEQGIZfck2lYDdBst9LBF5p6jfQepV"
 DEFAULT_TIMEOUT = 60.0
 DEFAULT_PROMPT = "近況發展"
 
@@ -29,6 +41,8 @@ class UAnalyzeAuth:
     def __init__(self):
         self.access_token: str | None = None
         self.refresh_token: str | None = None
+        self.token_type: str | None = None
+        self.expires_in: int | None = None
 
     def _get_credentials(self) -> tuple[str, str]:
         email = os.getenv("UANALYZE_EMAIL", "").strip()
@@ -57,6 +71,9 @@ class UAnalyzeAuth:
                     payload = data.get("data") if isinstance(data.get("data"), dict) else data
                     self.access_token = payload.get("access_token")
                     self.refresh_token = payload.get("refresh_token")
+                    # cookie helper 需要完整 4 欄，一併存下。
+                    self.token_type = payload.get("token_type")
+                    self.expires_in = payload.get("expires_in")
                     return bool(self.access_token)
                 logger.warning("UAnalyze login failed: HTTP %d", r.status_code)
                 return False
@@ -97,6 +114,50 @@ class UAnalyzeAuth:
         if await self.login():
             return self.access_token
         return None
+
+    # --- Per-domain auth material assembly (pure, no HTTP, no AI) ---
+    # 假設已 login（access_token 已存在）。只組裝 request 材料，不發請求。
+
+    def jwt_headers(self) -> dict:
+        """A: JWT Bearer headers（data.uanalyze.twobitto.com / api.uanalyze.com.tw）。"""
+        return {
+            "Authorization": f"Bearer {self.access_token}",
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json",
+            "Referer": "https://pro.uanalyze.com.tw/",
+        }
+
+    def cookie_context(self) -> tuple[dict, dict]:
+        """B: cookie 認證材料（cronjob.uanalyze.com.tw）。
+
+        回 (cookies, headers)。cronjob domain 不吃 Bearer header，需要記憶體組的
+        完整 4-cookie 加上 Origin/Referer（缺其一實測 403）。
+        """
+        cookies = {
+            "access_token": self.access_token,
+            "refresh_token": self.refresh_token,
+            "token_type": self.token_type if self.token_type is not None else "",
+            "expires_in": str(self.expires_in),
+        }
+        headers = {
+            "Origin": "https://pro.uanalyze.com.tw",
+            "Referer": "https://pro.uanalyze.com.tw/",
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json",
+        }
+        return cookies, headers
+
+    def gidp_headers(self) -> dict:
+        """C: GIDP 認證材料（gidp.uanalyze.com.tw）。
+
+        用前端寫死的固定 GIDP_TOKEN（非登入產生、也不吃 JWT），不是 access_token。
+        """
+        return {
+            "Authorization": f"Bearer {GIDP_TOKEN}",
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json",
+            "Referer": "https://pro.uanalyze.com.tw/",
+        }
 
 
 # Module-level auth instance (reused across calls)

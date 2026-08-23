@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from tools.uanalyze import (
+    GIDP_TOKEN,
     UAnalyzeAuth,
     _auth,
     _request_with_auth,
@@ -44,9 +45,13 @@ def _reset_auth():
     """Reset module-level auth state between tests."""
     _auth.access_token = None
     _auth.refresh_token = None
+    _auth.token_type = None
+    _auth.expires_in = None
     yield
     _auth.access_token = None
     _auth.refresh_token = None
+    _auth.token_type = None
+    _auth.expires_in = None
 
 
 # --- Login tests ---
@@ -171,8 +176,93 @@ async def test_refresh_http_error():
     assert result is False
 
 
-# --- analyze() tests ---
+# --- Auth material assembly tests (Ticket 01) ---
 
+
+@pytest.mark.asyncio
+async def test_login_stores_token_type_and_expires_in():
+    """Login stores all 4 fields (needed by cookie_context)."""
+    login_resp = _make_httpx_response(
+        200,
+        {
+            "access_token": "tok123",
+            "refresh_token": "ref456",
+            "token_type": "bearer",
+            "expires_in": 3600,
+        },
+    )
+    mock_client = _mock_async_client(login_resp)
+
+    auth = UAnalyzeAuth()
+    with (
+        patch.dict(
+            "os.environ",
+            {"UANALYZE_EMAIL": "a@b.com", "UANALYZE_PASSWORD": "pass"},
+        ),
+        patch("httpx.AsyncClient", return_value=mock_client),
+    ):
+        result = await auth.login()
+
+    assert result is True
+    assert auth.token_type == "bearer"
+    assert auth.expires_in == 3600
+
+
+def test_jwt_headers():
+    """jwt_headers() Authorization uses the access_token."""
+    auth = UAnalyzeAuth()
+    auth.access_token = "tok123"
+    headers = auth.jwt_headers()
+    assert headers["Authorization"] == "Bearer tok123"
+    assert headers["Accept"] == "application/json"
+    assert headers["Referer"] == "https://pro.uanalyze.com.tw/"
+
+
+def test_cookie_context():
+    """cookie_context() returns 4 cookies + Origin/Referer headers."""
+    auth = UAnalyzeAuth()
+    auth.access_token = "tok123"
+    auth.refresh_token = "ref456"
+    auth.token_type = "bearer"
+    auth.expires_in = 3600
+
+    cookies, headers = auth.cookie_context()
+
+    assert set(cookies.keys()) == {
+        "access_token",
+        "refresh_token",
+        "token_type",
+        "expires_in",
+    }
+    assert cookies["access_token"] == "tok123"
+    assert cookies["expires_in"] == "3600"  # coerced to str
+    assert headers["Origin"] == "https://pro.uanalyze.com.tw"
+    assert headers["Referer"] == "https://pro.uanalyze.com.tw/"
+
+
+def test_cookie_context_token_type_none():
+    """token_type None → empty string in cookies."""
+    auth = UAnalyzeAuth()
+    auth.access_token = "tok123"
+    auth.refresh_token = "ref456"
+    auth.token_type = None
+    auth.expires_in = 3600
+
+    cookies, _ = auth.cookie_context()
+    assert cookies["token_type"] == ""
+
+
+def test_gidp_headers():
+    """gidp_headers() uses the fixed GIDP token, not the access_token."""
+    auth = UAnalyzeAuth()
+    auth.access_token = "tok123"
+    headers = auth.gidp_headers()
+    assert headers["Authorization"] == f"Bearer {GIDP_TOKEN}"
+    assert GIDP_TOKEN.startswith("tquEQ")
+    assert "tok123" not in headers["Authorization"]
+
+
+# --- analyze() tests ---
 
 @pytest.mark.asyncio
 async def test_analyze_success():
