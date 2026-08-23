@@ -20,6 +20,8 @@ from tools.uanalyze import (
     fetch_order_visibility,
     fetch_per_share_metrics,
     fetch_supply_chain,
+    fetch_transcript_detail,
+    fetch_transcript_list,
     get_completion,
     get_reports,
     list_latest_reports,
@@ -1078,3 +1080,148 @@ async def test_fetch_dcf_valuation_no_token():
     with patch.dict("os.environ", {"UANALYZE_EMAIL": "", "UANALYZE_PASSWORD": ""}):
         result = await fetch_dcf_valuation("2330")
     assert "error" in result
+
+
+# --- fetch_transcript_list() / fetch_transcript_detail() tests (Ticket 07) ---
+
+
+def _transcript_list_payload(items):
+    """Mimic gidp WebStockInfo: data.data.ua80305_cp is the 逐字稿 row with a Data list."""
+    return {
+        "data": {
+            "data": {
+                "ua12345_cp": {"ChineseAccount": "收盤價", "Data": 2410.0},
+                "ua80305_cp": {"ChineseAccount": "逐字稿", "Data": list(items)},
+            }
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_transcript_list_success():
+    """逐字稿 row present → transcripts list (newest-first, {date,id})."""
+    items = [
+        {"Data": "2026/07/16", "id": "202607162330"},
+        {"Data": "2026/04/16", "id": "202604162330"},
+    ]
+    resp = _make_httpx_response(200, _transcript_list_payload(items))
+    mock_client = _mock_async_client(resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await fetch_transcript_list("2330")
+
+    assert result["symbol"] == "2330"
+    assert result["transcripts"] == [
+        {"date": "2026/07/16", "id": "202607162330"},
+        {"date": "2026/04/16", "id": "202604162330"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fetch_transcript_list_no_data():
+    """No 逐字稿 row → error dict."""
+    payload = {"data": {"data": {"ua12345_cp": {"ChineseAccount": "收盤價", "Data": 1}}}}
+    resp = _make_httpx_response(200, payload)
+    mock_client = _mock_async_client(resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await fetch_transcript_list("9999")
+
+    assert "error" in result
+    assert "9999" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_transcript_list_http_error():
+    """Non-200 → error dict."""
+    resp = _make_httpx_response(500, {})
+    mock_client = _mock_async_client(resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await fetch_transcript_list("2330")
+
+    assert "error" in result
+
+
+def _transcript_detail_payload(transcript_text):
+    """Mimic cronjob TranscriptDetail: full text nested at data.data.data."""
+    return {
+        "status": "ok",
+        "state": 1,
+        "data": {
+            "data": {
+                "id": "202607162330",
+                "stock": "2330",
+                "date": "20260716",
+                "title": "台積電法說逐字稿",
+                "transcript": transcript_text,
+            },
+            "type": "transcript",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_transcript_detail_success():
+    """Full text present → detail dict with transcript/title/date/stock."""
+    _auth.access_token = "tok"
+    _auth.refresh_token = "ref"
+
+    resp = _make_httpx_response(200, _transcript_detail_payload("全文內容" * 100))
+    mock_client = _mock_async_client(resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await fetch_transcript_detail("202607162330")
+
+    assert result["id"] == "202607162330"
+    assert result["title"] == "台積電法說逐字稿"
+    assert result["date"] == "20260716"
+    assert result["stock"] == "2330"
+    assert result["transcript"] == "全文內容" * 100
+
+
+@pytest.mark.asyncio
+async def test_fetch_transcript_detail_empty_transcript():
+    """Empty transcript → error dict."""
+    _auth.access_token = "tok"
+    _auth.refresh_token = "ref"
+
+    resp = _make_httpx_response(200, _transcript_detail_payload(""))
+    mock_client = _mock_async_client(resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await fetch_transcript_detail("202607162330")
+
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_transcript_detail_http_error():
+    """Non-200 → error dict."""
+    _auth.access_token = "tok"
+    _auth.refresh_token = "ref"
+
+    resp = _make_httpx_response(403, {})
+    mock_client = _mock_async_client(resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await fetch_transcript_detail("202607162330")
+
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_transcript_detail_uses_country_twn():
+    """全文請求必須帶 country=TWN（非 TW）。"""
+    _auth.access_token = "tok"
+    _auth.refresh_token = "ref"
+
+    resp = _make_httpx_response(200, _transcript_detail_payload("內容"))
+    mock_client = _mock_async_client(resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        await fetch_transcript_detail("202607162330")
+
+    call = mock_client.get.call_args
+    assert call.kwargs["params"]["country"] == "TWN"
+    assert call.kwargs["params"]["id"] == "202607162330"

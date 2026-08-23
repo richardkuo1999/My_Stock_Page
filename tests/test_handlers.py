@@ -628,3 +628,115 @@ async def test_data_callback_invalid_key(context):
 
     await data_callback(update, context)
     assert "無效" in update.callback_query.edit_message_text.call_args[0][0]
+
+
+# --- 法說會逐字稿 /ua 選單 + 分頁快取 tests (Ticket 07) ---
+
+
+def _tx_update(callback_data: str):
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = callback_data
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+    return update
+
+
+def test_ua_menu_has_transcript_button():
+    """/ua 選單末列有「法說會逐字稿」入口，callback 用 tx:list: prefix。"""
+    from bot.handlers import _ua_menu_keyboard
+
+    kb = _ua_menu_keyboard("2330").inline_keyboard
+    flat = [btn for row in kb for btn in row]
+    callbacks = {btn.callback_data for btn in flat}
+    assert "tx:list:2330" in callbacks
+
+
+@pytest.mark.asyncio
+async def test_transcript_list_shows_dates(context):
+    """tx:list lists each transcript date as a tx:show:{id}:0 button."""
+    from bot.handlers import transcript_callback
+
+    update = _tx_update("tx:list:2330")
+    fake = {
+        "symbol": "2330",
+        "transcripts": [
+            {"date": "2026/07/16", "id": "202607162330"},
+            {"date": "2026/04/16", "id": "202604162330"},
+        ],
+    }
+    with patch(
+        "tools.uanalyze.fetch_transcript_list", new=AsyncMock(return_value=fake)
+    ) as mock_fn:
+        await transcript_callback(update, context)
+
+    mock_fn.assert_awaited_once_with("2330")
+    kwargs = update.callback_query.edit_message_text.call_args.kwargs
+    kb = kwargs["reply_markup"].inline_keyboard
+    flat = [btn for row in kb for btn in row]
+    callbacks = {btn.callback_data for btn in flat}
+    assert "tx:show:202607162330:0" in callbacks
+    assert "tx:show:202604162330:0" in callbacks
+
+
+@pytest.mark.asyncio
+async def test_transcript_show_first_page(context):
+    """tx:show first page renders text and has NO 上一頁 button (page 0)."""
+    from bot.handlers import _transcript_cache, transcript_callback
+
+    _transcript_cache.clear()
+    long_text = "甲" * 8000  # 3 頁 @ 3500/頁
+    update = _tx_update("tx:show:202607162330:0")
+    with patch(
+        "tools.uanalyze.fetch_transcript_detail",
+        new=AsyncMock(return_value={"id": "202607162330", "title": "T", "date": "20260716", "stock": "2330", "transcript": long_text}),
+    ):
+        await transcript_callback(update, context)
+
+    kwargs = update.callback_query.edit_message_text.call_args.kwargs
+    kb = kwargs["reply_markup"].inline_keyboard
+    flat = [btn for row in kb for btn in row]
+    texts = [btn.text for btn in flat]
+    # 第一頁：無「上一頁」，有「下一頁」
+    assert not any("上一頁" in t for t in texts)
+    assert any("下一頁" in t for t in texts)
+    # 頁碼提示
+    body = update.callback_query.edit_message_text.call_args[0][0]
+    assert "第 1/3 頁" in body
+
+
+@pytest.mark.asyncio
+async def test_transcript_paging_does_not_refetch(context):
+    """翻頁不重打 API：連續翻兩頁，fetch_transcript_detail 只被呼叫一次（快取）。"""
+    from bot.handlers import _transcript_cache, transcript_callback
+
+    _transcript_cache.clear()
+    long_text = "乙" * 8000  # 3 頁
+    detail = {"id": "202607162330", "title": "T", "date": "20260716", "stock": "2330", "transcript": long_text}
+
+    with patch(
+        "tools.uanalyze.fetch_transcript_detail", new=AsyncMock(return_value=detail)
+    ) as mock_fn:
+        # 頁 0 → 打一次 API 存快取
+        await transcript_callback(_tx_update("tx:show:202607162330:0"), context)
+        # 頁 1、頁 2 → 讀快取，不再打 API
+        await transcript_callback(_tx_update("tx:show:202607162330:1"), context)
+        await transcript_callback(_tx_update("tx:show:202607162330:2"), context)
+
+    assert mock_fn.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_transcript_show_error(context):
+    """detail 回 error → 顯示錯誤訊息，不崩。"""
+    from bot.handlers import _transcript_cache, transcript_callback
+
+    _transcript_cache.clear()
+    update = _tx_update("tx:show:202607162330:0")
+    with patch(
+        "tools.uanalyze.fetch_transcript_detail",
+        new=AsyncMock(return_value={"error": "無法取得逐字稿全文"}),
+    ):
+        await transcript_callback(update, context)
+
+    assert "無法取得逐字稿全文" in update.callback_query.edit_message_text.call_args[0][0]

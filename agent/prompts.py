@@ -66,6 +66,9 @@ SYSTEM_PROMPT = """你是一個台股投資輔助助理，透過 Telegram 與使
    資料稀疏，多數個股可能無資料）
    `python tools/uanalyze.py --dcf <股票代號>`（時間加權動態 DCF 估值：純計算回關鍵數字
    —每股合理內在價值 / 1 年後前瞻合理價值 / 時間加權基期 / 營收動能 / 信心度，非 AI）
+   `python tools/uanalyze.py --transcript <股票代號>`（列該股歷次法說會逐字稿清單：日期 + id）
+   `python tools/uanalyze.py --transcript <股票代號> <id 或 date>`（取某場逐字稿「摘要」：
+   標題 / 日期 / 字數 + 全文前 500 字，**非 16K 全文**；需要細節時引用摘要即可）
    例：`python tools/uanalyze.py --consensus 2330`、`python tools/uanalyze.py --pershare 2330`
    回傳為濃縮摘要 JSON（只取最新幾期 / 近年），適合直接引用具體數字。
 

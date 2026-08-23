@@ -853,6 +853,109 @@ async def fetch_stock_fundamentals(symbol: str) -> dict:
     return summary
 
 
+# ── A 法說會逐字稿（清單走 gidp、全文走 cronjob；純資料不呼叫 AI）─────────────
+# 逐字稿分頁全文太長（~15K 字），Agent/CLI 只需摘要，bot 層才做分頁閱讀。
+TRANSCRIPT_SUMMARY_CHARS = 500
+
+
+async def fetch_transcript_list(symbol: str) -> dict:
+    """法說會逐字稿清單（gidp，GIDP token）。純資料，不呼叫 AI，async httpx。
+
+    來源 gidp `WebStockInfo/{symbol}?country=TW` 的 data.data 中 ChineseAccount=='逐字稿'
+    （key ua80305_cp）那一列，其 Data 為 list，每筆 {Data:'2026/07/16', id:'202607162330'}
+    （id = 日期 yyyymmdd + 股號）。回 {symbol, transcripts:[{date, id}, ...]}（最新在前，
+    來源本身已最新在前）。無資料回 error dict。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {"error": "請輸入股票代號"}
+
+    try:
+        headers = _auth.gidp_headers()
+        url = f"{GIDP_BASE_URL}/data_fetch/api/WebStockInfo/{symbol}"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(url, headers=headers, params={"country": "TW"})
+    except Exception as e:
+        logger.warning("fetch_transcript_list failed for %s: %s", symbol, e)
+        return {"error": f"查無 {symbol} 的法說會逐字稿"}
+
+    if r.status_code != 200:
+        return {"error": f"查無 {symbol} 的法說會逐字稿"}
+
+    rows = (r.json().get("data") or {}).get("data") or {}
+    raw_list = None
+    if isinstance(rows, dict):
+        for row in rows.values():
+            if isinstance(row, dict) and row.get("ChineseAccount") == "逐字稿":
+                raw_list = row.get("Data")
+                break
+
+    if not isinstance(raw_list, list) or not raw_list:
+        return {"error": f"查無 {symbol} 的法說會逐字稿"}
+
+    transcripts: list[dict] = []
+    for item in raw_list:
+        if not isinstance(item, dict):
+            continue
+        tid = item.get("id")
+        date = item.get("Data")
+        if tid:
+            transcripts.append({"date": date, "id": str(tid)})
+
+    if not transcripts:
+        return {"error": f"查無 {symbol} 的法說會逐字稿"}
+
+    return {"symbol": symbol, "transcripts": transcripts}
+
+
+async def fetch_transcript_detail(transcript_id: str) -> dict:
+    """法說會逐字稿全文（cronjob，cookie 認證）。純資料，不呼叫 AI，async httpx。
+
+    來源 cronjob `TranscriptDetail?id={id}&country=TWN`（注意 country=TWN 非 TW；
+    用 cookie_context 四 cookie + Origin/Referer）。實測全文位於 data.data.data 一層，
+    含 transcript（全文 ~15K 字）、title、stock、date（yyyymmdd）。
+    回 {id, title, date, stock, transcript}。失敗/無全文回 error dict。
+    """
+    transcript_id = str(transcript_id).strip()
+    if not transcript_id:
+        return {"error": "無法取得逐字稿全文"}
+    if not await _auth.ensure_token():
+        return {"error": "無法取得逐字稿全文"}
+
+    try:
+        cookies, headers = _auth.cookie_context()
+        url = f"{CRONJOB_BASE_URL}/data_fetch/api/TranscriptDetail"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(
+                url,
+                cookies=cookies,
+                headers=headers,
+                params={"id": transcript_id, "country": "TWN"},
+            )
+    except Exception as e:
+        logger.warning("fetch_transcript_detail failed for %s: %s", transcript_id, e)
+        return {"error": "無法取得逐字稿全文"}
+
+    if r.status_code != 200:
+        return {"error": "無法取得逐字稿全文"}
+
+    # 全文巢狀在 data.data.data 一層（實測 top: status/state/data；data.data.data 才是內容）。
+    inner = (r.json().get("data") or {}).get("data") or {}
+    if not isinstance(inner, dict):
+        return {"error": "無法取得逐字稿全文"}
+    transcript = inner.get("transcript") or ""
+    if not transcript:
+        return {"error": "無法取得逐字稿全文"}
+
+    return {
+        "id": inner.get("id") or transcript_id,
+        "title": inner.get("title") or "",
+        "date": inner.get("date") or "",
+        "stock": inner.get("stock") or "",
+        "transcript": transcript,
+    }
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     if not args:
@@ -948,6 +1051,67 @@ if __name__ == "__main__":
         result = asyncio.run(fetch_dcf_valuation(sym))
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(1 if "error" in result else 0)
+
+    if args[0] == "--transcript":
+        # A 法說會逐字稿：
+        #   --transcript <代號>            → 列該股歷次逐字稿清單（日期 + id）
+        #   --transcript <代號> <id 或 date> → 回該篇摘要（title+date+前 N 字+字數，非 16K 全文）
+        try:
+            sym = args[1]
+        except IndexError:
+            print(
+                json.dumps(
+                    {"error": "用法: python tools/uanalyze.py --transcript <代號> [id 或 date]"},
+                    ensure_ascii=False,
+                )
+            )
+            sys.exit(1)
+
+        selector = args[2] if len(args) > 2 else None
+        if not selector:
+            # 列清單
+            result = asyncio.run(fetch_transcript_list(sym))
+            print(json.dumps(result, ensure_ascii=False))
+            sys.exit(1 if "error" in result else 0)
+
+        # 帶 selector：先列清單解析出目標 id（支援直接給 id 或給 date），再取摘要。
+        listing = asyncio.run(fetch_transcript_list(sym))
+        if "error" in listing:
+            print(json.dumps(listing, ensure_ascii=False))
+            sys.exit(1)
+
+        target_id = None
+        for t in listing.get("transcripts", []):
+            if selector == t.get("id") or selector == t.get("date"):
+                target_id = t.get("id")
+                break
+        # 若使用者直接給了看起來像 id 的字串（12 碼數字），也允許直接用。
+        if target_id is None and selector.isdigit() and len(selector) >= 10:
+            target_id = selector
+        if target_id is None:
+            print(
+                json.dumps(
+                    {"error": f"查無 {sym} 對應 {selector} 的逐字稿"}, ensure_ascii=False
+                )
+            )
+            sys.exit(1)
+
+        detail = asyncio.run(fetch_transcript_detail(target_id))
+        if "error" in detail:
+            print(json.dumps(detail, ensure_ascii=False))
+            sys.exit(1)
+
+        full = detail.get("transcript", "")
+        summary = {
+            "id": detail.get("id"),
+            "title": detail.get("title"),
+            "date": detail.get("date"),
+            "stock": detail.get("stock"),
+            "字數": len(full),
+            "摘要": full[:TRANSCRIPT_SUMMARY_CHARS],
+        }
+        print(json.dumps(summary, ensure_ascii=False))
+        sys.exit(0)
 
     result = asyncio.run(analyze(symbol, prompt))
     print(json.dumps(result, ensure_ascii=False))

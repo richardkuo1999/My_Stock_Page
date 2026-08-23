@@ -67,7 +67,7 @@
 | `/threads` | 立即抓最新 Threads 貼文並回覆呼叫者 |
 | `/p <代號>` | 即時股價（直接 import 工具，不經 AI），best-effort 附 UAnalyze 基本面 |
 | `/k <代號> [天數]` | K 線圖（回傳圖片） |
-| `/ua <代號>` | UAnalyze 估值分析：跳選單選分析面向 |
+| `/ua <代號>` | UAnalyze 估值分析：跳選單選分析面向，另含「法說會逐字稿」入口（列歷次法說會→分頁閱讀全文，翻頁走記憶體快取不重打 API） |
 | `/data <代號>` | 跳選單選資料類型（法人共識 / 財務指標 / 供應鏈 / 訂單能見度 / DCF 估值）後回覆濃縮數據 |
 
 > 快捷指令直接呼叫對應工具、不經 Agent（省 token、秒回）；需自然語言或組合多工具時才用 `@mention`。
@@ -134,7 +134,7 @@ Google AI Pro 方案不提供 `GEMINI_API_KEY`，SDK 需要此 key 才能執行�
 | Script | 功能 | 範例用法 |
 |--------|------|----------|
 | `tools/fetch_news.py` | 抓指定股票/全部最新新聞（個股走本地過濾） | `python tools/fetch_news.py 2330 --limit 5` |
-| `tools/uanalyze.py` | AI 估值分析 | `python tools/uanalyze.py 2330` |
+| `tools/uanalyze.py` | AI 估值分析＋純數據（法人共識/財務指標/供應鏈/訂單/DCF/法說會逐字稿清單與摘要） | `python tools/uanalyze.py 2330`、`--transcript 2330` |
 | `tools/get_stock_price.py` | 即時股價（best-effort 附 UAnalyze 基本面） | `python tools/get_stock_price.py 2330` |
 | `tools/draw_kchart.py` | K 線圖（mplfinance 繪製，回傳圖片路徑） | `python tools/draw_kchart.py 2330 --period 60` |
 | `tools/fetch_threads.py` | 抓追蹤帳號 Threads 貼文 | `python tools/fetch_threads.py --check-new` |

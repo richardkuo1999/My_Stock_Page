@@ -73,7 +73,7 @@ docker compose up -d
 | `/threads` | 立即抓最新 Threads 貼文並回覆 |
 | `/p <代號>` | 即時股價（直接跑工具，秒回），並 best-effort 附上 UAnalyze 基本面（本益比/最新財報/月營收等），例 `/p 2330` |
 | `/k <代號> [天數]` | K 線圖（回傳圖片），例 `/k 2330 60` |
-| `/ua <代號>` | UAnalyze AI 分析：跳出選單選分析面向（近況/產業/資本支出…），例 `/ua 2330` |
+| `/ua <代號>` | UAnalyze AI 分析：跳出選單選分析面向（近況/產業/資本支出…），另含「法說會逐字稿」入口（列歷次法說會→選一場→分頁閱讀完整逐字稿全文，翻頁走記憶體快取不重打 API），例 `/ua 2330` |
 | `/data <代號>` | 跳出選單選資料類型（法人共識 / 財務指標 / 供應鏈 / 訂單能見度 / DCF 估值），回濃縮數據，例 `/data 2330` |
 | `@bot 你的問題` | 交給 Agent 處理（需先設定 Antigravity CLI，見下） |
 
@@ -111,6 +111,8 @@ python tools/uanalyze.py --pershare 2330                   # 近年每股財務�
 python tools/uanalyze.py --supply 2330                     # 供應鏈（同業/供應鏈對照標的代號清單）
 python tools/uanalyze.py --order 2330                      # 訂單能見度（訂單能見度 + 合約負債，資料稀疏可能無資料）
 python tools/uanalyze.py --dcf 2330                        # DCF 估值（時間加權動態 DCF，純計算回內在價值/前瞻價值/信心度，非 AI）
+python tools/uanalyze.py --transcript 2330                 # 法說會逐字稿清單（列歷次日期 + id）
+python tools/uanalyze.py --transcript 2330 202607162330    # 某場逐字稿摘要（title/date/字數 + 全文前 500 字，非 16K 全文）
 python tools/summarize_document.py https://example.com/x   # URL/PDF 摘要
 python tools/lookup_stock_name.py 2330                     # 查代號→公司名（對照表）
 python tools/lookup_stock_name.py --set 9999 某公司        # 手動寫回對照表（後援）

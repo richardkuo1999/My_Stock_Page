@@ -23,7 +23,7 @@ HELP_TEXT = (
     "*即時查詢（直接跑工具，秒回）*\n"
     "/p `<代號>` — 即時股價（附基本面：本益比/最新財報等），例 `/p 2330`\n"
     "/k `<代號> [天數]` — K 線圖，例 `/k 2330 60`\n"
-    "/ua `<代號>` — UAnalyze 估值分析，例 `/ua 2330`\n"
+    "/ua `<代號>` — UAnalyze 估值分析＋法說會逐字稿選單，例 `/ua 2330`\n"
     "/data `<代號>` — 法人共識/財務指標/供應鏈/訂單能見度/DCF 估值選單，例 `/data 2330`\n"
     "/news — 立即抓最新新聞\n"
     "/threads — 立即抓 Threads 貼文\n\n"
@@ -112,6 +112,57 @@ DATA_OPTIONS: list[tuple[str, str]] = [
     ("訂單能見度", "order"),
     ("DCF 估值", "dcf"),
 ]
+
+
+# ── 法說會逐字稿分頁快取（Ticket 07，做法 2）───────────────────────────────
+# 全文很長（~15K 字）。選定某場「打一次」TranscriptDetail 存進記憶體快取，之後翻頁
+# 只讀快取切段落、不再打 API。快取有 TTL，過期才重抓。
+import time as _time  # noqa: E402
+
+TRANSCRIPT_PAGE_CHARS = 3500  # 每頁字數（<4096，留余裕給頁碼提示與按鈕）
+TRANSCRIPT_CACHE_TTL = 600.0  # 秒；過期重抓
+# {id: (fetched_at, full_text, title, date)}
+_transcript_cache: dict[str, tuple[float, str, str, str]] = {}
+
+
+async def _get_transcript_cached(transcript_id: str) -> dict:
+    """回傳逐字稿全文 dict（快取命中且未過期→不打 API；否則打一次 API 存快取）。
+
+    回 {'transcript','title','date'} 或 {'error': ...}。
+    """
+    now = _time.monotonic()
+    cached = _transcript_cache.get(transcript_id)
+    if cached and (now - cached[0]) < TRANSCRIPT_CACHE_TTL:
+        return {"transcript": cached[1], "title": cached[2], "date": cached[3]}
+
+    from tools.uanalyze import fetch_transcript_detail
+
+    detail = await fetch_transcript_detail(transcript_id)
+    if "error" in detail:
+        return detail
+    _transcript_cache[transcript_id] = (
+        now,
+        detail.get("transcript", ""),
+        detail.get("title", ""),
+        detail.get("date", ""),
+    )
+    return {
+        "transcript": detail.get("transcript", ""),
+        "title": detail.get("title", ""),
+        "date": detail.get("date", ""),
+    }
+
+
+def _paginate(text: str, page: int) -> tuple[str, int, int]:
+    """把全文切成固定長度的頁，回 (該頁內容, 目前頁碼(0-based), 總頁數)。
+
+    page 會夾到合法範圍 [0, total-1]。空字串視為 1 頁。
+    """
+    total = max(1, (len(text) + TRANSCRIPT_PAGE_CHARS - 1) // TRANSCRIPT_PAGE_CHARS)
+    page = max(0, min(page, total - 1))
+    start = page * TRANSCRIPT_PAGE_CHARS
+    chunk = text[start : start + TRANSCRIPT_PAGE_CHARS]
+    return chunk, page, total
 
 
 
@@ -216,12 +267,19 @@ async def kchart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 def _ua_menu_keyboard(symbol: str) -> InlineKeyboardMarkup:
-    """Build the UAnalyze面向 selection keyboard for a symbol (3 per row)."""
+    """Build the UAnalyze面向 selection keyboard for a symbol (3 per row).
+
+    末列額外加一顆「法說會逐字稿」入口（tx: prefix，走獨立的分頁快取流程，
+    與 ua:{symbol}:{idx} 的 AI 分析分流）。
+    """
     buttons = [
         InlineKeyboardButton(label, callback_data=f"ua:{symbol}:{i}")
         for i, (label, _prompt) in enumerate(UA_PROMPTS)
     ]
     rows = [buttons[i : i + 3] for i in range(0, len(buttons), 3)]
+    rows.append(
+        [InlineKeyboardButton("📝 法說會逐字稿", callback_data=f"tx:list:{symbol}")]
+    )
     return InlineKeyboardMarkup(rows)
 
 
@@ -291,6 +349,109 @@ async def uanalyze_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     )
     # Telegram message hard limit is 4096 chars.
     await query.edit_message_text(text[:4096], reply_markup=back)
+
+
+def _transcript_page_keyboard(
+    transcript_id: str, symbol: str, page: int, total: int
+) -> InlineKeyboardMarkup:
+    """分頁按鈕：上一頁/下一頁（第一頁無上一頁、最後頁無下一頁）+ 返回清單。
+
+    callback_data 皆 tx:show:{id}:{page} / tx:list:{symbol}，長度遠 < 64 bytes。
+    """
+    nav: list[InlineKeyboardButton] = []
+    if page > 0:
+        nav.append(
+            InlineKeyboardButton("⬅️ 上一頁", callback_data=f"tx:show:{transcript_id}:{page - 1}")
+        )
+    if page < total - 1:
+        nav.append(
+            InlineKeyboardButton("下一頁 ➡️", callback_data=f"tx:show:{transcript_id}:{page + 1}")
+        )
+    rows = []
+    if nav:
+        rows.append(nav)
+    rows.append(
+        [InlineKeyboardButton("📋 回逐字稿清單", callback_data=f"tx:list:{symbol}")]
+    )
+    return InlineKeyboardMarkup(rows)
+
+
+async def transcript_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """法說會逐字稿流程（Ticket 07，做法 2 分頁快取）。
+
+    - tx:list:{symbol} → 列該股歷次逐字稿日期清單（每場一顆按鈕 tx:show:{id}:0）。
+    - tx:show:{id}:{page} → 顯示全文第 page 頁。**快取命中→不打 API**，只切段落換頁。
+    """
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+
+    parts = query.data.split(":")
+
+    # tx:list:{symbol} → 列清單
+    if len(parts) >= 3 and parts[1] == "list":
+        symbol = parts[2]
+        await query.edit_message_text(f"📝 正在查詢 {symbol} 的法說會逐字稿清單…")
+
+        from tools.uanalyze import fetch_transcript_list
+
+        try:
+            r = await fetch_transcript_list(symbol)
+        except Exception as e:
+            logger.error("tx:list failed for %s: %s", symbol, e)
+            await query.edit_message_text(f"⚠️ 查詢失敗：{e}")
+            return
+
+        if "error" in r:
+            await query.edit_message_text(f"😕 {r['error']}")
+            return
+
+        transcripts = r.get("transcripts") or []
+        buttons = [
+            InlineKeyboardButton(
+                t.get("date") or t.get("id"), callback_data=f"tx:show:{t['id']}:0"
+            )
+            for t in transcripts
+        ]
+        rows = [buttons[i : i + 3] for i in range(0, len(buttons), 3)]
+        rows.append(
+            [InlineKeyboardButton("⬅️ 選其他面向", callback_data=f"ua:back:{symbol}")]
+        )
+        await query.edit_message_text(
+            f"📝 {symbol} 歷次法說會逐字稿（共 {len(transcripts)} 場），選一場閱讀：",
+            reply_markup=InlineKeyboardMarkup(rows),
+        )
+        return
+
+    # tx:show:{id}:{page} → 顯示某頁
+    if len(parts) >= 4 and parts[1] == "show":
+        transcript_id = parts[2]
+        try:
+            page = int(parts[3])
+        except ValueError:
+            page = 0
+
+        r = await _get_transcript_cached(transcript_id)
+        if "error" in r:
+            await query.edit_message_text(f"😕 {r['error']}")
+            return
+
+        symbol = transcript_id[-4:]  # id = 日期 + 股號，後 4 碼為代號
+        chunk, page, total = _paginate(r.get("transcript", ""), page)
+        title = r.get("title", "")
+        date = r.get("date", "")
+        header = f"📝 {title or symbol}"
+        if date:
+            header += f"（{date}）"
+        header += f"\n第 {page + 1}/{total} 頁\n{'=' * 20}\n"
+        text = header + chunk
+        keyboard = _transcript_page_keyboard(transcript_id, symbol, page, total)
+        # Telegram message hard limit is 4096 chars.
+        await query.edit_message_text(text[:4096], reply_markup=keyboard)
+        return
+
+    await query.edit_message_text("⚠️ 無效的選項")
 
 
 def _data_menu_keyboard(symbol: str) -> InlineKeyboardMarkup:
@@ -544,6 +705,9 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("ua", uanalyze_command), group=0)
     application.add_handler(
         CallbackQueryHandler(uanalyze_callback, pattern=r"^ua:"), group=0
+    )
+    application.add_handler(
+        CallbackQueryHandler(transcript_callback, pattern=r"^tx:"), group=0
     )
     application.add_handler(CommandHandler("data", data_command), group=0)
     application.add_handler(
