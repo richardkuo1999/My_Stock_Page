@@ -14,7 +14,9 @@ from tools.uanalyze import (
     _request_with_auth,
     analyze,
     fetch_eps_consensus,
+    fetch_order_visibility,
     fetch_per_share_metrics,
+    fetch_supply_chain,
     get_completion,
     get_reports,
     list_latest_reports,
@@ -692,6 +694,159 @@ async def test_fetch_per_share_metrics_no_token():
     """Login fails → error dict."""
     with patch.dict("os.environ", {"UANALYZE_EMAIL": "", "UANALYZE_PASSWORD": ""}):
         result = await fetch_per_share_metrics("2330")
+    assert "error" in result
+
+
+# --- fetch_supply_chain() tests (Ticket 05, A7) ---
+
+
+def _supply_payload(peers):
+    """Mimic the real StockComparisonStockPool response: data.data is a list of code strings."""
+    return {
+        "data": {
+            "data": list(peers),
+            "type": "peer",
+            "stock_code": "2330",
+            "stock_name": "台積電",
+            "country": "TW",
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_fetch_supply_chain_success():
+    """data.data is a list of plain code strings → peers list returned."""
+    _auth.access_token = "tok"
+    _auth.refresh_token = "ref"
+
+    resp = _make_httpx_response(200, _supply_payload(["2303", "5347", "6770"]))
+    mock_client = _mock_async_client(resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await fetch_supply_chain("2330")
+
+    assert result["symbol"] == "2330"
+    assert result["peers"] == ["2303", "5347", "6770"]
+    assert result["stock_name"] == "台積電"
+
+
+@pytest.mark.asyncio
+async def test_fetch_supply_chain_dict_elements():
+    """Defensive: if elements are dicts, pull the code field."""
+    _auth.access_token = "tok"
+    _auth.refresh_token = "ref"
+
+    payload = {"data": {"data": [{"stock_code": "2303"}, {"code": "5347"}]}}
+    resp = _make_httpx_response(200, payload)
+    mock_client = _mock_async_client(resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await fetch_supply_chain("2330")
+
+    assert result["peers"] == ["2303", "5347"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_supply_chain_empty():
+    """Empty list → error dict."""
+    _auth.access_token = "tok"
+    _auth.refresh_token = "ref"
+
+    resp = _make_httpx_response(200, {"data": {"data": []}})
+    mock_client = _mock_async_client(resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await fetch_supply_chain("9999")
+
+    assert "error" in result
+    assert "9999" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_supply_chain_http_error():
+    """Non-200 → error dict."""
+    _auth.access_token = "tok"
+    _auth.refresh_token = "ref"
+
+    resp = _make_httpx_response(500, {"error": "boom"})
+    mock_client = _mock_async_client(resp)
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        result = await fetch_supply_chain("2330")
+
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_supply_chain_no_token():
+    """Login fails → error dict."""
+    with patch.dict("os.environ", {"UANALYZE_EMAIL": "", "UANALYZE_PASSWORD": ""}):
+        result = await fetch_supply_chain("2330")
+    assert "error" in result
+
+
+# --- fetch_order_visibility() tests (Ticket 05, A8) ---
+
+
+@pytest.mark.asyncio
+async def test_fetch_order_visibility_success():
+    """Order module has data, contract empty → summary with order_visibility only."""
+    _auth.access_token = "tok"
+    _auth.refresh_token = "ref"
+
+    order_resp = _make_httpx_response(
+        200, {"data": {"data": [{"month": "2026Q1", "visibility": "6 個月"}], "country": "TW"}}
+    )
+    contract_resp = _make_httpx_response(200, {"data": {"data": None, "country": "TW"}})
+    clients = iter([_mock_async_client(order_resp), _mock_async_client(contract_resp)])
+
+    with patch("httpx.AsyncClient", side_effect=lambda **kwargs: next(clients)):
+        result = await fetch_order_visibility("3661")
+
+    assert result["symbol"] == "3661"
+    assert result["order_visibility"] == [{"month": "2026Q1", "visibility": "6 個月"}]
+    assert "contract_liability" not in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_order_visibility_both_present():
+    """Both modules have data → both sections returned."""
+    _auth.access_token = "tok"
+    _auth.refresh_token = "ref"
+
+    order_resp = _make_httpx_response(200, {"data": {"data": {"ov": 1}, "country": "TW"}})
+    contract_resp = _make_httpx_response(200, {"data": {"data": {"cl": 2}, "country": "TW"}})
+    clients = iter([_mock_async_client(order_resp), _mock_async_client(contract_resp)])
+
+    with patch("httpx.AsyncClient", side_effect=lambda **kwargs: next(clients)):
+        result = await fetch_order_visibility("3661")
+
+    assert result["order_visibility"] == {"ov": 1}
+    assert result["contract_liability"] == {"cl": 2}
+
+
+@pytest.mark.asyncio
+async def test_fetch_order_visibility_both_empty():
+    """Both modules empty (real 2330 shape {'country':'TW'}, data.data=None) → error dict."""
+    _auth.access_token = "tok"
+    _auth.refresh_token = "ref"
+
+    empty_resp = _make_httpx_response(200, {"data": {"country": "TW"}})
+    clients = iter([_mock_async_client(empty_resp), _mock_async_client(empty_resp)])
+
+    with patch("httpx.AsyncClient", side_effect=lambda **kwargs: next(clients)):
+        result = await fetch_order_visibility("2330")
+
+    assert "error" in result
+    assert "2330" in result["error"]
+    assert "訂單能見度" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_order_visibility_no_token():
+    """Login fails → error dict."""
+    with patch.dict("os.environ", {"UANALYZE_EMAIL": "", "UANALYZE_PASSWORD": ""}):
+        result = await fetch_order_visibility("2330")
     assert "error" in result
 
 

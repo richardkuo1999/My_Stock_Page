@@ -427,6 +427,123 @@ async def fetch_per_share_metrics(symbol: str, years: int = 5) -> dict:
     return {"symbol": symbol, "metrics": metrics}
 
 
+async def fetch_supply_chain(symbol: str) -> dict:
+    """A7 供應鏈：同業/供應鏈對照標的清單（cronjob）。
+
+    純資料函式（不呼叫 AI，用 async httpx）。來源 data.data 是輕量的代號清單
+    （實測 ['2303','5347','6770']，元素為純代號字串）。回 {'symbol','peers',...}，
+    無資料回 error dict。防禦性處理 dict 形狀的元素（取其中的代號欄位）。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {"error": "請輸入股票代號"}
+    if not await _auth.ensure_token():
+        return {"error": "UAnalyze 登入失敗（請確認 UANALYZE_EMAIL / UANALYZE_PASSWORD）"}
+
+    try:
+        cookies, headers = _auth.cookie_context()
+        url = f"{CRONJOB_BASE_URL}/data_fetch/api/StockComparisonStockPool/{symbol}"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(url, cookies=cookies, headers=headers)
+    except Exception as e:
+        logger.warning("fetch_supply_chain failed for %s: %s", symbol, e)
+        return {"error": f"查無 {symbol} 的供應鏈資料"}
+
+    if r.status_code != 200:
+        return {"error": f"查無 {symbol} 的供應鏈資料"}
+
+    data = (r.json().get("data") or {})
+    raw = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(raw, list) or not raw:
+        return {"error": f"查無 {symbol} 的供應鏈資料"}
+
+    peers: list[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            code = item.strip()
+        elif isinstance(item, dict):
+            # 防禦：實測是純字串，但若日後回 dict，取常見代號欄位。
+            code = str(
+                item.get("stock_code")
+                or item.get("code")
+                or item.get("symbol")
+                or item.get("name")
+                or ""
+            ).strip()
+        else:
+            code = str(item).strip()
+        if code:
+            peers.append(code)
+
+    if not peers:
+        return {"error": f"查無 {symbol} 的供應鏈資料"}
+
+    result = {"symbol": symbol, "peers": peers}
+    # 若來源附帶自身公司名，一併回傳供顯示（best-effort）。
+    if isinstance(data, dict) and data.get("stock_name"):
+        result["stock_name"] = data["stock_name"]
+    return result
+
+
+def _order_rows(payload: dict) -> dict:
+    """Extract the non-empty inner data of an order/contract module response.
+
+    回應形狀為 {'data': {'data': <list|dict|None>, 'country':...}}。稀疏時
+    data.data 為 None/空。回非空的 data.data，否則回 {}。
+    """
+    data = payload.get("data") if isinstance(payload, dict) else None
+    inner = data.get("data") if isinstance(data, dict) else None
+    if isinstance(inner, (list, dict)) and inner:
+        return {"inner": inner}
+    return {}
+
+
+async def fetch_order_visibility(symbol: str) -> dict:
+    """A8 訂單能見度：訂單能見度 + 合約負債（cronjob，資料稀疏）。
+
+    純資料函式（不呼叫 AI，用 async httpx）。兩個端點各 best-effort。實測多數
+    個股（含 2330）兩端皆回空 data.data（僅 {'country':'TW'}）→ 兩者都空時回
+    error dict，讓 bot 回清楚的「查無」提示；有任一端有資料才回摘要 dict。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {"error": "請輸入股票代號"}
+    if not await _auth.ensure_token():
+        return {"error": "UAnalyze 登入失敗（請確認 UANALYZE_EMAIL / UANALYZE_PASSWORD）"}
+
+    result: dict = {"symbol": symbol}
+
+    # --- 訂單能見度 ---
+    try:
+        cookies, headers = _auth.cookie_context()
+        url = f"{CRONJOB_BASE_URL}/data_fetch/api/OrderVisibilityModule/{symbol}"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(url, cookies=cookies, headers=headers)
+        if r.status_code == 200:
+            rows = _order_rows(r.json())
+            if rows:
+                result["order_visibility"] = rows["inner"]
+    except Exception as e:
+        logger.warning("fetch_order_visibility (order) failed for %s: %s", symbol, e)
+
+    # --- 合約負債 ---
+    try:
+        cookies, headers = _auth.cookie_context()
+        url = f"{CRONJOB_BASE_URL}/data_fetch/api/ContractLiabilityModule/{symbol}"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(url, cookies=cookies, headers=headers)
+        if r.status_code == 200:
+            rows = _order_rows(r.json())
+            if rows:
+                result["contract_liability"] = rows["inner"]
+    except Exception as e:
+        logger.warning("fetch_order_visibility (contract) failed for %s: %s", symbol, e)
+
+    if "order_visibility" not in result and "contract_liability" not in result:
+        return {"error": f"查無 {symbol} 的訂單能見度資料"}
+    return result
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     if not args:
@@ -477,6 +594,28 @@ if __name__ == "__main__":
             print(json.dumps({"error": "用法: python tools/uanalyze.py --pershare <代號>"}, ensure_ascii=False))
             sys.exit(1)
         result = asyncio.run(fetch_per_share_metrics(sym))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
+
+    if args[0] == "--supply":
+        # A7 供應鏈/同業清單摘要（Agent 用）。
+        try:
+            sym = args[1]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --supply <代號>"}, ensure_ascii=False))
+            sys.exit(1)
+        result = asyncio.run(fetch_supply_chain(sym))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
+
+    if args[0] == "--order":
+        # A8 訂單能見度/合約負債摘要（Agent 用；資料稀疏可能無資料）。
+        try:
+            sym = args[1]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --order <代號>"}, ensure_ascii=False))
+            sys.exit(1)
+        result = asyncio.run(fetch_order_visibility(sym))
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(1 if "error" in result else 0)
 

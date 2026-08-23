@@ -74,7 +74,7 @@ docker compose up -d
 | `/p <代號>` | 即時股價（直接跑工具，秒回），例 `/p 2330` |
 | `/k <代號> [天數]` | K 線圖（回傳圖片），例 `/k 2330 60` |
 | `/ua <代號>` | UAnalyze AI 分析：跳出選單選分析面向（近況/產業/資本支出…），例 `/ua 2330` |
-| `/data <代號>` | 跳出選單選資料類型（法人共識 / 財務指標），回濃縮數據，例 `/data 2330` |
+| `/data <代號>` | 跳出選單選資料類型（法人共識 / 財務指標 / 供應鏈 / 訂單能見度），回濃縮數據，例 `/data 2330` |
 | `@bot 你的問題` | 交給 Agent 處理（需先設定 Antigravity CLI，見下） |
 
 > 快捷指令（`/p` `/k` `/ua` `/news` `/threads`）直接呼叫工具、不經 AI，回應快且省 token；
@@ -107,6 +107,8 @@ python tools/uanalyze.py 2330                              # UAnalyze AI 估值�
 python tools/uanalyze.py --reports --limit 50              # UAnalyze 最新研究報告列表（監控用）
 python tools/uanalyze.py --consensus 2330                  # 法人共識（單季 EPS 實際 vs 預估 + 月營收共識）摘要
 python tools/uanalyze.py --pershare 2330                   # 近年每股財務指標摘要（FCF/EPS/EBITDA/ROE/ROIC…）
+python tools/uanalyze.py --supply 2330                     # 供應鏈（同業/供應鏈對照標的代號清單）
+python tools/uanalyze.py --order 2330                      # 訂單能見度（訂單能見度 + 合約負債，資料稀疏可能無資料）
 python tools/summarize_document.py https://example.com/x   # URL/PDF 摘要
 python tools/lookup_stock_name.py 2330                     # 查代號→公司名（對照表）
 python tools/lookup_stock_name.py --set 9999 某公司        # 寫回對照表

@@ -58,6 +58,9 @@ SYSTEM_PROMPT = """你是一個台股投資輔助助理，透過 Telegram 與使
    法人預估 + 月營收共識摘要）
    `python tools/uanalyze.py --pershare <股票代號>`（近年每股財務指標摘要：每股自由
    現金流 / EPS / EBITDA / 現金股息 / 年度 ROE / ROIC 等）
+   `python tools/uanalyze.py --supply <股票代號>`（供應鏈：同業/供應鏈對照標的代號清單）
+   `python tools/uanalyze.py --order <股票代號>`（訂單能見度：訂單能見度 + 合約負債，
+   資料稀疏，多數個股可能無資料）
    例：`python tools/uanalyze.py --consensus 2330`、`python tools/uanalyze.py --pershare 2330`
    回傳為濃縮摘要 JSON（只取最新幾期 / 近年），適合直接引用具體數字。
 

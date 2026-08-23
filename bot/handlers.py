@@ -24,7 +24,7 @@ HELP_TEXT = (
     "/p `<代號>` — 即時股價，例 `/p 2330`\n"
     "/k `<代號> [天數]` — K 線圖，例 `/k 2330 60`\n"
     "/ua `<代號>` — UAnalyze 估值分析，例 `/ua 2330`\n"
-    "/data `<代號>` — 法人共識/財務指標選單，例 `/data 2330`\n"
+    "/data `<代號>` — 法人共識/財務指標/供應鏈/訂單能見度選單，例 `/data 2330`\n"
     "/news — 立即抓最新新聞\n"
     "/threads — 立即抓 Threads 貼文\n\n"
     "*問 AI（自然語言，會自動組合工具）*\n"
@@ -104,10 +104,12 @@ UA_PROMPTS: list[tuple[str, str]] = [
 
 
 # /data 選單。每項 (按鈕標籤, callback key)。key 對應 tools/uanalyze.py 的資料函式。
-# 預留結構：05/06 之後可再加 supply / order / dcf 等選項。
+# 06 之後可再加 dcf 等選項。
 DATA_OPTIONS: list[tuple[str, str]] = [
     ("法人共識", "consensus"),
     ("財務指標", "pershare"),
+    ("供應鏈", "supply"),
+    ("訂單能見度", "order"),
 ]
 
 
@@ -358,6 +360,38 @@ def _format_pershare(symbol: str, r: dict) -> str:
     return "\n".join(lines)
 
 
+def _format_supply(symbol: str, r: dict) -> str:
+    """Condense the fetch_supply_chain summary into readable Chinese text."""
+    lines = [f"📑 {symbol} · 供應鏈/同業", "=" * 20]
+    peers = r.get("peers") or []
+    if r.get("stock_name"):
+        lines.append(f"本公司：{r['stock_name']}（{symbol}）")
+    lines.append(f"同業/供應鏈標的（{len(peers)} 檔）：")
+    lines.append("、".join(peers))
+    return "\n".join(lines)
+
+
+def _format_order(symbol: str, r: dict) -> str:
+    """Condense the fetch_order_visibility summary into readable Chinese text.
+
+    資料稀疏；兩段（訂單能見度 / 合約負債）各 best-effort，有才列。
+    """
+    import json as _json
+
+    lines = [f"📑 {symbol} · 訂單能見度", "=" * 20]
+    ov = r.get("order_visibility")
+    if ov:
+        lines.append("【訂單能見度】")
+        lines.append(_json.dumps(ov, ensure_ascii=False))
+    cl = r.get("contract_liability")
+    if cl:
+        if ov:
+            lines.append("")
+        lines.append("【合約負債】")
+        lines.append(_json.dumps(cl, ensure_ascii=False))
+    return "\n".join(lines)
+
+
 async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle a /data menu button press: fetch the chosen data set, or return
     to the menu when the back button is pressed."""
@@ -388,13 +422,22 @@ async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     await query.edit_message_text(f"📑 正在查詢 {symbol}（{labels[key]}）…")
 
-    from tools.uanalyze import fetch_eps_consensus, fetch_per_share_metrics
+    from tools.uanalyze import (
+        fetch_eps_consensus,
+        fetch_order_visibility,
+        fetch_per_share_metrics,
+        fetch_supply_chain,
+    )
 
     try:
         if key == "consensus":
             r = await fetch_eps_consensus(symbol)
-        else:
+        elif key == "pershare":
             r = await fetch_per_share_metrics(symbol)
+        elif key == "supply":
+            r = await fetch_supply_chain(symbol)
+        else:
+            r = await fetch_order_visibility(symbol)
     except Exception as e:
         logger.error("/data callback failed for %s (%s): %s", symbol, key, e)
         await query.edit_message_text(f"⚠️ 查詢失敗：{e}")
@@ -404,7 +447,14 @@ async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await query.edit_message_text(f"😕 {r['error']}")
         return
 
-    text = _format_consensus(symbol, r) if key == "consensus" else _format_pershare(symbol, r)
+    if key == "consensus":
+        text = _format_consensus(symbol, r)
+    elif key == "pershare":
+        text = _format_pershare(symbol, r)
+    elif key == "supply":
+        text = _format_supply(symbol, r)
+    else:
+        text = _format_order(symbol, r)
     back = InlineKeyboardMarkup(
         [[InlineKeyboardButton("⬅️ 選其他資料", callback_data=f"data:back:{symbol}")]]
     )

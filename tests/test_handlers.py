@@ -356,7 +356,7 @@ async def test_data_command_no_arg(context):
 
 
 def test_data_menu_keyboard_options():
-    """Menu keyboard has consensus + pershare buttons with data: callbacks."""
+    """Menu keyboard has all four data buttons with data: callbacks."""
     from bot.handlers import _data_menu_keyboard
 
     kb = _data_menu_keyboard("2330").inline_keyboard
@@ -364,6 +364,9 @@ def test_data_menu_keyboard_options():
     callbacks = {btn.callback_data for btn in flat}
     assert "data:2330:consensus" in callbacks
     assert "data:2330:pershare" in callbacks
+    assert "data:2330:supply" in callbacks
+    assert "data:2330:order" in callbacks
+    assert len(flat) == 4
 
 
 @pytest.mark.asyncio
@@ -467,6 +470,64 @@ async def test_data_callback_error_dict(context):
         await data_callback(update, context)
 
     assert any("查無" in c.args[0] for c in update.callback_query.edit_message_text.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_data_callback_supply(context):
+    """Pressing 供應鏈 calls fetch_supply_chain and lists peer codes."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:2330:supply"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    fake = {"symbol": "2330", "peers": ["2303", "5347", "6770"], "stock_name": "台積電"}
+    with patch("tools.uanalyze.fetch_supply_chain", new=AsyncMock(return_value=fake)) as mock_fn:
+        await data_callback(update, context)
+
+    mock_fn.assert_awaited_once_with("2330")
+    assert any("供應鏈" in c.args[0] for c in update.callback_query.edit_message_text.call_args_list)
+    assert any("2303" in c.args[0] for c in update.callback_query.edit_message_text.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_data_callback_order(context):
+    """Pressing 訂單能見度 calls fetch_order_visibility and renders text."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:3661:order"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    fake = {"symbol": "3661", "order_visibility": [{"month": "2026Q1", "visibility": "6 個月"}]}
+    with patch("tools.uanalyze.fetch_order_visibility", new=AsyncMock(return_value=fake)) as mock_fn:
+        await data_callback(update, context)
+
+    mock_fn.assert_awaited_once_with("3661")
+    assert any("訂單能見度" in c.args[0] for c in update.callback_query.edit_message_text.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_data_callback_order_no_data(context):
+    """A8 sparse: error dict → friendly 查無訂單能見度 message (not blank)."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:2330:order"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    err = {"error": "查無 2330 的訂單能見度資料"}
+    with patch("tools.uanalyze.fetch_order_visibility", new=AsyncMock(return_value=err)):
+        await data_callback(update, context)
+
+    msgs = [c.args[0] for c in update.callback_query.edit_message_text.call_args_list]
+    assert any("查無" in m and "訂單能見度" in m for m in msgs)
 
 
 @pytest.mark.asyncio
