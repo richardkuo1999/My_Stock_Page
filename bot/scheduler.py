@@ -154,9 +154,11 @@ async def news_push_job(bot, subscription_manager, agent_bridge) -> None:
     header = f"📰 新聞推播 ({len(new_articles)} 則新文章)\n{'=' * 20}\n\n"
     message = header + summary
 
-    for chat_id in subscribers:
+    for chat_id, thread_id in subscribers:
         try:
-            await bot.send_message(chat_id=chat_id, text=message)
+            await bot.send_message(
+                chat_id=chat_id, text=message, message_thread_id=thread_id
+            )
         except Exception as e:
             logger.error("Failed to push news to %s: %s", chat_id, e)
 
@@ -274,9 +276,11 @@ async def threads_push_job(bot, subscription_manager) -> None:
     # Format and push (NO Agent, direct push)
     for post in new_posts:
         message = _format_thread_post(post)
-        for chat_id in subscribers:
+        for chat_id, thread_id in subscribers:
             try:
-                await bot.send_message(chat_id=chat_id, text=message)
+                await bot.send_message(
+                    chat_id=chat_id, text=message, message_thread_id=thread_id
+                )
             except Exception as e:
                 logger.error("Failed to push thread to %s: %s", chat_id, e)
 
@@ -412,10 +416,13 @@ async def uanalyze_push_job(bot, subscription_manager) -> None:
     # Oldest-first so the newest report ends up at the bottom of the chat.
     for report in sorted(new_reports, key=lambda r: r["id"]):
         message = _format_uanalyze_report(report)
-        for chat_id in subscribers:
+        for chat_id, thread_id in subscribers:
             try:
                 await bot.send_message(
-                    chat_id=chat_id, text=message, disable_web_page_preview=True
+                    chat_id=chat_id,
+                    text=message,
+                    message_thread_id=thread_id,
+                    disable_web_page_preview=True,
                 )
             except Exception as e:
                 logger.error("Failed to push UAnalyze report to %s: %s", chat_id, e)

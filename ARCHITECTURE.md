@@ -240,10 +240,13 @@ data/
 
 ```json
 {
-  "news": [{"chat_id": 123456, "subscribed_at": "2026-08-22T03:00:00"}],
-  "threads": [{"chat_id": 123456, "subscribed_at": "2026-08-22T03:00:00"}]
+  "news": [{"chat_id": 123456, "thread_id": null, "subscribed_at": "2026-08-22T03:00:00"}],
+  "threads": [{"chat_id": -1001234, "thread_id": 42, "subscribed_at": "2026-08-22T03:00:00"}]
 }
 ```
+
+- 訂閱單位是複合鍵 `(chat_id, thread_id)`：`thread_id` 是群組論壇主題的 `message_thread_id`，私訊與群組 General 頻道為 `null`。同一群組不同 topic 可各自獨立訂閱。
+- 舊版資料（只有 `chat_id`、無 `thread_id` 欄位）自動視為 `thread_id = null`，無需遷移。
 
 ### pushed_news.json 結構
 

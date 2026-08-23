@@ -58,9 +58,9 @@ def mock_bot():
 
 @pytest.fixture
 def mock_subscription_manager():
-    """Mock SubscriptionManager."""
+    """Mock SubscriptionManager: one General-thread sub and one forum-topic sub."""
     mgr = MagicMock()
-    mgr.get_subscribers = MagicMock(return_value=[12345, 67890])
+    mgr.get_subscribers = MagicMock(return_value=[(12345, None), (67890, 7)])
     return mgr
 
 
@@ -244,7 +244,9 @@ async def test_news_push_job_success(
     assert mock_bot.send_message.call_count == 2
     calls = mock_bot.send_message.call_args_list
     assert calls[0].kwargs["chat_id"] == 12345
+    assert calls[0].kwargs["message_thread_id"] is None
     assert calls[1].kwargs["chat_id"] == 67890
+    assert calls[1].kwargs["message_thread_id"] == 7
     assert "新聞推播" in calls[0].kwargs["text"]
 
     # Records written to file
@@ -617,7 +619,7 @@ async def test_threads_push_job_success(
     mock_bot, mock_subscription_manager, pushed_threads_path, sample_thread_posts
 ):
     """New posts are formatted and pushed to subscribers."""
-    mock_subscription_manager.get_subscribers = MagicMock(return_value=[12345, 67890])
+    mock_subscription_manager.get_subscribers = MagicMock(return_value=[(12345, None), (67890, 7)])
 
     with patch("tools.fetch_threads.check_new", new_callable=AsyncMock, return_value={"posts": sample_thread_posts}):
         await threads_push_job(mock_bot, mock_subscription_manager)
@@ -628,6 +630,14 @@ async def test_threads_push_job_success(
     # Verify message content
     first_call_text = mock_bot.send_message.call_args_list[0].kwargs["text"]
     assert "🧵 Threads" in first_call_text
+
+    # Each send targets the subscriber's thread (None for General, 7 for the topic)
+    thread_targets = {
+        (c.kwargs["chat_id"], c.kwargs["message_thread_id"])
+        for c in mock_bot.send_message.call_args_list
+    }
+    assert (12345, None) in thread_targets
+    assert (67890, 7) in thread_targets
 
     # Records written to file
     saved = json.loads(pushed_threads_path.read_text(encoding="utf-8"))
@@ -664,7 +674,7 @@ async def test_threads_push_job_cleans_expired(
     old_records = [{"id": "old_thread", "pushed_at": old_time}]
     pushed_threads_path.write_text(json.dumps(old_records), encoding="utf-8")
 
-    mock_subscription_manager.get_subscribers = MagicMock(return_value=[12345])
+    mock_subscription_manager.get_subscribers = MagicMock(return_value=[(12345, None)])
 
     with patch("tools.fetch_threads.check_new", new_callable=AsyncMock, return_value={"posts": sample_thread_posts}):
         await threads_push_job(mock_bot, mock_subscription_manager)
@@ -778,7 +788,7 @@ async def test_uanalyze_push_first_run_seeds_state(
 ):
     """First run (no state): seeds dedup state, pushes nothing (no spam)."""
     mgr = MagicMock()
-    mgr.get_subscribers = MagicMock(return_value=[111])
+    mgr.get_subscribers = MagicMock(return_value=[(111, None)])
 
     with patch("tools.uanalyze.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}):
         await uanalyze_push_job(mock_bot, mgr)
@@ -799,7 +809,7 @@ async def test_uanalyze_push_new_report(
         encoding="utf-8",
     )
     mgr = MagicMock()
-    mgr.get_subscribers = MagicMock(return_value=[111, 222])
+    mgr.get_subscribers = MagicMock(return_value=[(111, None), (222, 9)])
 
     with patch("tools.uanalyze.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}):
         await uanalyze_push_job(mock_bot, mgr)
@@ -808,6 +818,12 @@ async def test_uanalyze_push_new_report(
     assert mock_bot.send_message.call_count == 2
     text = mock_bot.send_message.call_args_list[0].kwargs["text"]
     assert "台積電" in text and "2330" in text and "資本支出" in text
+    thread_targets = {
+        (c.kwargs["chat_id"], c.kwargs["message_thread_id"])
+        for c in mock_bot.send_message.call_args_list
+    }
+    assert (111, None) in thread_targets
+    assert (222, 9) in thread_targets
     saved = json.loads(pushed_uanalyze_path.read_text(encoding="utf-8"))
     assert {r["id"] for r in saved} == {101, 102}
 
@@ -823,7 +839,7 @@ async def test_uanalyze_push_no_new(mock_bot, pushed_uanalyze_path, sample_repor
         encoding="utf-8",
     )
     mgr = MagicMock()
-    mgr.get_subscribers = MagicMock(return_value=[111])
+    mgr.get_subscribers = MagicMock(return_value=[(111, None)])
 
     with patch("tools.uanalyze.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}):
         await uanalyze_push_job(mock_bot, mgr)
@@ -855,7 +871,7 @@ async def test_uanalyze_push_no_subscribers(
 async def test_uanalyze_push_fetch_error(mock_bot, pushed_uanalyze_path):
     """Fetch error → job returns quietly, nothing pushed."""
     mgr = MagicMock()
-    mgr.get_subscribers = MagicMock(return_value=[111])
+    mgr.get_subscribers = MagicMock(return_value=[(111, None)])
 
     with patch("tools.uanalyze.list_latest_reports", new_callable=AsyncMock, return_value={"error": "boom"}):
         await uanalyze_push_job(mock_bot, mgr)
