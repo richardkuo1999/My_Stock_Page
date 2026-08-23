@@ -63,7 +63,7 @@
 | `/unsub_threads` | 取消 Threads 推播 |
 | `/sub_ua_reports` | 訂閱 UAnalyze 新研究報告推播 |
 | `/unsub_ua_reports` | 取消 UAnalyze 新研究報告推播 |
-| `/news` | 跳選單選新聞來源（全部或指定 15 來源之一）後回覆 |
+| `/news` | 跳選單選新聞來源（全部或指定 16 來源之一）後回覆 |
 | `/threads` | 立即抓最新 Threads 貼文並回覆呼叫者 |
 | `/p <代號>` | 即時股價（直接 import 工具，不經 AI），best-effort 附 UAnalyze 基本面 |
 | `/k <代號> [天數]` | K 線圖（回傳圖片） |
@@ -148,7 +148,7 @@ Google AI Pro 方案不提供 `GEMINI_API_KEY`，SDK 需要此 key 才能執行�
 
 ### 個股新聞過濾
 
-台股標題寫公司中文名而非代號。`fetch_news.py <代號>` 從 15 來源新聞池本地過濾出含
+台股標題寫公司中文名而非代號。`fetch_news.py <代號>` 從 16 來源新聞池本地過濾出含
 關鍵字（代號 + 對照表補上的公司名）的文章。對照表 `data/stock_names.json` 主資料為
 UAnalyze StockPool 全台股名對照（~12,361 檔，每週刷新），未命中時 Agent 才 `--set` 補後援。
 
@@ -264,7 +264,7 @@ data/
 
 Agent 只透過 tool script 拿即時資料，不碰 `data/` 目錄。
 
-## 8. 新聞來源（15 個）
+## 8. 新聞來源（16 個）
 
 | # | 來源 | 格式（實作） |
 |---|------|------|
@@ -282,11 +282,12 @@ Agent 只透過 tool script 拿即時資料，不碰 `data/` 目錄。
 | 12 | NewsDigest AI | RSS |
 | 13 | SinoTrade 永豐 | GraphQL POST（`verify=False`） |
 | 14 | Pocket 學堂 | JSON API（`verify=False`） |
-| 15 | Buffett Letters + Howard Marks Memos | 靜態參考連結 |
+| 15 | UAnalyze 專欄 | JSON API（`data/fetch/column/search`，JWT Bearer；付費內容無公開 permalink） |
+| 16 | Buffett Letters + Howard Marks Memos | 靜態參考連結 |
 
 **已砍：** Google News TW（雜訊多）
 
-> **反爬蟲對策**：morss.it 公開 proxy 已失效，改為直接抓取。SSL 憑證問題的來源用 `verify=False`；Cloudflare 保護的 MacroMicro 用 `curl_cffi` 偽裝 TLS 指紋、Fintastic 用 WordPress API + 瀏覽器 UA。實測 15 個來源全部可用（約 175 篇文章）。
+> **反爬蟲對策**：morss.it 公開 proxy 已失效，改為直接抓取。SSL 憑證問題的來源用 `verify=False`；Cloudflare 保護的 MacroMicro 用 `curl_cffi` 偽裝 TLS 指紋、Fintastic 用 WordPress API + 瀏覽器 UA。實測前 15 個來源全部可用（約 175 篇文章）；第 16 來源 UAnalyze 專欄走 JWT Bearer 實打驗證。
 
 ## 9. Threads 追蹤
 

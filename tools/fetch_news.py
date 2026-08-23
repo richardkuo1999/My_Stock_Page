@@ -4,8 +4,10 @@
 """
 
 import asyncio
+import html
 import json
 import logging
+import re
 import sys
 import time
 import urllib.parse
@@ -32,7 +34,7 @@ USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) StockBot/1.0"
 CFFI_IMPERSONATE = "chrome120"
 
 # News content cache: latest() writes here and reuses it within CACHE_TTL to
-# avoid re-hitting 15 sources on every /news, @mention, or scheduled run.
+# avoid re-hitting 16 sources on every /news, @mention, or scheduled run.
 NEWS_CACHE_FILE = Path(__file__).resolve().parent.parent / "data" / "news_cache.json"
 CACHE_TTL_SECONDS = 600  # 10 minutes
 
@@ -60,6 +62,11 @@ SOURCES = [
     {"name": "NewsDigestAI", "type": "rss", "url": "https://feed.cqd.tw/ndai"},
     {"name": "SinoTrade", "type": "sinotrade", "url": "https://www.sinotrade.com.tw/richclub/api/graphql"},
     {"name": "Pocket學堂", "type": "pocket", "url": "https://www.pocket.tw/invest_news/api/invest_news/"},
+    {
+        "name": "UAnalyze專欄",
+        "type": "ua_column",
+        "url": "https://api.uanalyze.com.tw/data/fetch/column/search",
+    },
     {"name": "Buffett+Marks", "type": "static", "url": ""},
 ]
 
@@ -588,6 +595,71 @@ async def _fetch_fintastic(client: httpx.AsyncClient) -> list[dict]:
         return []
 
 
+def _strip_html(raw: str, limit: int = 150) -> str:
+    """Collapse HTML into plain text and truncate. No new heavy deps."""
+    if not raw:
+        return ""
+    # Drop tags, unescape entities, collapse whitespace.
+    # Unescape entities first (so &lt;x&gt; becomes literal <x>), then drop all
+    # tags, then collapse whitespace. This ordering stops entity-encoded angle
+    # brackets from re-introducing "<" after tag removal.
+    text = html.unescape(raw)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:limit]
+
+
+async def _fetch_ua_column(client: httpx.AsyncClient) -> list[dict]:
+    """UAnalyze 專欄: JWT-authed JSON API (api.uanalyze.com.tw/data/fetch/column/search).
+
+    Returns the latest 15 columns. Paid content with no public permalink, so
+    `url` points at the pro homepage. Pure data — no AI. Returns [] on any
+    failure so it never breaks the other sources.
+    """
+    # Local import with tools.* / bare fallback (works as module or script).
+    try:
+        from tools.uanalyze import _auth
+    except ImportError:  # pragma: no cover - when run as a script from tools/
+        try:
+            from uanalyze import _auth
+        except ImportError:
+            logger.warning("UAnalyze專欄: cannot import _auth")
+            return []
+
+    token = await _auth.ensure_token()
+    if not token:
+        logger.warning("UAnalyze專欄: no token, skipping")
+        return []
+
+    url = "https://api.uanalyze.com.tw/data/fetch/column/search"
+    headers = _auth.jwt_headers()
+    headers["Origin"] = "https://pro.uanalyze.com.tw"
+    params = {"Keywords": "", "page": 1, "per_page": 15}
+    try:
+        r = await client.get(url, params=params, headers=headers)
+        if r.status_code != 200:
+            logger.warning("UAnalyze專欄 returned status %d", r.status_code)
+            return []
+        data = r.json()
+        columns = (data or {}).get("data", {}).get("columns", [])
+        articles = []
+        for item in columns[:15]:
+            if not isinstance(item, dict):
+                continue
+            title = item.get("title", "")
+            if not title:
+                continue
+            date = (item.get("created_at") or "")[:10]
+            summary = _strip_html(item.get("content") or "", 150)
+            articles.append(
+                _make_article(title, "UAnalyze專欄", date, "", summary)
+            )
+        return articles
+    except Exception as e:
+        logger.warning("UAnalyze專欄 fetch failed: %s", e)
+        return []
+
+
 # --- Dispatch ---
 
 
@@ -623,6 +695,8 @@ async def _dispatch_source(source: dict, client: httpx.AsyncClient) -> list[dict
         return await _fetch_macromicro(client)
     elif stype == "fintastic":
         return await _fetch_fintastic(client)
+    elif stype == "ua_column":
+        return await _fetch_ua_column(client)
     elif stype == "static":
         return await _fetch_static()
 
@@ -683,7 +757,7 @@ def _sort_by_date(articles: list[dict]) -> list[dict]:
 
 
 async def latest(force_refresh: bool = False) -> dict:
-    """Fetch the latest news from all 15 sources, with a short-lived disk cache.
+    """Fetch the latest news from all 16 sources, with a short-lived disk cache.
 
     Within CACHE_TTL_SECONDS, repeated calls return the cached result instead of
     re-hitting every source. Pass force_refresh=True to bypass the cache.
@@ -731,7 +805,7 @@ def _write_news_cache(articles: list[dict]) -> None:
 
 
 async def _fetch_all_sources() -> dict:
-    """Fetch from all 15 sources in parallel (no cache)."""
+    """Fetch from all 16 sources in parallel (no cache)."""
     headers = {"User-Agent": USER_AGENT}
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, headers=headers, follow_redirects=True) as client:
         # MoneyDJ needs verify=False, dispatched via type "rss" name "MoneyDJ" →
@@ -789,7 +863,7 @@ async def fetch(symbol: str | None = None, limit: int = 10) -> dict:
     if name and name != symbol:
         keywords.append(name)
 
-    # 1) "Database": the latest news already fetched from all 15 sources.
+    # 1) "Database": the latest news already fetched from all 16 sources.
     # 2) Supplement with CNYES keyword search (low precision, but occasional
     #    exclusives). Merge, then filter locally by keyword relevance.
     latest_result = await latest()

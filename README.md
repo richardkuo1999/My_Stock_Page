@@ -69,7 +69,7 @@ docker compose up -d
 | `/sub_news` / `/unsub_news` | 訂閱 / 取消新聞推播（每小時） |
 | `/sub_threads` / `/unsub_threads` | 訂閱 / 取消 Threads 推播（每 15 分鐘） |
 | `/sub_ua_reports` / `/unsub_ua_reports` | 訂閱 / 取消 UAnalyze 新研究報告推播（每 30 分鐘） |
-| `/news` | 跳出選單選新聞來源（全部或指定 15 來源之一），再回覆該來源最新新聞 |
+| `/news` | 跳出選單選新聞來源（全部或指定 16 來源之一），再回覆該來源最新新聞 |
 | `/threads` | 立即抓最新 Threads 貼文並回覆 |
 | `/p <代號>` | 即時股價（直接跑工具，秒回），並 best-effort 附上 UAnalyze 基本面（本益比/最新財報/月營收等），例 `/p 2330` |
 | `/k <代號> [天數]` | K 線圖（回傳圖片），例 `/k 2330 60` |
@@ -101,7 +101,7 @@ docker compose up -d
 python tools/get_stock_price.py 2330                       # 即時股價（best-effort 附 UAnalyze 基本面）
 python tools/uanalyze.py --fundamentals 2330               # 即時基本面摘要（收盤價/當日漲跌幅/本益比/最新財報/月營收/掛牌類別，供 /p 疊加）
 python tools/draw_kchart.py 2330 --period 60               # K 線圖 → 圖片路徑
-python tools/fetch_news.py --all                           # 全部 15 來源最新新聞
+python tools/fetch_news.py --all                           # 全部 16 來源最新新聞
 python tools/fetch_news.py 2330 --limit 5                  # 指定股票新聞（本地過濾）
 python tools/fetch_threads.py --check-new                  # 追蹤帳號 Threads 貼文
 python tools/uanalyze.py 2330                              # UAnalyze AI 估值分析
@@ -123,16 +123,16 @@ python tools/lookup_stock_name.py --refresh                # 從 UAnalyze StockP
 
 台股新聞標題寫公司中文名（「台積電」）而非代號（2330）。`fetch_news.py <代號>` 會：
 1. 查 `lookup_stock_name.py` 的代號↔名稱對照表，補上公司名當關鍵字；
-2. 從已抓取的 15 來源新聞池，本地過濾出標題/摘要含關鍵字的文章。
+2. 從已抓取的 16 來源新聞池，本地過濾出標題/摘要含關鍵字的文章。
 
 對照表（`data/stock_names.json`）主資料來自 **UAnalyze 官方 gidp StockPool 全台股名對照
 （~12,361 檔）**，由 `--refresh` 灌入、之後每週自動刷新（過期才重抓）。首次部署請先跑一次
 `python tools/lookup_stock_name.py --refresh`。`--set` 手動寫回退化為**後援**：只在
 StockPool 未涵蓋某檔時補一筆（刷新不會碾掉手動項），內建 20 檔 seed 為最後後援。工具本身不呼叫 AI。
 
-## 新聞來源（15 個）
+## 新聞來源（16 個）
 
-CNYES、MoneyDJ、Yahoo股市、UDN財經、UAnalyze、Fugle、Vocus（特定作者）、MacroMicro、FinGuider、Fintastic、Forecastock、NewsDigestAI、SinoTrade、Pocket學堂、Buffett Letters + Howard Marks Memos。
+CNYES、MoneyDJ、Yahoo股市、UDN財經、UAnalyze、UAnalyze專欄、Fugle、Vocus（特定作者）、MacroMicro、FinGuider、Fintastic、Forecastock、NewsDigestAI、SinoTrade、Pocket學堂、Buffett Letters + Howard Marks Memos。
 
 部分來源有 Cloudflare / SSL 保護，已分別處理：
 - SSL 憑證問題（MoneyDJ / Pocket / FinGuider / SinoTrade）→ `verify=False`
@@ -144,7 +144,7 @@ CNYES、MoneyDJ、Yahoo股市、UDN財經、UAnalyze、Fugle、Vocus（特定作
 執行期資料存為 JSON（`data/`，已被 `.gitignore` 排除）：
 
 - `subscriptions.json` — 訂閱清單
-- `news_cache.json` — 新聞內容快取（TTL 10 分鐘，避免每次重抓 15 來源）
+- `news_cache.json` — 新聞內容快取（TTL 10 分鐘，避免每次重抓 16 來源）
 - `pushed_news.json` — 已推新聞 URL（保留 7 天）
 - `pushed_threads.json` — 已推 Threads ID（保留 3 天）
 - `pushed_uanalyze.json` — 已推 UAnalyze 報告 id（保留 14 天，監控去重用）
@@ -165,7 +165,7 @@ python -m pytest tests/ -q
 
 | 項目 | 狀態 |
 |------|------|
-| 15 個新聞來源（真網路抓取） | ✅ 已手動實測（~175 篇） |
+| 16 個新聞來源（真網路抓取） | ✅ 已手動實測（前 15 來源 ~175 篇；UAnalyze 專欄走 JWT 實打驗證） |
 | `fetch_news <代號>` 個股過濾 | ✅ 已手動實測 |
 | 代號對照表 命中/miss/寫回/再命中 | ✅ CLI 實測 |
 | `@mention` → `agy` → 跑工具 → 回真實數據 | ✅ 透過真實 bridge 實測 |

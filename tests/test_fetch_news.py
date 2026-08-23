@@ -214,9 +214,9 @@ async def test_latest_parallel():
 
 
 @pytest.mark.asyncio
-async def test_latest_returns_all_15_sources():
-    """Verify SOURCES list has exactly 15 entries."""
-    assert len(SOURCES) == 15
+async def test_latest_returns_all_16_sources():
+    """Verify SOURCES list has exactly 16 entries."""
+    assert len(SOURCES) == 16
 
 
 # --- fetch() Tests ---
@@ -410,14 +410,15 @@ def test_cli_with_symbol(monkeypatch):
 
 
 def test_sources_count():
-    """Verify all 15 sources are defined."""
-    assert len(SOURCES) == 15
+    """Verify all 16 sources are defined."""
+    assert len(SOURCES) == 16
     names = [s["name"] for s in SOURCES]
     assert "CNYES" in names
     assert "MoneyDJ" in names
     assert "Yahoo股市" in names
     assert "UDN財經" in names
     assert "UAnalyze" in names
+    assert "UAnalyze專欄" in names
     assert "Fugle" in names
     assert "Vocus" in names
     assert "MacroMicro" in names
@@ -678,3 +679,120 @@ async def test_latest_uses_cache(tmp_path, monkeypatch):
     r3 = await fn.latest(force_refresh=True)  # bypass cache
     assert fetch_calls["n"] == 2
     assert r3 == r1
+
+
+# --- UAnalyze 專欄 (JWT column/search) tests ---
+
+SAMPLE_UA_COLUMN_RESPONSE = {
+    "data": {
+        "columns": [
+            {
+                "id": 1,
+                "title": "【Google怎麼賣TPU】把AI算力金融化",
+                "tag": "DailyIssue",
+                "content": (
+                    "<p><span style=\"color: rgb(243,121,52);\">重點摘要：</span></p>"
+                    "<div>Google 正在把 AI 算力需求金融化，這是一場結構性轉變。</div>"
+                ),
+                "created_at": "2026-08-23 20:05:18",
+                "image": "https://img/x.png",
+            },
+            {
+                "id": 2,
+                "title": "台積電先進封裝展望",
+                "tag": "DailyIssue",
+                "content": "<p>CoWoS 產能持續吃緊，2027 供不應求。</p>",
+                "created_at": "2026-08-22 09:00:00",
+                "image": "",
+            },
+        ],
+        "meta": {"current_page": 1, "per_page": 15, "total": 2370, "last_page": 790, "has_next": True},
+    }
+}
+
+
+def _patch_ua_auth(token="tok-123"):
+    """Patch the shared _auth singleton so _fetch_ua_column can authenticate."""
+    auth = MagicMock()
+    auth.ensure_token = AsyncMock(return_value=token)
+    auth.jwt_headers = MagicMock(
+        return_value={
+            "Authorization": "Bearer tok-123",
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json",
+            "Referer": "https://pro.uanalyze.com.tw/",
+        }
+    )
+    return patch("tools.uanalyze._auth", auth)
+
+
+@pytest.mark.asyncio
+async def test_fetch_ua_column_parses_columns():
+    """UAnalyze專欄 parses data.columns → articles with HTML-stripped summary."""
+    from tools.fetch_news import _fetch_ua_column
+
+    response = _make_httpx_response(200, json_data=SAMPLE_UA_COLUMN_RESPONSE)
+    mock_client = _mock_async_client(response)
+
+    with _patch_ua_auth():
+        articles = await _fetch_ua_column(mock_client)
+
+    assert len(articles) == 2
+    a0 = articles[0]
+    assert a0["title"] == "【Google怎麼賣TPU】把AI算力金融化"
+    assert a0["source"] == "UAnalyze專欄"
+    assert a0["date"] == "2026-08-23"  # first 10 chars of created_at
+    # HTML tags stripped, entities unescaped, no angle brackets left.
+    assert "<" not in a0["summary"] and ">" not in a0["summary"]
+    assert "重點摘要" in a0["summary"]
+    assert "AI 算力" in a0["summary"]
+
+    # Origin header added on top of jwt_headers.
+    _, kwargs = mock_client.get.call_args
+    assert kwargs["headers"]["Origin"] == "https://pro.uanalyze.com.tw"
+    assert kwargs["headers"]["Authorization"].startswith("Bearer ")
+
+
+@pytest.mark.asyncio
+async def test_fetch_ua_column_no_token_returns_empty():
+    """No token → returns [] without hitting the API."""
+    from tools.fetch_news import _fetch_ua_column
+
+    auth = MagicMock()
+    auth.ensure_token = AsyncMock(return_value=None)
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock()
+
+    with patch("tools.uanalyze._auth", auth):
+        articles = await _fetch_ua_column(mock_client)
+
+    assert articles == []
+    mock_client.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fetch_ua_column_http_error_returns_empty():
+    """Non-200 → returns [] (does not break other sources)."""
+    from tools.fetch_news import _fetch_ua_column
+
+    response = _make_httpx_response(500, json_data={})
+    mock_client = _mock_async_client(response)
+
+    with _patch_ua_auth():
+        articles = await _fetch_ua_column(mock_client)
+
+    assert articles == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_ua_column_dispatch():
+    """_dispatch_source routes ua_column type to _fetch_ua_column."""
+    response = _make_httpx_response(200, json_data=SAMPLE_UA_COLUMN_RESPONSE)
+    mock_client = _mock_async_client(response)
+    source = {"name": "UAnalyze專欄", "type": "ua_column", "url": "x"}
+
+    with _patch_ua_auth():
+        articles = await _dispatch_source(source, mock_client)
+
+    assert len(articles) == 2
+    assert articles[0]["source"] == "UAnalyze專欄"
