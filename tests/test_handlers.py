@@ -27,8 +27,12 @@ def context():
 @pytest.fixture
 def mock_bridge():
     """Create a mock AgentBridge."""
+    from agent.bridge import AgentResult
+
     bridge = AsyncMock()
-    bridge.send = AsyncMock(return_value="Agent 回覆內容")
+    bridge.send_detailed = AsyncMock(
+        return_value=AgentResult(response="Agent 回覆內容")
+    )
     return bridge
 
 
@@ -60,20 +64,89 @@ async def test_mention_routes_to_bridge(context, mock_bridge):
     context.bot_data["agent_bridge"] = mock_bridge
     update = _make_mention_update("@test_bot 分析台積電")
 
-    await mention(update, context)
+    with patch("agent.conversation_log.log_conversation"):
+        await mention(update, context)
 
     # The handler wraps the question with the system prompt before sending.
-    mock_bridge.send.assert_called_once()
-    sent_prompt = mock_bridge.send.call_args[0][0]
+    mock_bridge.send_detailed.assert_called_once()
+    sent_prompt = mock_bridge.send_detailed.call_args[0][0]
     assert "分析台積電" in sent_prompt
     assert "台股投資輔助助理" in sent_prompt  # system prompt is prepended
+    # No tools used → reply is just the response (no tools line appended).
     update.message.reply_text.assert_called_once_with("Agent 回覆內容")
+
+
+@pytest.mark.asyncio
+async def test_mention_appends_tools_line(context, mock_bridge):
+    """When the Agent used tools, the reply includes the tools-used line."""
+    from agent.bridge import AgentResult, ToolCall
+
+    mock_bridge.send_detailed = AsyncMock(
+        return_value=AgentResult(
+            response="台積電 2410",
+            tools=[
+                ToolCall(
+                    name="run_command",
+                    parameters={"Command": "python tools/get_stock_price.py 2330"},
+                )
+            ],
+        )
+    )
+    context.bot_data["agent_bridge"] = mock_bridge
+    update = _make_mention_update("@test_bot 台積電股價")
+
+    with patch("agent.conversation_log.log_conversation"), patch.dict(
+        "os.environ", {"SHOW_AGENT_TOOLS": "1"}
+    ):
+        await mention(update, context)
+
+    reply = update.message.reply_text.call_args[0][0]
+    assert "台積電 2410" in reply
+    assert "🔧 本次用了：" in reply
+    assert "run_command" in reply
+
+
+@pytest.mark.asyncio
+async def test_mention_tools_line_hidden_when_disabled(context, mock_bridge):
+    """SHOW_AGENT_TOOLS=0 suppresses the tools-used line."""
+    from agent.bridge import AgentResult, ToolCall
+
+    mock_bridge.send_detailed = AsyncMock(
+        return_value=AgentResult(
+            response="台積電 2410",
+            tools=[ToolCall(name="run_command", parameters={})],
+        )
+    )
+    context.bot_data["agent_bridge"] = mock_bridge
+    update = _make_mention_update("@test_bot 台積電股價")
+
+    with patch("agent.conversation_log.log_conversation"), patch.dict(
+        "os.environ", {"SHOW_AGENT_TOOLS": "0"}
+    ):
+        await mention(update, context)
+
+    update.message.reply_text.assert_called_once_with("台積電 2410")
+
+
+@pytest.mark.asyncio
+async def test_mention_logs_conversation(context, mock_bridge):
+    """Every mention exchange is persisted via log_conversation."""
+    context.bot_data["agent_bridge"] = mock_bridge
+    update = _make_mention_update("@test_bot 分析台積電")
+
+    with patch("agent.conversation_log.log_conversation") as mock_log:
+        await mention(update, context)
+
+    mock_log.assert_called_once()
+    kwargs = mock_log.call_args.kwargs
+    assert kwargs["question"] == "分析台積電"
+    assert kwargs["result"].response == "Agent 回覆內容"
 
 
 @pytest.mark.asyncio
 async def test_mention_timeout_error(context, mock_bridge):
     """Mention handler replies with timeout message on TimeoutError."""
-    mock_bridge.send = AsyncMock(side_effect=TimeoutError("timed out"))
+    mock_bridge.send_detailed = AsyncMock(side_effect=TimeoutError("timed out"))
     context.bot_data["agent_bridge"] = mock_bridge
     update = _make_mention_update("@test_bot 很慢的問題")
 
@@ -85,7 +158,9 @@ async def test_mention_timeout_error(context, mock_bridge):
 @pytest.mark.asyncio
 async def test_mention_runtime_error(context, mock_bridge):
     """Mention handler replies with error message on RuntimeError."""
-    mock_bridge.send = AsyncMock(side_effect=RuntimeError("Agent error (code 1): fail"))
+    mock_bridge.send_detailed = AsyncMock(
+        side_effect=RuntimeError("Agent error (code 1): fail")
+    )
     context.bot_data["agent_bridge"] = mock_bridge
     update = _make_mention_update("@test_bot 壞掉的指令")
 
@@ -103,7 +178,7 @@ async def test_mention_empty_text(context, mock_bridge):
     await mention(update, context)
 
     update.message.reply_text.assert_called_once_with("請在 @mention 後加上您的問題")
-    mock_bridge.send.assert_not_called()
+    mock_bridge.send_detailed.assert_not_called()
 
 
 @pytest.mark.asyncio

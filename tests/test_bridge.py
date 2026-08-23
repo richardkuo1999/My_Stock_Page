@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agent.bridge import AntigravityCLIBridge
+from agent.bridge import AgentResult, AntigravityCLIBridge, ToolCall
 
 
 @pytest.fixture
@@ -15,13 +15,53 @@ def bridge():
     return AntigravityCLIBridge(timeout=5)
 
 
+def _stream(*lines: dict) -> bytes:
+    """Encode dicts as agy stream-json (one NDJSON event per line)."""
+    return ("\n".join(json.dumps(x) for x in lines) + "\n").encode()
+
+
+# A realistic stream-json transcript: init → tool (active/done) → result.
+def _sample_stream(response: str = "台積電目前股價 580") -> bytes:
+    return _stream(
+        {"event": "x", "init": {}, "conversation_id": "c1"},
+        {
+            "event": "x",
+            "step_update": {
+                "step_type": "tool",
+                "state": "ACTIVE",
+                "tool_name": "run_command",
+                "tool_info": {
+                    "name": "run_command",
+                    "parameters": {"Command": "python tools/get_stock_price.py 2330"},
+                },
+            },
+        },
+        {
+            "event": "x",
+            "step_update": {
+                "step_type": "tool",
+                "state": "DONE",
+                "tool_name": "run_command",
+                "tool_info": {"name": "run_command", "output": "..."},
+            },
+        },
+        {
+            "event": "x",
+            "result": {
+                "conversation_id": "c1",
+                "status": "SUCCESS",
+                "response": response,
+                "usage": {"total_tokens": 100},
+            },
+        },
+    )
+
+
 @pytest.mark.asyncio
 async def test_send_success(bridge):
-    """send() returns parsed response field from JSON output."""
-    response_data = json.dumps({"response": "台積電目前股價 580"}).encode()
-
+    """send() returns the final response text parsed from stream-json."""
     mock_proc = AsyncMock()
-    mock_proc.communicate = AsyncMock(return_value=(response_data, b""))
+    mock_proc.communicate = AsyncMock(return_value=(_sample_stream(), b""))
     mock_proc.returncode = 0
 
     with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
@@ -32,8 +72,44 @@ async def test_send_success(bridge):
 
 
 @pytest.mark.asyncio
+async def test_send_detailed_collects_tools(bridge):
+    """send_detailed() returns response plus the tools the Agent used."""
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_sample_stream(), b""))
+    mock_proc.returncode = 0
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        res = await bridge.send_detailed("台積電股價")
+
+    assert isinstance(res, AgentResult)
+    assert res.response == "台積電目前股價 580"
+    assert res.status == "SUCCESS"
+    assert res.conversation_id == "c1"
+    assert res.usage == {"total_tokens": 100}
+    # Only the ACTIVE tool event is recorded (not the DONE duplicate).
+    assert [t.name for t in res.tools] == ["run_command"]
+    assert "python tools/get_stock_price.py 2330" in res.tools[0].summary()
+    assert res.tools_line().startswith("🔧 本次用了：")
+
+
+@pytest.mark.asyncio
+async def test_send_uses_stream_json_format(bridge):
+    """send_detailed() invokes agy with --output-format stream-json."""
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(_sample_stream(), b""))
+    mock_proc.returncode = 0
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as m:
+        await bridge.send_detailed("q")
+
+    args = m.call_args[0]
+    assert "--output-format" in args
+    assert args[args.index("--output-format") + 1] == "stream-json"
+
+
+@pytest.mark.asyncio
 async def test_send_non_json_response(bridge):
-    """send() returns raw stdout when output is not JSON."""
+    """send() falls back to raw stdout when output is not stream-json."""
     mock_proc = AsyncMock()
     mock_proc.communicate = AsyncMock(return_value=(b"plain text response", b""))
     mock_proc.returncode = 0
@@ -42,6 +118,21 @@ async def test_send_non_json_response(bridge):
         result = await bridge.send("hello")
 
     assert result == "plain text response"
+
+
+@pytest.mark.asyncio
+async def test_send_skips_malformed_lines(bridge):
+    """Malformed NDJSON lines are skipped, valid result still parsed."""
+    raw = b"not json\n" + _sample_stream()
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(raw, b""))
+    mock_proc.returncode = 0
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        res = await bridge.send_detailed("q")
+
+    assert res.response == "台積電目前股價 580"
+    assert [t.name for t in res.tools] == ["run_command"]
 
 
 @pytest.mark.asyncio
@@ -58,7 +149,6 @@ async def test_send_timeout(bridge):
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            # Close the coroutine to avoid RuntimeWarning
             coro.close()
             raise asyncio.TimeoutError()
         return await coro
@@ -81,6 +171,23 @@ async def test_send_nonzero_exit(bridge):
     with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
         with pytest.raises(RuntimeError, match="Agent error \\(code 1\\)"):
             await bridge.send("bad command")
+
+
+def test_toolcall_summary_truncates_long_params():
+    """ToolCall.summary() skips over-long param values and picks scalars."""
+    tc = ToolCall(name="view_file", parameters={"AbsolutePath": "/a/b/c.py"})
+    assert tc.summary() == "view_file(/a/b/c.py)"
+
+    long = ToolCall(name="edit", parameters={"content": "x" * 200})
+    # Over-long value is skipped → just the name.
+    assert long.summary() == "edit"
+
+    assert ToolCall(name="lonely").summary() == "lonely"
+
+
+def test_agentresult_tools_line_empty_without_tools():
+    """tools_line() is empty when no tools were used."""
+    assert AgentResult(response="hi").tools_line() == ""
 
 
 @pytest.mark.asyncio

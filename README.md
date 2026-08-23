@@ -92,6 +92,17 @@ docker compose up -d
 > 能執行工具，這會授予 Agent 無限制指令執行權限（對不特定使用者開放有 prompt-injection
 > 風險）。正解是把工具做成 MCP server（見 ARCHITECTURE.md「權限與安全」），尚未實作。
 
+### 開發階段：看 Agent 用了哪些工具 + 保存對話
+
+bridge 以 `--output-format stream-json` 呼叫 `agy`，解析 NDJSON 事件流，取得
+Agent 這一輪**實際呼叫的工具序列**（`run_command`/`find_by_name`/`view_file`…）與最終回覆。
+
+- **回覆附工具清單**：`@mention` 回覆末尾會加一行 `🔧 本次用了：run_command(python tools/get_stock_price.py 2330)、…`。
+  預設開啟（開發友善）；上線後設環境變數 `SHOW_AGENT_TOOLS=0` 即可關閉，不需改碼。
+- **保存所有對話**：每次 `@mention` 交換（時間、user/chat id、問題、回覆、工具清單、
+  usage、conversation_id）會 append 一行 JSON 到 `data/logs/agent_conversations.jsonl`
+  （已被 `.gitignore` 排除；寫入為 best-effort，失敗只記 log 不影響回覆）。
+
 ## 工具（獨立 CLI）
 
 每個工具都能單獨在命令列執行，回傳 JSON。所有工具皆為純粹確定性程式，**本身不呼叫 AI**
@@ -150,6 +161,7 @@ CNYES、MoneyDJ、Yahoo股市、UDN財經、UAnalyze、UAnalyze專欄、Fugle、
 - `pushed_uanalyze.json` — 已推 UAnalyze 報告 id（保留 14 天，監控去重用）
 - `stock_names.json` — 代號↔公司名對照表（UAnalyze StockPool 全表 ~12,361 檔，每週刷新，`--set` 手動後援）
 - `stock_names_meta.json` — 對照表刷新時間戳（判斷是否過期需重抓）
+- `logs/agent_conversations.jsonl` — 每次 `@mention` 對話記錄（問題/回覆/工具清單/usage，append-only）
 - `logs/bot.log` — WARNING 以上日誌（rotation，5MB × 5）
 
 ## 測試

@@ -1,6 +1,7 @@
 """Telegram message handlers."""
 
 import logging
+import os
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -13,6 +14,20 @@ from telegram.ext import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _show_agent_tools() -> bool:
+    """Whether to append the "tools used" line to @mention replies.
+
+    Defaults to True (dev-friendly). Set SHOW_AGENT_TOOLS=0/false/no to turn
+    off in production without a code change.
+    """
+    return os.getenv("SHOW_AGENT_TOOLS", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
 
 HELP_TEXT = (
     "🤖 *台股投資輔助 Bot*\n\n"
@@ -683,11 +698,34 @@ async def mention(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                     return
 
                 try:
+                    from agent.conversation_log import log_conversation
                     from agent.prompts import build_mention_prompt
 
                     prompt = build_mention_prompt(text_after)
-                    response = await bridge.send(prompt)
-                    await update.message.reply_text(response)
+                    result = await bridge.send_detailed(prompt)
+
+                    # Persist the full exchange (question + answer + tools used).
+                    log_conversation(
+                        question=text_after,
+                        result=result,
+                        user_id=(
+                            update.effective_user.id
+                            if update.effective_user
+                            else None
+                        ),
+                        chat_id=(
+                            update.effective_chat.id
+                            if update.effective_chat
+                            else None
+                        ),
+                    )
+
+                    reply = result.response
+                    # Dev aid: append which tools the Agent actually used.
+                    # Toggle off with SHOW_AGENT_TOOLS=0 once out of dev.
+                    if _show_agent_tools() and result.tools_line():
+                        reply = f"{reply}\n\n{result.tools_line()}"
+                    await update.message.reply_text(reply)
                 except TimeoutError:
                     await update.message.reply_text("⚠️ Agent 暫時無法回應，請稍後再試")
                 except RuntimeError as e:
