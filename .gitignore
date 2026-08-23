@@ -3,6 +3,7 @@ __pycache__
 .DS_Store
 .claude
 .cursor
+.kiro/
 .worktrees/
 .gemini/
 his.txt
@@ -33,3 +34,9 @@ reports/
 old_file/
 
 data/logs/
+
+# 暫存工作區（wayfinder/implement 的 scratch）
+.scratch/
+
+# 過程探勘腳本（碰帳密，只留 findings.md）
+docs/research/**/probe*.py
