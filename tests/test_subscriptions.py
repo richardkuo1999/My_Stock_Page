@@ -10,11 +10,8 @@ from bot.subscriptions import (
     news_now_handler,
     news_source_callback,
     sub_news_handler,
-    sub_threads_handler,
     sub_uanalyze_handler,
-    threads_now_handler,
     unsub_news_handler,
-    unsub_threads_handler,
     unsub_uanalyze_handler,
 )
 
@@ -89,9 +86,9 @@ class TestSubscribe:
     def test_subscribe_different_channels(self, manager):
         """Subscribing to different channels works independently."""
         manager.subscribe(12345, "news")
-        manager.subscribe(12345, "threads")
+        manager.subscribe(12345, "alerts")
         assert (12345, None) in manager.get_subscribers("news")
-        assert (12345, None) in manager.get_subscribers("threads")
+        assert (12345, None) in manager.get_subscribers("alerts")
 
     def test_subscribe_stores_timestamp(self, manager):
         """Subscription entry should have a subscribed_at timestamp."""
@@ -153,9 +150,9 @@ class TestThreadId:
 
     def test_get_subscribers_returns_chat_thread_tuples(self, manager):
         """get_subscribers returns (chat_id, thread_id) tuples."""
-        manager.subscribe(111, "threads")
-        manager.subscribe(222, "threads", thread_id=3)
-        subs = manager.get_subscribers("threads")
+        manager.subscribe(111, "alerts")
+        manager.subscribe(222, "alerts", thread_id=3)
+        subs = manager.get_subscribers("alerts")
         assert (111, None) in subs
         assert (222, 3) in subs
 
@@ -164,7 +161,6 @@ class TestThreadId:
         path = tmp_path / "subscriptions.json"
         legacy = {
             "news": [{"chat_id": 999, "subscribed_at": "2026-01-01T00:00:00+00:00"}],
-            "threads": [],
         }
         path.write_text(json.dumps(legacy), encoding="utf-8")
         m = SubscriptionManager(path=str(path))
@@ -175,7 +171,6 @@ class TestThreadId:
         path = tmp_path / "subscriptions.json"
         legacy = {
             "news": [{"chat_id": 999, "subscribed_at": "2026-01-01T00:00:00+00:00"}],
-            "threads": [],
         }
         path.write_text(json.dumps(legacy), encoding="utf-8")
         m = SubscriptionManager(path=str(path))
@@ -229,9 +224,9 @@ class TestGetSubscribers:
 
     def test_get_subscribers_returns_chat_ids(self, manager):
         """Should return (chat_id, thread_id) tuples."""
-        manager.subscribe(111, "threads")
-        manager.subscribe(222, "threads")
-        result = manager.get_subscribers("threads")
+        manager.subscribe(111, "alerts")
+        manager.subscribe(222, "alerts")
+        result = manager.get_subscribers("alerts")
         assert result == [(111, None), (222, None)]
 
 
@@ -243,12 +238,12 @@ class TestPersistence:
         path = str(tmp_path / "subscriptions.json")
         m1 = SubscriptionManager(path=path)
         m1.subscribe(12345, "news")
-        m1.subscribe(67890, "threads")
+        m1.subscribe(67890, "alerts")
 
         # Create a new instance (simulates restart)
         m2 = SubscriptionManager(path=path)
         assert (12345, None) in m2.get_subscribers("news")
-        assert (67890, None) in m2.get_subscribers("threads")
+        assert (67890, None) in m2.get_subscribers("alerts")
 
     def test_file_format_matches_spec(self, tmp_path):
         """Persisted JSON should match the ARCHITECTURE.md format."""
@@ -260,7 +255,6 @@ class TestPersistence:
             data = json.load(f)
 
         assert "news" in data
-        assert "threads" in data
         assert len(data["news"]) == 1
         assert data["news"][0]["chat_id"] == 12345
         assert "subscribed_at" in data["news"][0]
@@ -324,35 +318,6 @@ async def test_unsub_news_handler_not_subscribed(update, context):
 
 
 @pytest.mark.asyncio
-async def test_sub_threads_handler_new_subscription(update, context):
-    """sub_threads_handler should reply confirmation for new subscription."""
-    with patch("bot.subscriptions.manager") as mock_manager:
-        mock_manager.subscribe.return_value = True
-        await sub_threads_handler(update, context)
-        mock_manager.subscribe.assert_called_once_with(12345, "threads", thread_id=None)
-        update.message.reply_text.assert_called_once_with("✅ 已訂閱 Threads 推播")
-
-
-@pytest.mark.asyncio
-async def test_sub_threads_handler_already_subscribed(update, context):
-    """sub_threads_handler should reply info if already subscribed."""
-    with patch("bot.subscriptions.manager") as mock_manager:
-        mock_manager.subscribe.return_value = False
-        await sub_threads_handler(update, context)
-        update.message.reply_text.assert_called_once_with("ℹ️ 您已經訂閱 Threads 推播")
-
-
-@pytest.mark.asyncio
-async def test_unsub_threads_handler_success(update, context):
-    """unsub_threads_handler should reply confirmation on successful unsubscribe."""
-    with patch("bot.subscriptions.manager") as mock_manager:
-        mock_manager.unsubscribe.return_value = True
-        await unsub_threads_handler(update, context)
-        mock_manager.unsubscribe.assert_called_once_with(12345, "threads", thread_id=None)
-        update.message.reply_text.assert_called_once_with("✅ 已取消 Threads 推播")
-
-
-@pytest.mark.asyncio
 async def test_sub_uanalyze_handler_new(update, context):
     """sub_ua_reports subscribes to the uanalyze channel."""
     with patch("bot.subscriptions.manager") as mock_manager:
@@ -406,15 +371,6 @@ async def test_unsub_news_handler_in_group_topic_passes_thread_id(group_topic_up
         mock_manager.unsubscribe.return_value = True
         await unsub_news_handler(group_topic_update, context)
         mock_manager.unsubscribe.assert_called_once_with(-1009999, "news", thread_id=42)
-
-
-@pytest.mark.asyncio
-async def test_unsub_threads_handler_not_subscribed(update, context):
-    """unsub_threads_handler should reply info if not subscribed."""
-    with patch("bot.subscriptions.manager") as mock_manager:
-        mock_manager.unsubscribe.return_value = False
-        await unsub_threads_handler(update, context)
-        update.message.reply_text.assert_called_once_with("ℹ️ 您尚未訂閱 Threads 推播")
 
 
 @pytest.mark.asyncio
@@ -569,50 +525,3 @@ async def test_news_callback_back_reopens_menu(news_context):
     assert "reply_markup" in kwargs
     assert "來源" in update.callback_query.edit_message_text.call_args[0][0]
 
-
-# --- /threads command handler tests ---
-
-
-@pytest.mark.asyncio
-async def test_threads_now_handler_success(update, news_context):
-    """threads_now_handler should fetch and reply with posts."""
-    fake = {"posts": [
-        {"id": "1", "user": "alice", "text": "貼文一", "timestamp": "2026-08-22T00:00:00", "url": "https://t/1"},
-        {"id": "2", "user": "bob", "text": "貼文二", "timestamp": "2026-08-21T00:00:00", "url": "https://t/2"},
-    ]}
-    with patch("tools.fetch_threads.check_new", new_callable=AsyncMock, return_value=fake):
-        await threads_now_handler(update, news_context)
-
-    # 1 fetching notice + 2 posts
-    assert update.message.reply_text.call_count == 3
-    msgs = "".join(c[0][0] for c in update.message.reply_text.call_args_list)
-    assert "貼文一" in msgs
-    assert "貼文二" in msgs
-
-
-@pytest.mark.asyncio
-async def test_threads_now_handler_empty(update, news_context):
-    """threads_now_handler should report when no posts found."""
-    with patch("tools.fetch_threads.check_new", new_callable=AsyncMock, return_value={"posts": []}):
-        await threads_now_handler(update, news_context)
-    last_msg = update.message.reply_text.call_args_list[-1][0][0]
-    assert "沒有抓到" in last_msg
-
-
-@pytest.mark.asyncio
-async def test_threads_now_handler_error_result(update, news_context):
-    """threads_now_handler should surface API error (e.g. token expired)."""
-    with patch("tools.fetch_threads.check_new", new_callable=AsyncMock,
-               return_value={"error": "Threads token 已過期，請重新獲取 access token"}):
-        await threads_now_handler(update, news_context)
-    last_msg = update.message.reply_text.call_args_list[-1][0][0]
-    assert "token" in last_msg.lower()
-
-
-@pytest.mark.asyncio
-async def test_threads_now_handler_fetch_exception(update, news_context):
-    """threads_now_handler should report unexpected fetch errors."""
-    with patch("tools.fetch_threads.check_new", new_callable=AsyncMock, side_effect=RuntimeError("boom")):
-        await threads_now_handler(update, news_context)
-    last_msg = update.message.reply_text.call_args_list[-1][0][0]
-    assert "錯誤" in last_msg

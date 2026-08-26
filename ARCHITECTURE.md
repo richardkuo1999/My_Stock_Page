@@ -59,12 +59,9 @@
 | `/start` `/help` | 歡迎訊息 / 指令與功能說明 |
 | `/sub_news` | 訂閱新聞推播 |
 | `/unsub_news` | 取消新聞推播 |
-| `/sub_threads` | 訂閱 Threads 推播 |
-| `/unsub_threads` | 取消 Threads 推播 |
 | `/sub_ua_reports` | 訂閱 UAnalyze 新研究報告推播 |
 | `/unsub_ua_reports` | 取消 UAnalyze 新研究報告推播 |
 | `/news` | 跳選單選新聞來源（全部或指定 16 來源之一）後回覆 |
-| `/threads` | 立即抓最新 Threads 貼文並回覆呼叫者 |
 | `/p <代號>` | 即時股價（直接 import 工具，不經 AI），best-effort 附 UAnalyze 基本面 |
 | `/k <代號> [天數]` | K 線圖（回傳圖片） |
 | `/ua <代號>` | UAnalyze 估值分析：跳選單選分析面向，另含「法說會逐字稿」入口（列歷次法說會→分頁閱讀全文，翻頁走記憶體快取不重打 API） |
@@ -137,7 +134,6 @@ Google AI Pro 方案不提供 `GEMINI_API_KEY`，SDK 需要此 key 才能執行�
 | `tools/uanalyze.py` | AI 估值分析＋純數據（法人共識/財務指標/供應鏈/訂單/DCF/法說會逐字稿清單與摘要） | `python tools/uanalyze.py 2330`、`--transcript 2330` |
 | `tools/get_stock_price.py` | 即時股價（best-effort 附 UAnalyze 基本面） | `python tools/get_stock_price.py 2330` |
 | `tools/draw_kchart.py` | K 線圖（mplfinance 繪製，回傳圖片路徑） | `python tools/draw_kchart.py 2330 --period 60` |
-| `tools/fetch_threads.py` | 抓追蹤帳號 Threads 貼文 | `python tools/fetch_threads.py --check-new` |
 | `tools/summarize_document.py` | URL/PDF 文件摘要 | `python tools/summarize_document.py https://...` |
 | `tools/lookup_stock_name.py` | 代號↔公司名對照表（純資料讀/寫；主資料為 UAnalyze StockPool 全表） | `python tools/lookup_stock_name.py 2330` |
 
@@ -202,7 +198,6 @@ if __name__ == "__main__":
 | Job | 頻率 | 流程 |
 |-----|------|------|
 | 新聞推播 | 每小時 | `fetch_news.latest()` → Agent 摘要 → 推 Telegram |
-| Threads 追蹤 | 每 15 分鐘 | `fetch_threads.check_new()` → 直接推 Telegram |
 | UAnalyze 報告監控 | 每 30 分鐘 | `uanalyze.list_latest_reports()` → 依 report id 去重 → 直接推 Telegram（無 AI、無關鍵字過濾，每則新報告一律正常通知；首次執行只建立去重狀態不洗版） |
 
 ### 推播流程
@@ -212,10 +207,6 @@ if __name__ == "__main__":
   排程觸發 → fetch_news.latest() → 拿到新文章
   → 過濾已推 URL → AgentBridge.send("摘要以下新聞：{json}")
   → 推給訂閱者
-
-Threads：
-  排程觸發 → fetch_threads.check_new() → 拿到新貼文
-  → 過濾已推 ID → 格式化 → 直接推給訂閱者
 ```
 
 ### 失敗處理
@@ -232,7 +223,6 @@ Threads：
 data/
 ├── subscriptions.json      # 訂閱資料
 ├── pushed_news.json        # 已推新聞 URL（保留 7 天）
-├── pushed_threads.json     # 已推 Threads ID（保留 3 天）
 └── logs/                   # log 檔案
 ```
 
@@ -241,7 +231,7 @@ data/
 ```json
 {
   "news": [{"chat_id": 123456, "thread_id": null, "subscribed_at": "2026-08-22T03:00:00"}],
-  "threads": [{"chat_id": -1001234, "thread_id": 42, "subscribed_at": "2026-08-22T03:00:00"}]
+  "uanalyze": [{"chat_id": -1001234, "thread_id": 42, "subscribed_at": "2026-08-22T03:00:00"}]
 }
 ```
 
@@ -260,7 +250,6 @@ data/
 ### TTL 清理
 
 - 新聞已推 URL：保留 **7 天**
-- Threads 已推 ID：保留 **3 天**
 - 排程 job 執行時順便清理過期資料
 
 ### Agent 不存取資料層
@@ -292,16 +281,7 @@ Agent 只透過 tool script 拿即時資料，不碰 `data/` 目錄。
 
 > **反爬蟲對策**：morss.it 公開 proxy 已失效，改為直接抓取。SSL 憑證問題的來源用 `verify=False`；Cloudflare 保護的 MacroMicro 用 `curl_cffi` 偽裝 TLS 指紋、Fintastic 用 WordPress API + 瀏覽器 UA。實測前 15 個來源全部可用（約 175 篇文章）；第 16 來源 UAnalyze 專欄走 JWT Bearer 實打驗證。
 
-## 9. Threads 追蹤
-
-| 項目 | 決定 |
-|------|------|
-| 技術方案 | **Threads 官方 API**（取代 Playwright） |
-| 認證 | Meta Developer App + long-lived access token |
-| 端點 | `GET /{user_id}/threads` |
-| 好處 | 不需 chromium、穩定、Docker image 小 |
-
-## 10. 部署
+## 9. 部署
 
 ### 雙支援
 
@@ -330,12 +310,10 @@ stock-bot/
 │   ├── uanalyze.py
 │   ├── get_stock_price.py
 │   ├── draw_kchart.py
-│   ├── fetch_threads.py
 │   └── summarize_document.py
 ├── data/
 │   ├── subscriptions.json
 │   ├── pushed_news.json
-│   ├── pushed_threads.json
 │   └── logs/
 ├── Dockerfile
 ├── docker-compose.yml
@@ -356,9 +334,6 @@ FINMIND_TOKENS=["token1","token2"]
 FUGLE_API_KEY=xxx
 UANALYZE_EMAIL=xxx
 UANALYZE_PASSWORD=xxx
-
-# Threads
-THREADS_ACCESS_TOKEN=xxx
 ```
 
 ### 應用設定（`config.json` 或 code default）
@@ -369,12 +344,11 @@ THREADS_ACCESS_TOKEN=xxx
   "uanalyze_keywords": ["AI", "半導體", "ETF"],
   "enable_udn_news": true,
   "enable_yahoo_news": true,
-  "news_schedule_interval_min": 60,
-  "threads_schedule_interval_min": 15
+  "news_schedule_interval_min": 60
 }
 ```
 
-## 11. 監控 / Logging
+## 10. 監控 / Logging
 
 | 層級 | 輸出 |
 |------|------|
@@ -382,7 +356,7 @@ THREADS_ACCESS_TOKEN=xxx
 | WARNING / ERROR | stdout + `data/logs/bot.log`（rotation） |
 | CRITICAL（連續失敗） | 推 Telegram 通知管理者 |
 
-## 12. 未來升級路徑
+## 11. 未來升級路徑
 
 | 條件 | 動作 |
 |------|------|
@@ -391,7 +365,7 @@ THREADS_ACCESS_TOKEN=xxx
 | 需要多輪對話 | 在 Bridge 加 `conversation_id` 參數 |
 | 需要 DB | 把 JSON 換成 SQLite，data layer 獨立模組 |
 
-## 13. Out of Scope
+## 12. Out of Scope
 
 - Web 儀表板
 - 情緒分析

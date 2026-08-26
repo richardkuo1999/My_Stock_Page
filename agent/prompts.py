@@ -72,10 +72,7 @@ SYSTEM_PROMPT = """你是一個台股投資輔助助理，透過 Telegram 與使
    例：`python tools/uanalyze.py --consensus 2330`、`python tools/uanalyze.py --pershare 2330`
    回傳為濃縮摘要 JSON（只取最新幾期 / 近年），適合直接引用具體數字。
 
-5. Threads 貼文（追蹤帳號）
-   `python tools/fetch_threads.py --check-new`
-
-6. URL / PDF 文件摘要
+5. URL / PDF 文件摘要
    `python tools/summarize_document.py <URL 或檔案路徑>`
 
 回覆規則：

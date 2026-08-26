@@ -1,4 +1,4 @@
-"""Subscription management for news and threads push notifications."""
+"""Subscription management for news push notifications."""
 
 import json
 import logging
@@ -19,7 +19,7 @@ DEFAULT_PATH = "data/subscriptions.json"
 
 
 class SubscriptionManager:
-    """Manages user subscriptions to news and threads channels.
+    """Manages user subscriptions to push notification channels.
 
     Persists state to a JSON file on disk.
     """
@@ -38,7 +38,7 @@ class SubscriptionManager:
                 return data
             except (json.JSONDecodeError, OSError) as e:
                 logger.warning("Failed to load subscriptions, starting fresh: %s", e)
-        return {"news": [], "threads": []}
+        return {"news": []}
 
     def _save(self) -> None:
         """Write current subscriptions to disk."""
@@ -143,28 +143,6 @@ async def unsub_news_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("✅ 已取消新聞推播")
     else:
         await update.message.reply_text("ℹ️ 您尚未訂閱新聞推播")
-
-
-async def sub_threads_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /sub_threads command."""
-    if not update.effective_chat:
-        return
-    chat_id = update.effective_chat.id
-    if manager.subscribe(chat_id, "threads", thread_id=_thread_id(update)):
-        await update.message.reply_text("✅ 已訂閱 Threads 推播")
-    else:
-        await update.message.reply_text("ℹ️ 您已經訂閱 Threads 推播")
-
-
-async def unsub_threads_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /unsub_threads command."""
-    if not update.effective_chat:
-        return
-    chat_id = update.effective_chat.id
-    if manager.unsubscribe(chat_id, "threads", thread_id=_thread_id(update)):
-        await update.message.reply_text("✅ 已取消 Threads 推播")
-    else:
-        await update.message.reply_text("ℹ️ 您尚未訂閱 Threads 推播")
 
 
 async def sub_uanalyze_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -297,53 +275,14 @@ async def news_source_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 
-async def threads_now_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle /threads command — fetch latest Threads posts and reply immediately.
-
-    Like /news, this always shows the caller the fetched posts directly
-    (no subscription or dedup filtering), as a live "is it fetching?" check.
-    """
-    if not update.effective_chat:
-        return
-
-    await update.message.reply_text("🔍 正在抓取最新 Threads 貼文…")
-
-    from bot.scheduler import _format_thread_post
-    from tools.fetch_threads import check_new
-
-    try:
-        result = await check_new()
-    except Exception as e:
-        logger.error("Manual /threads fetch failed: %s", e)
-        await update.message.reply_text(f"⚠️ 抓取 Threads 時發生錯誤：{e}")
-        return
-
-    if "error" in result:
-        await update.message.reply_text(f"⚠️ {result['error']}")
-        return
-
-    posts = result.get("posts", [])
-    if not posts:
-        await update.message.reply_text("😕 目前沒有抓到任何 Threads 貼文")
-        return
-
-    for post in posts[:10]:
-        await update.message.reply_text(
-            _format_thread_post(post), disable_web_page_preview=True
-        )
-
-
 def register_subscription_handlers(application: Application) -> None:
     """Register subscription command handlers."""
     application.add_handler(CommandHandler("sub_news", sub_news_handler))
     application.add_handler(CommandHandler("unsub_news", unsub_news_handler))
-    application.add_handler(CommandHandler("sub_threads", sub_threads_handler))
-    application.add_handler(CommandHandler("unsub_threads", unsub_threads_handler))
     application.add_handler(CommandHandler("sub_ua_reports", sub_uanalyze_handler))
     application.add_handler(CommandHandler("unsub_ua_reports", unsub_uanalyze_handler))
     application.add_handler(CommandHandler("news", news_now_handler))
     application.add_handler(
         CallbackQueryHandler(news_source_callback, pattern=r"^news:")
     )
-    application.add_handler(CommandHandler("threads", threads_now_handler))
     logger.info("Subscription handlers registered.")

@@ -16,7 +16,6 @@ def test_system_prompt_lists_all_tools():
         "draw_kchart.py",
         "fetch_news.py",
         "uanalyze.py",
-        "fetch_threads.py",
         "summarize_document.py",
     ):
         assert tool in SYSTEM_PROMPT

@@ -31,7 +31,6 @@ FINMIND_TOKENS=           # JSON 陣列字串，如 ["token1","token2"]
 FUGLE_API_KEY=            # 富果 API 金鑰（股價、K 線）
 UANALYZE_EMAIL=           # UAnalyze 帳號
 UANALYZE_PASSWORD=        # UAnalyze 密碼
-THREADS_ACCESS_TOKEN=     # Meta Threads 官方 API long-lived token
 ```
 
 ### 應用設定（`config.json` — 非機密）
@@ -41,14 +40,10 @@ THREADS_ACCESS_TOKEN=     # Meta Threads 官方 API long-lived token
   "vocus_users": ["@ieobserve", "@miula", "65ab564cfd897800018a88cc"],
   "uanalyze_keywords": ["AI", "半導體", "ETF"],
   "news_schedule_interval_min": 60,
-  "threads_schedule_interval_min": 15,
   "uanalyze_schedule_interval_min": 30,
-  "log_audit_interval_min": 360,
-  "threads_users": []
+  "log_audit_interval_min": 360
 }
 ```
-
-- `threads_users`：要追蹤的 Threads user ID 清單。留空時 `/threads` 與排程會 fallback 抓「自己帳號」的貼文。
 
 ## 啟動
 
@@ -68,17 +63,15 @@ docker compose up -d
 |------|------|
 | `/start` / `/help` | 歡迎訊息 / 指令與功能說明 |
 | `/sub_news` / `/unsub_news` | 訂閱 / 取消新聞推播（每小時） |
-| `/sub_threads` / `/unsub_threads` | 訂閱 / 取消 Threads 推播（每 15 分鐘） |
 | `/sub_ua_reports` / `/unsub_ua_reports` | 訂閱 / 取消 UAnalyze 新研究報告推播（每 30 分鐘） |
 | `/news` | 跳出選單選新聞來源（全部或指定 16 來源之一），再回覆該來源最新新聞 |
-| `/threads` | 立即抓最新 Threads 貼文並回覆 |
 | `/p <代號>` | 即時股價（直接跑工具，秒回），並 best-effort 附上 UAnalyze 基本面（本益比/最新財報/月營收等），例 `/p 2330` |
 | `/k <代號> [天數]` | K 線圖（回傳圖片），例 `/k 2330 60` |
 | `/ua <代號>` | UAnalyze AI 分析：跳出選單選分析面向（近況/產業/資本支出…），另含「法說會逐字稿」入口（列歷次法說會→選一場→分頁閱讀完整逐字稿全文，翻頁走記憶體快取不重打 API），例 `/ua 2330` |
 | `/data <代號>` | 跳出選單選資料類型（法人共識 / 財務指標 / 供應鏈 / 訂單能見度 / DCF 估值），回濃縮數據，例 `/data 2330` |
 | `@bot 你的問題` | 交給 Agent 處理（需先設定 Antigravity CLI，見下） |
 
-> 快捷指令（`/p` `/k` `/ua` `/news` `/threads`）直接呼叫工具、不經 AI，回應快且省 token；
+> 快捷指令（`/p` `/k` `/ua` `/news`）直接呼叫工具、不經 AI，回應快且省 token；
 > 需要組合多個工具或自然語言提問時才用 `@mention`。排程推播只發給訂閱者且會去重。
 
 ## Agent（`@mention`）
@@ -87,7 +80,7 @@ docker compose up -d
 需先在本機安裝並登入 Antigravity CLI（`agy` 指令）。未安裝時 `@mention` 會回覆錯誤訊息，其餘功能不受影響。
 
 每次 `@mention` 會由 `agent/prompts.py` 的 `build_mention_prompt()` 組合 system prompt
-（角色=台股助理 + 7 個工具清單 + 執行流程）再送給 Agent，Agent 據此決定要跑哪些工具。
+（角色=台股助理 + 6 個工具清單 + 執行流程）再送給 Agent，Agent 據此決定要跑哪些工具。
 
 > ⚠️ **安全暫時方案**：目前 bridge 用 `--dangerously-skip-permissions` 讓 headless Agent
 > 能執行工具，這會授予 Agent 無限制指令執行權限（對不特定使用者開放有 prompt-injection
@@ -131,7 +124,6 @@ python tools/uanalyze.py --fundamentals 2330               # 即時基本面摘�
 python tools/draw_kchart.py 2330 --period 60               # K 線圖 → 圖片路徑
 python tools/fetch_news.py --all                           # 全部 16 來源最新新聞
 python tools/fetch_news.py 2330 --limit 5                  # 指定股票新聞（本地過濾）
-python tools/fetch_threads.py --check-new                  # 追蹤帳號 Threads 貼文
 python tools/uanalyze.py 2330                              # UAnalyze AI 估值分析
 python tools/uanalyze.py --reports --limit 50              # UAnalyze 最新研究報告列表（監控用）
 python tools/uanalyze.py --consensus 2330                  # 法人共識（單季 EPS 實際 vs 預估 + 月營收共識）摘要
@@ -174,7 +166,6 @@ CNYES、MoneyDJ、Yahoo股市、UDN財經、UAnalyze、UAnalyze專欄、Fugle、
 - `subscriptions.json` — 訂閱清單
 - `news_cache.json` — 新聞內容快取（TTL 10 分鐘，避免每次重抓 16 來源）
 - `pushed_news.json` — 已推新聞 URL（保留 7 天）
-- `pushed_threads.json` — 已推 Threads ID（保留 3 天）
 - `pushed_uanalyze.json` — 已推 UAnalyze 報告 id（保留 14 天，監控去重用）
 - `stock_names.json` — 代號↔公司名對照表（UAnalyze StockPool 全表 ~12,361 檔，每週刷新，`--set` 手動後援）
 - `stock_names_meta.json` — 對照表刷新時間戳（判斷是否過期需重抓）
@@ -202,7 +193,7 @@ python -m pytest tests/ -q
 | UAnalyze 真登入 + 分析 | ✅ 真憑證實測（`/ua`、`analyze()`） |
 | `python main.py` 啟動 → 連上 Telegram → 排程啟動 → 乾淨關閉 | ✅ 實際啟動驗證 |
 | **手機端互動**（真人發指令、`@mention`、排程實際推播到訂閱者） | ❌ 尚未測試（需真人操作） |
-| Threads 官方 API 真 token、Docker build | ❌ 尚未實跑 |
+| Docker build | ❌ 尚未實跑 |
 | 自動化 e2e 測試 | ❌ 無（目前僅單元測試） |
 
 ## 專案結構
@@ -211,14 +202,14 @@ python -m pytest tests/ -q
 main.py                 # 進入點
 bot/
 ├── handlers.py         # Telegram 訊息處理 + @mention 路由
-├── scheduler.py        # APScheduler 新聞 / Threads 推播 job
-├── subscriptions.py    # /sub_* /unsub_* /news /threads 指令
+├── scheduler.py        # APScheduler 新聞 / UAnalyze 推播 job
+├── subscriptions.py    # /sub_* /unsub_* /news 指令
 ├── logging_conf.py     # 日誌設定（stdout + file rotation）
 └── error_notify.py     # 排程失敗 retry + 管理者通知
 agent/
 ├── bridge.py           # AgentBridge ABC + AntigravityCLIBridge
 └── prompts.py          # Agent prompt templates
-tools/                  # 7 個工具 script（CLI + import 雙入口）
+tools/                  # 6 個工具 script（CLI + import 雙入口）
 data/                   # 執行期 JSON + 日誌
 tests/                  # 262 個測試
 ```
