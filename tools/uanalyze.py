@@ -33,7 +33,7 @@ CRONJOB_BASE_URL = "https://cronjob.uanalyze.com.tw"
 GIDP_BASE_URL = "https://gidp.uanalyze.com.tw"
 # UAnalyze 前端 JS 公開寫死的固定 GIDP token，非登入產生，也不吃 JWT。
 GIDP_TOKEN = "tquEQGIZfck2lYDdBst9LBF5p6jfQepV"
-DEFAULT_TIMEOUT = 60.0
+DEFAULT_TIMEOUT = 120.0  # 2 分鐘 — /ua 分析/逐字稿可能較慢，放寬上限
 DEFAULT_PROMPT = "近況發展"
 
 # ── DCF 估值固定參數（一字不改搬自 uanalyze_cli/dcf_valuation_calculator.py）──

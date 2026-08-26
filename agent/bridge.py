@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT = 120  # seconds
+DEFAULT_TIMEOUT = 600  # seconds (10 min) — @mention Agent 可能跑多個工具，需較長上限
 
 # Repo root = parent of the `agent/` package. Used as the working directory for
 # the agy subprocess so the Agent can run tools via relative paths (tools/xxx.py).
