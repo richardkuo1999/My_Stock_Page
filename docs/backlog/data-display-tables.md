@@ -1,7 +1,21 @@
 # 資料顯示優化：善用表格（Agent 與 /command 皆是）
 
-<!-- labels: backlog, ux -->
+<!-- labels: backlog, ux, done -->
 <!-- 獨立主題：對現有呈現層的 UX 增強，另行規劃 -->
+
+**Status:** done（2026-08-26）
+
+## 完成摘要
+
+採「等寬對齊文字表格 + Markdown ```code block```」路線（未走圖片表格，故不依賴 INV-02）：
+
+- `bot/tables.py` — 共用 helper：`render_table()`（依 `east_asian_width` 把中文算 2 格寬對齊；標籤欄靠左、數字欄靠右）+ `code_block()`（fence 包裝、防三重反引號逃逸）。
+- `bot/handlers.py` — `/data` 五個 `_format_*` 全改用表格；`data_callback` 送出時 `code_block()` + `parse_mode="Markdown"`（財務指標採「指標為列 × 年份為欄」避免爆寬）。
+- `agent/prompts.py` — `SYSTEM_PROMPT` 加入「多維數據用等寬表格並包在 code block」輸出指示 + 範例（`@mention` 端）。
+- `tests/test_tables.py` — 新增 20 測試；全套 **344 passed**。樣式已推 admin chat 目視、`@mention` 分析南茂整條 pipeline 實測成功。
+- 架構鐵則維持：工具仍回純資料摘要 JSON，不呼叫 AI；表格化只在呈現層。
+
+> 後續（未列入本 ticket，需要時另開）：Agent 偶爾繞路 `find_by_name`/`list_dir` 找檔案；`@mention` 表格化為軟性 prompt 引導，力道待觀察。
 
 ## 來源
 

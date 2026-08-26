@@ -13,6 +13,8 @@ from telegram.ext import (
     filters,
 )
 
+from bot.tables import code_block_capped, render_table
+
 logger = logging.getLogger(__name__)
 
 
@@ -497,98 +499,167 @@ async def data_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 def _format_consensus(symbol: str, r: dict) -> str:
-    """Condense the fetch_eps_consensus summary into readable Chinese text."""
-    lines = [f"📑 {symbol} · 法人共識", "=" * 20]
+    """Condense the fetch_eps_consensus summary into a monospace table.
+
+    Two tables: 單季 EPS（期別 × 實際/法人預估）與 月營收共識（月 × 估計/累計/超
+    預期）。Periods/months form the rows so multi-period data reads top-to-bottom
+    instead of being 、-joined on one long line.
+    """
+    lines = [f"📑 {symbol} · 法人共識"]
 
     eps = r.get("eps") or {}
     if eps:
-        lines.append("【單季 EPS】")
-        actual = eps.get("實際EPS") or []
-        if actual:
-            parts = [f"{x['period']} {x['value']}" for x in actual]
-            lines.append("實際：" + "、".join(parts))
-        forecast = eps.get("法人共識預估EPS") or []
-        if forecast:
-            parts = [f"{x['period']} {x['value']}" for x in forecast]
-            lines.append("法人共識預估：" + "、".join(parts))
+        actual = {x["period"]: x["value"] for x in (eps.get("實際EPS") or [])}
+        forecast = {
+            x["period"]: x["value"] for x in (eps.get("法人共識預估EPS") or [])
+        }
+        # Union of periods, newest-first order preserved from input.
+        periods: list[str] = []
+        for x in (eps.get("實際EPS") or []) + (eps.get("法人共識預估EPS") or []):
+            if x["period"] not in periods:
+                periods.append(x["period"])
+        if periods:
+            rows = [
+                [p, actual.get(p, "-"), forecast.get(p, "-")] for p in periods
+            ]
+            lines.append("")
+            lines.append("【單季 EPS】")
+            lines.append(render_table(["期別", "實際", "法人預估"], rows))
 
     rev = r.get("revenue") or {}
     if rev:
-        lines.append("")
-        lines.append("【月營收共識（千元）】")
-        est = rev.get("法人共識估計月營收") or []
-        if est:
-            parts = [f"{x['month']}月 {x['value']:,}" for x in est]
-            lines.append("法人共識估計：" + "、".join(parts))
-        ytd = rev.get("累計今年月營收") or []
-        if ytd:
-            parts = [f"{x['month']}月 {x['value']:,}" for x in ytd]
-            lines.append("累計實際：" + "、".join(parts))
-        exceed = rev.get("累計營收超法人預期(%)") or []
-        if exceed:
-            parts = [f"{x['month']}月 {x['value']}%" for x in exceed]
-            lines.append("超法人預期：" + "、".join(parts))
+        est = {x["month"]: x["value"] for x in (rev.get("法人共識估計月營收") or [])}
+        ytd = {x["month"]: x["value"] for x in (rev.get("累計今年月營收") or [])}
+        exceed = {
+            x["month"]: x["value"]
+            for x in (rev.get("累計營收超法人預期(%)") or [])
+        }
+        months: list[str] = []
+        for key in (est, ytd, exceed):
+            for m in key:
+                if m not in months:
+                    months.append(m)
+        if months:
+            def _fmt(v: object) -> str:
+                return f"{v:,}" if isinstance(v, (int, float)) else "-"
+
+            rows = [
+                [
+                    f"{m}月",
+                    _fmt(est.get(m)),
+                    _fmt(ytd.get(m)),
+                    f"{exceed[m]}%" if m in exceed else "-",
+                ]
+                for m in months
+            ]
+            lines.append("")
+            lines.append("【月營收共識（千元）】")
+            lines.append(
+                render_table(["月份", "法人估計", "累計實際", "超預期"], rows)
+            )
 
     return "\n".join(lines)
 
 
 def _format_pershare(symbol: str, r: dict) -> str:
-    """Condense the fetch_per_share_metrics summary into readable Chinese text."""
-    lines = [f"📑 {symbol} · 財務指標（近年）", "=" * 20]
-    for m in r.get("metrics") or []:
-        name = m.get("name", "")
+    """Condense the fetch_per_share_metrics summary into a monospace table.
+
+    Layout: metrics as rows, years as columns (指標 × 年份). Years are few
+    (~5) so the table stays within a phone's width, and each metric reads
+    across its recent years on one aligned row.
+    """
+    lines = [f"📑 {symbol} · 財務指標（近年）"]
+    metrics = r.get("metrics") or []
+    if not metrics:
+        return "\n".join(lines)
+
+    # Collect the union of years across all metrics, newest-first as given.
+    years: list[str] = []
+    for m in metrics:
+        for year in (m.get("values") or {}):
+            if year not in years:
+                years.append(year)
+
+    rows = []
+    for m in metrics:
         values = m.get("values") or {}
-        # values dict is newest-first (D2025, D2024...).
-        parts = [f"{year} {val}" for year, val in values.items()]
-        lines.append(f"{name}：" + "、".join(parts))
+        rows.append([m.get("name", "")] + [values.get(y, "-") for y in years])
+
+    lines.append("")
+    lines.append(render_table(["指標"] + years, rows))
     return "\n".join(lines)
 
 
 def _format_supply(symbol: str, r: dict) -> str:
-    """Condense the fetch_supply_chain summary into readable Chinese text."""
-    lines = [f"📑 {symbol} · 供應鏈/同業", "=" * 20]
+    """Condense the fetch_supply_chain summary into a monospace grid.
+
+    Peer codes are laid out several-per-row so a long list reads as a compact
+    grid instead of a single 、-joined line.
+    """
+    lines = [f"📑 {symbol} · 供應鏈/同業"]
     peers = r.get("peers") or []
     if r.get("stock_name"):
         lines.append(f"本公司：{r['stock_name']}（{symbol}）")
     lines.append(f"同業/供應鏈標的（{len(peers)} 檔）：")
-    lines.append("、".join(peers))
+
+    if peers:
+        per_row = 5
+        grid = [peers[i : i + per_row] for i in range(0, len(peers), per_row)]
+        # No headers: render as an aligned grid of codes (all left-aligned).
+        headers = [""] * per_row
+        lines.append("")
+        table = render_table(headers, grid, aligns=["left"] * per_row)
+        # Drop the empty header + divider lines; keep only the code grid.
+        body = "\n".join(table.splitlines()[2:])
+        lines.append(body)
     return "\n".join(lines)
 
 
 def _format_order(symbol: str, r: dict) -> str:
-    """Condense the fetch_order_visibility summary into readable Chinese text.
+    """Condense the fetch_order_visibility summary into key/value tables.
 
-    資料稀疏；兩段（訂單能見度 / 合約負債）各 best-effort，有才列。
+    資料稀疏；兩段（訂單能見度 / 合約負債）各 best-effort，有才列。Each dict is
+    rendered as a 項目 × 數值 table.
     """
-    import json as _json
+    lines = [f"📑 {symbol} · 訂單能見度"]
 
-    lines = [f"📑 {symbol} · 訂單能見度", "=" * 20]
+    def _kv_table(d: dict) -> str:
+        return render_table(
+            ["項目", "數值"],
+            [[str(k), str(v)] for k, v in d.items()],
+            aligns=["left", "left"],
+        )
+
     ov = r.get("order_visibility")
     if ov:
+        lines.append("")
         lines.append("【訂單能見度】")
-        lines.append(_json.dumps(ov, ensure_ascii=False))
+        lines.append(_kv_table(ov) if isinstance(ov, dict) else str(ov))
     cl = r.get("contract_liability")
     if cl:
-        if ov:
-            lines.append("")
+        lines.append("")
         lines.append("【合約負債】")
-        lines.append(_json.dumps(cl, ensure_ascii=False))
+        lines.append(_kv_table(cl) if isinstance(cl, dict) else str(cl))
     return "\n".join(lines)
 
 
 def _format_dcf(symbol: str, r: dict) -> str:
-    """Condense the fetch_dcf_valuation summary into readable Chinese text.
+    """Condense the fetch_dcf_valuation summary into a key/value table.
 
     時間加權動態 DCF（純計算，非 AI）：內在價值/前瞻價值/時間加權基期/營收動能/信心度。
     """
-    lines = [f"📑 {symbol} · DCF 估值（時間加權動態）", "=" * 20]
-    lines.append(f"每股合理內在價值：{r.get('每股合理內在價值')} 元")
-    lines.append(f"1 年後前瞻合理價值：{r.get('1年後前瞻合理價值')} 元")
-    lines.append(f"當前時間加權基期：{r.get('當前時間加權基期')} 元")
-    lines.append(f"營收動能：{r.get('營收動能')}")
-    lines.append(f"2025 實際獲利：{r.get('2025實際獲利')}｜2026E：{r.get('2026E')}")
-    lines.append(f"最遠預估：{r.get('最遠預估年份及獲利')}")
-    lines.append(f"信心度：{r.get('信心度')}")
+    lines = [f"📑 {symbol} · DCF 估值（時間加權動態）", ""]
+    rows = [
+        ["每股合理內在價值", f"{r.get('每股合理內在價值')} 元"],
+        ["1年後前瞻合理價值", f"{r.get('1年後前瞻合理價值')} 元"],
+        ["當前時間加權基期", f"{r.get('當前時間加權基期')} 元"],
+        ["營收動能", str(r.get("營收動能"))],
+        ["2025 實際獲利", str(r.get("2025實際獲利"))],
+        ["2026E", str(r.get("2026E"))],
+        ["最遠預估", str(r.get("最遠預估年份及獲利"))],
+        ["信心度", str(r.get("信心度"))],
+    ]
+    lines.append(render_table(["項目", "數值"], rows, aligns=["left", "left"]))
     lines.append("")
     lines.append("＊純數學估值（WACC/時間加權/成長衰減），非 AI；僅供參考。")
     return "\n".join(lines)
@@ -665,8 +736,15 @@ async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     back = InlineKeyboardMarkup(
         [[InlineKeyboardButton("⬅️ 選其他資料", callback_data=f"data:back:{symbol}")]]
     )
-    # Telegram message hard limit is 4096 chars.
-    await query.edit_message_text(text[:4096], reply_markup=back)
+    # Wrap in a fenced code block so Telegram renders the tables in a monospace
+    # font (space-aligned columns only line up in monospace). Sent with legacy
+    # Markdown parse_mode; inside a fence only backticks are special, so the
+    # CJK/number content is safe. `code_block_capped` fences first, then caps to
+    # Telegram's 4096-char limit measured on the *final* string, so the fence
+    # markers and any inside-fence escaping can't push it over the edge.
+    await query.edit_message_text(
+        code_block_capped(text), reply_markup=back, parse_mode="Markdown"
+    )
 
 
 async def mention(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
