@@ -30,8 +30,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT = 20.0
 DEFAULT_LIMIT = 10
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) StockBot/1.0"
-# TLS-fingerprint impersonation profile for curl_cffi (bypasses Cloudflare)
-CFFI_IMPERSONATE = "chrome120"
+# TLS-fingerprint impersonation profile for curl_cffi (bypasses Cloudflare).
+# Kept on a current-but-widely-deployed Chrome (not the very newest) so the
+# fingerprint stays common and less likely to be singled out for a challenge.
+CFFI_IMPERSONATE = "chrome131"
 
 # News content cache: latest() writes here and reuses it within CACHE_TTL to
 # avoid re-hitting 16 sources on every /news, @mention, or scheduled run.
