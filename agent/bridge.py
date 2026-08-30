@@ -113,12 +113,22 @@ class AntigravityCLIBridge(AgentBridge):
             proc = await asyncio.create_subprocess_exec(
                 "agy", "-p", prompt,
                 "--output-format", "stream-json",
+                # SCOPE: declare the repo as the Agent's workspace and run in a
+                # sandbox with terminal restrictions. Together these confine file
+                # search / access to the project — the Agent can still run
+                # `python tools/xxx.py` (verified) but cannot `find` / read files
+                # outside REPO_ROOT (verified: returns "被限制"). This fixes the
+                # "agy scans the whole machine" problem.
+                "--sandbox",
+                "--add-dir", REPO_ROOT,
                 # SECURITY / TEMPORARY: auto-approve all tool permissions so the
-                # Agent can run tools/*.py in headless mode. This grants the Agent
-                # UNRESTRICTED command execution — a prompt-injection risk if the
-                # bot is exposed to untrusted users. Planned proper fix: expose the
-                # tools as an MCP server (agy mcp) so the Agent can ONLY call
-                # those tools and never arbitrary shell. See ARCHITECTURE.
+                # Agent can run tools/*.py in headless mode. Even with --sandbox
+                # this still auto-approves in-workspace tool calls. It does NOT
+                # widen the sandbox boundary (out-of-workspace access stays
+                # blocked), but it does skip per-tool prompting — a prompt-
+                # injection surface if the bot is exposed to untrusted users.
+                # Planned proper fix: expose the tools as an MCP server (agy mcp)
+                # so the Agent can ONLY call those tools. See ARCHITECTURE.
                 "--dangerously-skip-permissions",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

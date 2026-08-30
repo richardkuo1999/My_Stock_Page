@@ -38,7 +38,7 @@
 
 | 層 | 職責 | 不做 |
 |----|------|------|
-| **Bot 薄殼** | 收發 Telegram 訊息、偵測 @mention、排程管理、訂閱指令 | 不做 AI 推理 |
+| **Bot 薄殼** | 收發 Telegram 訊息、處理 `/ask` 指令、排程管理、訂閱指令 | 不做 AI 推理 |
 | **Agent 路由** | 理解用戶意圖、決定呼叫哪個 tool、組合回覆 | 不做 Telegram I/O |
 | **Tools** | 純業務邏輯（抓資料、算分析、畫圖） | 不知道 Telegram 或 Agent 的存在 |
 
@@ -46,8 +46,8 @@
 
 ### 用戶互動 → Agent
 
-- 用戶在群組或私訊中 **@bot_name** 或包含特定關鍵詞
-- Bot 偵測 `MessageEntity.MENTION`，提取文字
+- 用戶在群組或私訊中送出 **`/ask <問題>`**（群組、私訊皆可，不需 @mention）
+- Bot 以 `CommandHandler("ask", ...)` 接收，提取 `/ask` 後的文字（空則回用法提示、不呼叫 Agent）
 - 透過 `AgentBridge.send(prompt)` 交給 Antigravity CLI
 - Agent 自行決定要跑哪些 tool、組合回覆
 - Bot 把 Agent 回覆發回 Telegram
@@ -67,7 +67,7 @@
 | `/ua <代號>` | UAnalyze 估值分析：跳選單選分析面向，另含「法說會逐字稿」入口（列歷次法說會→分頁閱讀全文，翻頁走記憶體快取不重打 API） |
 | `/data <代號>` | 跳選單選資料類型（法人共識 / 財務指標 / 供應鏈 / 訂單能見度 / DCF 估值）後回覆濃縮數據 |
 
-> 快捷指令直接呼叫對應工具、不經 Agent（省 token、秒回）；需自然語言或組合多工具時才用 `@mention`。
+> 快捷指令直接呼叫對應工具、不經 Agent（省 token、秒回）；需自然語言或組合多工具時才用 `/ask`。
 
 ## 4. Agent 接入方式
 
@@ -94,22 +94,28 @@ class AntigravityCLIBridge(AgentBridge):
 
 ### 特性
 
-- **無狀態**：每次 @agent 都是獨立一問一答，不保留多輪 context
+- **無狀態**：每次 `/ask` 都是獨立一問一答，不保留多輪 context
 - **非阻塞**：`asyncio.create_subprocess_exec` 不卡 event loop
 - **錯誤處理**：超時或 exit code 非 0 → 回覆用戶「Agent 暫時無法回應，請稍後再試」
 - **未來可切換**：有 API key 後可加 `AntigravitySDKBridge` 實作，呼叫端不改
-- **System prompt**：`agent/prompts.py` 的 `build_mention_prompt()` 在每次 @mention 前
-  組合角色（台股助理）+ 7 個工具清單 + cwd 說明，讓 Agent 知道有哪些工具、怎麼呼叫。
-- **工作目錄固定**：bridge spawn `agy` 時指定 `cwd=REPO_ROOT`，工具用相對路徑 `tools/xxx.py`。
+- **System prompt**：`agent/prompts.py` 的 `build_mention_prompt()` 在每次 `/ask` 前
+  組合角色（台股助理）+ 工具清單 + cwd 說明，讓 Agent 知道有哪些工具、怎麼呼叫。
+- **關在專案 workspace**：bridge spawn `agy` 時指定 `cwd=REPO_ROOT`，並加
+  `--sandbox --add-dir REPO_ROOT`，工具用相對路徑 `tools/xxx.py`；Agent 無法存取專案目錄外的檔案。
 
-### ⚠️ 權限與安全（暫時方案）
+### 搜尋範圍限制（已實作）與權限安全（待辦）
 
-目前 bridge 用 `--dangerously-skip-permissions` 讓 headless Agent 能執行工具指令。
-**這會授予 Agent 無限制的指令執行權限**，若 bot 對不特定使用者開放，存在 prompt-injection
-風險。已試過 `--sandbox` 與 `settings.json` 的 `permissions.allow` 白名單，皆無法在
-「只放行 7 個工具」與「Agent 正常運作」間取得平衡（Agent 仍需 read_file / find 等周邊權限）。
+**搜尋範圍限制（已實作）**：bridge spawn `agy` 時加 `--sandbox --add-dir REPO_ROOT`，
+把 Agent 關在專案 workspace 內。實測結果：Agent 可正常執行 `python tools/xxx.py`
+（回 `SUCCESS`），但對專案目錄以外的路徑做 `find` / 讀檔會被擋（回「被限制」）。
+這解決了先前 Agent 偶爾會掃整台電腦的問題。
 
-**正解（待辦）**：把 7 個工具註冊為 **MCP server**（`agy mcp add`），Agent 只能呼叫這 7 個
+**權限安全（暫時方案）**：bridge 仍用 `--dangerously-skip-permissions` 自動核准工具權限。
+這不會放大上述 sandbox 邊界（專案外仍被擋），但會跳過逐次授權提示——若 bot 對不特定
+使用者開放，仍存在 prompt-injection 風險。先前試過用 `settings.json` 的 `permissions.allow`
+白名單「只放行工具」但難以在「只放行工具」與「Agent 正常運作」間取得平衡。
+
+**徹底正解（待辦）**：把工具註冊為 **MCP server**（`agy mcp add`），Agent 只能呼叫這些
 MCP 工具、完全不碰任意 shell，天生防 prompt injection。這也是 ticket 03 的原始設計方向。
 
 ### 為什麼不用 SDK

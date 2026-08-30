@@ -9,8 +9,6 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
-    MessageHandler,
-    filters,
 )
 
 from bot.tables import code_block_capped, render_table
@@ -43,7 +41,7 @@ HELP_TEXT = (
     "/data `<代號>` — 法人共識/財務指標/供應鏈/訂單能見度/DCF 估值選單，例 `/data 2330`\n"
     "/news — 立即抓最新新聞\n\n"
     "*問 AI（自然語言，會自動組合工具）*\n"
-    f"@我 你的問題 — 例：`@bot 台積電最近怎麼樣？`\n\n"
+    "/ask `<問題>` — 例：`/ask 台積電最近怎麼樣？`（群組、私訊皆可）\n\n"
     "輸入 /help 隨時查看本說明。"
 )
 
@@ -771,67 +769,63 @@ async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
-async def mention(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Detect @bot_username mentions and route to Agent."""
-    if not update.message or not update.message.entities:
+async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /ask <question> — route the question to the Agent.
+
+    Works identically in private chats and groups (no @mention needed).
+    """
+    if not update.message:
         return
 
-    bot_username = context.bot.username
-    for entity in update.message.entities:
-        if entity.type == "mention":
-            mentioned = update.message.text[entity.offset : entity.offset + entity.length]
-            if mentioned.lower() == f"@{bot_username}".lower():
-                text_after = update.message.text[entity.offset + entity.length :].strip()
-                if not text_after:
-                    await update.message.reply_text("請在 @mention 後加上您的問題")
-                    return
+    text_after = (update.message.text or "").partition(" ")[2].strip()
+    if not text_after:
+        await update.message.reply_text(
+            "用法：/ask 你的問題，例如 `/ask 台積電最近怎麼樣`",
+            parse_mode="Markdown",
+        )
+        return
 
-                logger.info(
-                    "Bot mentioned by user %s: %s",
-                    update.effective_user.id if update.effective_user else "unknown",
-                    text_after,
-                )
+    logger.info(
+        "/ask by user %s: %s",
+        update.effective_user.id if update.effective_user else "unknown",
+        text_after,
+    )
 
-                bridge = context.bot_data.get("agent_bridge")
-                if not bridge:
-                    await update.message.reply_text("⚠️ Agent 未設定")
-                    return
+    bridge = context.bot_data.get("agent_bridge")
+    if not bridge:
+        await update.message.reply_text("⚠️ Agent 未設定")
+        return
 
-                try:
-                    from agent.conversation_log import log_conversation
-                    from agent.prompts import build_mention_prompt
+    try:
+        from agent.conversation_log import log_conversation
+        from agent.prompts import build_mention_prompt
 
-                    prompt = build_mention_prompt(text_after)
-                    result = await bridge.send_detailed(prompt)
+        prompt = build_mention_prompt(text_after)
+        result = await bridge.send_detailed(prompt)
 
-                    # Persist the full exchange (question + answer + tools used).
-                    log_conversation(
-                        question=text_after,
-                        result=result,
-                        user_id=(
-                            update.effective_user.id
-                            if update.effective_user
-                            else None
-                        ),
-                        chat_id=(
-                            update.effective_chat.id
-                            if update.effective_chat
-                            else None
-                        ),
-                    )
+        # Persist the full exchange (question + answer + tools used).
+        log_conversation(
+            question=text_after,
+            result=result,
+            user_id=(
+                update.effective_user.id if update.effective_user else None
+            ),
+            chat_id=(
+                update.effective_chat.id if update.effective_chat else None
+            ),
+        )
 
-                    reply = result.response
-                    # Dev aid: append which tools the Agent actually used.
-                    # Toggle off with SHOW_AGENT_TOOLS=0 once out of dev.
-                    if _show_agent_tools() and result.tools_line():
-                        reply = f"{reply}\n\n{result.tools_line()}"
-                    await update.message.reply_text(reply)
-                except TimeoutError:
-                    await update.message.reply_text("⚠️ Agent 暫時無法回應，請稍後再試")
-                except RuntimeError as e:
-                    logger.error("Agent error: %s", e)
-                    await update.message.reply_text("⚠️ Agent 發生錯誤，請稍後再試")
-                return
+        reply = result.response
+        # Dev aid: append which tools the Agent actually used.
+        # Toggle off with SHOW_AGENT_TOOLS=0 once out of dev.
+        if _show_agent_tools() and result.tools_line():
+            reply = f"{reply}\n\n{result.tools_line()}"
+        await update.message.reply_text(reply)
+    except TimeoutError:
+        await update.message.reply_text("⚠️ Agent 暫時無法回應，請稍後再試")
+    except RuntimeError as e:
+        logger.error("Agent error: %s", e)
+        await update.message.reply_text("⚠️ Agent 發生錯誤，請稍後再試")
 
 
 def register_handlers(application: Application) -> None:
@@ -851,7 +845,5 @@ def register_handlers(application: Application) -> None:
     application.add_handler(
         CallbackQueryHandler(data_callback, pattern=r"^data:"), group=0
     )
-    application.add_handler(
-        MessageHandler(filters.Entity("mention"), mention), group=0
-    )
+    application.add_handler(CommandHandler("ask", ask_command), group=0)
     logger.info("Handlers registered.")

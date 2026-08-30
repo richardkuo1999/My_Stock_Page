@@ -86,6 +86,24 @@ def main() -> None:
 
     # Lifecycle hooks
     async def post_init(app):
+        # Register the command list so Telegram shows autocomplete suggestions.
+        from telegram import BotCommand
+
+        await app.bot.set_my_commands(
+            [
+                BotCommand("ask", "問 AI（自然語言），例 /ask 台積電最近怎麼樣"),
+                BotCommand("p", "即時股價＋分時圖，例 /p 2330"),
+                BotCommand("k", "K 線圖，例 /k 2330 60"),
+                BotCommand("ua", "UAnalyze 估值分析，例 /ua 2330"),
+                BotCommand("data", "法人共識/財務/供應鏈/DCF，例 /data 2330"),
+                BotCommand("news", "立即抓最新新聞"),
+                BotCommand("sub_news", "訂閱新聞推播（每小時）"),
+                BotCommand("unsub_news", "取消新聞推播"),
+                BotCommand("sub_ua_reports", "訂閱 UAnalyze 新報告推播"),
+                BotCommand("unsub_ua_reports", "取消 UAnalyze 報告推播"),
+                BotCommand("help", "顯示指令與功能說明"),
+            ]
+        )
         scheduler.start()
         logger.info("Scheduler started")
 

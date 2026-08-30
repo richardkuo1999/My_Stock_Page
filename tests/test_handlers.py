@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from bot.handlers import (
+    ask_command,
     help_command,
     kchart_command,
-    mention,
     price_command,
     start_command,
     uanalyze_command,
@@ -36,36 +36,30 @@ def mock_bridge():
     return bridge
 
 
-def _make_mention_update(text: str, bot_name: str = "test_bot"):
-    """Helper to create an update with a mention entity."""
+def _make_ask_update(text: str):
+    """Helper to create an update for a /ask command message."""
     update = MagicMock()
     update.message = MagicMock()
     update.message.text = text
     update.message.reply_text = AsyncMock()
     update.effective_user = MagicMock()
     update.effective_user.id = 12345
-
-    mention_str = f"@{bot_name}"
-    offset = text.find(mention_str)
-    entity = MagicMock()
-    entity.type = "mention"
-    entity.offset = offset
-    entity.length = len(mention_str)
-    update.message.entities = [entity]
+    update.effective_chat = MagicMock()
+    update.effective_chat.id = 999
     return update
 
 
-# --- Mention + Agent routing tests ---
+# --- /ask + Agent routing tests ---
 
 
 @pytest.mark.asyncio
-async def test_mention_routes_to_bridge(context, mock_bridge):
-    """Mention handler routes text to bridge and replies with response."""
+async def test_ask_routes_to_bridge(context, mock_bridge):
+    """/ask handler routes text to bridge and replies with response."""
     context.bot_data["agent_bridge"] = mock_bridge
-    update = _make_mention_update("@test_bot 分析台積電")
+    update = _make_ask_update("/ask 分析台積電")
 
     with patch("agent.conversation_log.log_conversation"):
-        await mention(update, context)
+        await ask_command(update, context)
 
     # The handler wraps the question with the system prompt before sending.
     mock_bridge.send_detailed.assert_called_once()
@@ -77,7 +71,7 @@ async def test_mention_routes_to_bridge(context, mock_bridge):
 
 
 @pytest.mark.asyncio
-async def test_mention_appends_tools_line(context, mock_bridge):
+async def test_ask_appends_tools_line(context, mock_bridge):
     """When the Agent used tools, the reply includes the tools-used line."""
     from agent.bridge import AgentResult, ToolCall
 
@@ -93,12 +87,12 @@ async def test_mention_appends_tools_line(context, mock_bridge):
         )
     )
     context.bot_data["agent_bridge"] = mock_bridge
-    update = _make_mention_update("@test_bot 台積電股價")
+    update = _make_ask_update("/ask 台積電股價")
 
     with patch("agent.conversation_log.log_conversation"), patch.dict(
         "os.environ", {"SHOW_AGENT_TOOLS": "1"}
     ):
-        await mention(update, context)
+        await ask_command(update, context)
 
     reply = update.message.reply_text.call_args[0][0]
     assert "台積電 2410" in reply
@@ -107,7 +101,7 @@ async def test_mention_appends_tools_line(context, mock_bridge):
 
 
 @pytest.mark.asyncio
-async def test_mention_tools_line_hidden_when_disabled(context, mock_bridge):
+async def test_ask_tools_line_hidden_when_disabled(context, mock_bridge):
     """SHOW_AGENT_TOOLS=0 suppresses the tools-used line."""
     from agent.bridge import AgentResult, ToolCall
 
@@ -118,24 +112,24 @@ async def test_mention_tools_line_hidden_when_disabled(context, mock_bridge):
         )
     )
     context.bot_data["agent_bridge"] = mock_bridge
-    update = _make_mention_update("@test_bot 台積電股價")
+    update = _make_ask_update("/ask 台積電股價")
 
     with patch("agent.conversation_log.log_conversation"), patch.dict(
         "os.environ", {"SHOW_AGENT_TOOLS": "0"}
     ):
-        await mention(update, context)
+        await ask_command(update, context)
 
     update.message.reply_text.assert_called_once_with("台積電 2410")
 
 
 @pytest.mark.asyncio
-async def test_mention_logs_conversation(context, mock_bridge):
-    """Every mention exchange is persisted via log_conversation."""
+async def test_ask_logs_conversation(context, mock_bridge):
+    """Every /ask exchange is persisted via log_conversation."""
     context.bot_data["agent_bridge"] = mock_bridge
-    update = _make_mention_update("@test_bot 分析台積電")
+    update = _make_ask_update("/ask 分析台積電")
 
     with patch("agent.conversation_log.log_conversation") as mock_log:
-        await mention(update, context)
+        await ask_command(update, context)
 
     mock_log.assert_called_once()
     kwargs = mock_log.call_args.kwargs
@@ -144,81 +138,66 @@ async def test_mention_logs_conversation(context, mock_bridge):
 
 
 @pytest.mark.asyncio
-async def test_mention_timeout_error(context, mock_bridge):
-    """Mention handler replies with timeout message on TimeoutError."""
+async def test_ask_timeout_error(context, mock_bridge):
+    """/ask handler replies with timeout message on TimeoutError."""
     mock_bridge.send_detailed = AsyncMock(side_effect=TimeoutError("timed out"))
     context.bot_data["agent_bridge"] = mock_bridge
-    update = _make_mention_update("@test_bot 很慢的問題")
+    update = _make_ask_update("/ask 很慢的問題")
 
-    await mention(update, context)
+    await ask_command(update, context)
 
     update.message.reply_text.assert_called_once_with("⚠️ Agent 暫時無法回應，請稍後再試")
 
 
 @pytest.mark.asyncio
-async def test_mention_runtime_error(context, mock_bridge):
-    """Mention handler replies with error message on RuntimeError."""
+async def test_ask_runtime_error(context, mock_bridge):
+    """/ask handler replies with error message on RuntimeError."""
     mock_bridge.send_detailed = AsyncMock(
         side_effect=RuntimeError("Agent error (code 1): fail")
     )
     context.bot_data["agent_bridge"] = mock_bridge
-    update = _make_mention_update("@test_bot 壞掉的指令")
+    update = _make_ask_update("/ask 壞掉的指令")
 
-    await mention(update, context)
+    await ask_command(update, context)
 
     update.message.reply_text.assert_called_once_with("⚠️ Agent 發生錯誤，請稍後再試")
 
 
 @pytest.mark.asyncio
-async def test_mention_empty_text(context, mock_bridge):
-    """Mention handler prompts user when no text follows the mention."""
+async def test_ask_empty_text(context, mock_bridge):
+    """/ask with no question replies usage hint and does not call the Agent."""
     context.bot_data["agent_bridge"] = mock_bridge
-    update = _make_mention_update("@test_bot")
+    update = _make_ask_update("/ask")
 
-    await mention(update, context)
+    await ask_command(update, context)
 
-    update.message.reply_text.assert_called_once_with("請在 @mention 後加上您的問題")
+    reply = update.message.reply_text.call_args[0][0]
+    assert "用法" in reply
     mock_bridge.send_detailed.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_mention_no_bridge(context):
-    """Mention handler replies with setup message when bridge not configured."""
-    # bot_data has no "agent_bridge" key
-    update = _make_mention_update("@test_bot 問題")
+async def test_ask_only_whitespace(context, mock_bridge):
+    """/ask followed by only whitespace is treated as empty."""
+    context.bot_data["agent_bridge"] = mock_bridge
+    update = _make_ask_update("/ask    ")
 
-    await mention(update, context)
+    await ask_command(update, context)
+
+    reply = update.message.reply_text.call_args[0][0]
+    assert "用法" in reply
+    mock_bridge.send_detailed.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ask_no_bridge(context):
+    """/ask replies with setup message when bridge not configured."""
+    # bot_data has no "agent_bridge" key
+    update = _make_ask_update("/ask 問題")
+
+    await ask_command(update, context)
 
     update.message.reply_text.assert_called_once_with("⚠️ Agent 未設定")
-
-
-@pytest.mark.asyncio
-async def test_mention_ignores_other_users(context):
-    """Mention handler should ignore mentions of other users."""
-    update = MagicMock()
-    update.message = MagicMock()
-    update.message.text = "@other_user hello"
-    update.message.reply_text = AsyncMock()
-    update.effective_user = MagicMock()
-    update.effective_user.id = 12345
-
-    entity = MagicMock()
-    entity.type = "mention"
-    entity.offset = 0
-    entity.length = 11  # len("@other_user")
-    update.message.entities = [entity]
-
-    await mention(update, context)
-    update.message.reply_text.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_mention_no_entities(context):
-    """Mention handler should handle no entities gracefully."""
-    update = MagicMock()
-    update.message = MagicMock()
-    update.message.entities = None
-    await mention(update, context)  # Should not raise
 
 
 # --- /start, /help and quick command tests ---
