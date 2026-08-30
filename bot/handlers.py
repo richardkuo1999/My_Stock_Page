@@ -37,7 +37,7 @@ HELP_TEXT = (
     "/sub\\_news /unsub\\_news — 訂閱/取消新聞推播（每小時）\n"
     "/sub\\_ua\\_reports /unsub\\_ua\\_reports — 訂閱/取消 UAnalyze 新研究報告推播（每 30 分）\n\n"
     "*即時查詢（直接跑工具，秒回）*\n"
-    "/p `<代號>` — 即時股價（附基本面：本益比/最新財報等），例 `/p 2330`\n"
+    "/p `<代號>` — 即時股價＋盤中分時走勢圖（附基本面：本益比/最新財報等），例 `/p 2330`\n"
     "/k `<代號> [天數]` — K 線圖，例 `/k 2330 60`\n"
     "/ua `<代號>` — UAnalyze 估值分析＋法說會逐字稿選單，例 `/ua 2330`\n"
     "/data `<代號>` — 法人共識/財務指標/供應鏈/訂單能見度/DCF 估值選單，例 `/data 2330`\n"
@@ -241,6 +241,30 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             lines.append(f"{label}：{value}")
 
     await update.message.reply_text("\n".join(lines))
+
+    # 價量回完後，best-effort 再附上盤中分時走勢圖（失敗絕不影響上面的價量回傳）。
+    await _send_intraday_chart(update, symbol)
+
+
+async def _send_intraday_chart(update: Update, symbol: str) -> None:
+    """Best-effort：畫盤中分時走勢圖並以 photo 回覆。
+
+    這是 /p 的加分項，任何失敗（無資料、繪圖錯、傳圖錯）都只記 log、不丟出，
+    確保價量文字回覆已送出、使用者體驗不受影響。
+    """
+    try:
+        from tools.draw_intraday_chart import draw as draw_intraday
+
+        r = await draw_intraday(symbol)
+        if "error" in r:
+            logger.debug("intraday chart skipped for %s: %s", symbol, r["error"])
+            return
+        with open(r["image_path"], "rb") as f:
+            await update.message.reply_photo(
+                photo=f, caption=f"{symbol} 盤中分時走勢"
+            )
+    except Exception as e:
+        logger.debug("intraday chart augment skipped for %s: %s", symbol, e)
 
 
 async def kchart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

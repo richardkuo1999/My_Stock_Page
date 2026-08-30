@@ -14,6 +14,7 @@ def test_system_prompt_lists_all_tools():
     for tool in (
         "get_stock_price.py",
         "draw_kchart.py",
+        "draw_intraday_chart.py",
         "fetch_news.py",
         "uanalyze.py",
         "summarize_document.py",

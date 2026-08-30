@@ -25,6 +25,12 @@ SYSTEM_PROMPT = """你是一個台股投資輔助助理，透過 Telegram 與使
    `python tools/draw_kchart.py <股票代號> --period <天數>`
    例：`python tools/draw_kchart.py 2330 --period 60`
 
+9. 盤中分時走勢折線圖（產生圖檔，回傳圖片路徑）
+   `python tools/draw_intraday_chart.py <股票代號>`
+   例：`python tools/draw_intraday_chart.py 2330`
+   用 Fugle 每分鐘資料畫當日分時走勢（含前收虛線基準），回 `image_path`。
+   使用者問「今天走勢 / 盤中 / 分時圖」時用這支；問「K 線 / 日線 / 幾天」時用工具 2。
+
 3. 新聞（全部來源或指定個股）
    `python tools/fetch_news.py --all`
    `python tools/fetch_news.py <股票代號或名稱> --limit <數量>`

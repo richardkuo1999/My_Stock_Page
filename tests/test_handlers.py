@@ -260,7 +260,8 @@ async def test_price_command_no_arg(context):
 async def test_price_command_success(context):
     update = _make_command_update("/p 2330")
     fake = {"symbol": "2330", "name": "台積電", "price": 2410.0, "change": 35.0, "change_pct": 1.47, "volume": 0, "source": "fugle"}
-    with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)):
+    with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)), \
+         patch("bot.handlers._send_intraday_chart", new=AsyncMock()):
         await price_command(update, context)
     # last reply carries the price info
     text = update.message.reply_text.call_args[0][0]
@@ -276,7 +277,8 @@ async def test_price_command_with_fundamentals(context):
         "change_pct": 1.47, "volume": 0, "source": "fugle",
         "fundamentals": {"本益比": 27.9, "最新財報": "2026年Q2"},
     }
-    with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)):
+    with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)), \
+         patch("bot.handlers._send_intraday_chart", new=AsyncMock()):
         await price_command(update, context)
     text = update.message.reply_text.call_args[0][0]
     assert "台積電" in text and "2410" in text
@@ -293,12 +295,46 @@ async def test_price_command_no_fundamentals_plain(context):
         "symbol": "2330", "name": "台積電", "price": 2410.0, "change": 35.0,
         "change_pct": 1.47, "volume": 0, "source": "fugle",
     }
-    with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)):
+    with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)), \
+         patch("bot.handlers._send_intraday_chart", new=AsyncMock()):
         await price_command(update, context)
     text = update.message.reply_text.call_args[0][0]
     assert "台積電" in text and "2410" in text
     assert "基本面" not in text
     assert "本益比" not in text
+
+
+@pytest.mark.asyncio
+async def test_price_command_sends_intraday_chart(context, tmp_path):
+    """/p 在回價量後，best-effort 再附上盤中分時走勢圖 photo。"""
+    img = tmp_path / "intraday.png"
+    img.write_bytes(b"\x89PNG\r\n")
+    update = _make_command_update("/p 2330")
+    fake = {"symbol": "2330", "name": "台積電", "price": 2410.0, "change": 35.0,
+            "change_pct": 1.47, "volume": 0, "source": "fugle"}
+    with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)), \
+         patch("tools.draw_intraday_chart.draw",
+               new=AsyncMock(return_value={"image_path": str(img)})):
+        await price_command(update, context)
+    # price text still sent, and the intraday chart photo is attached.
+    assert any("台積電" in c.args[0] for c in update.message.reply_text.call_args_list)
+    update.message.reply_photo.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_price_command_chart_failure_is_silent(context):
+    """盤中圖失敗（無資料）時，/p 價量照常回，不丟例外、不多發錯誤訊息。"""
+    update = _make_command_update("/p 2330")
+    fake = {"symbol": "2330", "name": "台積電", "price": 2410.0, "change": 35.0,
+            "change_pct": 1.47, "volume": 0, "source": "fugle"}
+    with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)), \
+         patch("tools.draw_intraday_chart.draw",
+               new=AsyncMock(return_value={"error": "找不到股票代號 2330 的盤中資料"})):
+        await price_command(update, context)
+    # price text sent; no photo; the chart error is swallowed (not surfaced).
+    assert any("台積電" in c.args[0] for c in update.message.reply_text.call_args_list)
+    update.message.reply_photo.assert_not_awaited()
+    assert not any("找不到" in c.args[0] for c in update.message.reply_text.call_args_list)
 
 
 @pytest.mark.asyncio

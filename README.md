@@ -65,7 +65,7 @@ docker compose up -d
 | `/sub_news` / `/unsub_news` | 訂閱 / 取消新聞推播（每小時） |
 | `/sub_ua_reports` / `/unsub_ua_reports` | 訂閱 / 取消 UAnalyze 新研究報告推播（每 30 分鐘） |
 | `/news` | 跳出選單選新聞來源（全部或指定 15 來源之一），再回覆該來源最新新聞 |
-| `/p <代號>` | 即時股價（直接跑工具，秒回），並 best-effort 附上 UAnalyze 基本面（本益比/最新財報/月營收等），例 `/p 2330` |
+| `/p <代號>` | 即時股價（直接跑工具，秒回），並 best-effort 附上 UAnalyze 基本面（本益比/最新財報/月營收等）與**盤中分時走勢折線圖**，例 `/p 2330` |
 | `/k <代號> [天數]` | K 線圖（回傳圖片），例 `/k 2330 60` |
 | `/ua <代號>` | UAnalyze AI 分析：跳出選單選分析面向（近況/產業/資本支出…），另含「法說會逐字稿」入口（列歷次法說會→選一場→分頁閱讀完整逐字稿全文，翻頁走記憶體快取不重打 API），例 `/ua 2330` |
 | `/data <代號>` | 跳出選單選資料類型（法人共識 / 財務指標 / 供應鏈 / 訂單能見度 / DCF 估值），回濃縮數據，例 `/data 2330` |
@@ -122,6 +122,7 @@ AI 呼叫失敗時不推進游標，下一輪會重試同一區間。
 python tools/get_stock_price.py 2330                       # 即時股價（best-effort 附 UAnalyze 基本面）
 python tools/uanalyze.py --fundamentals 2330               # 即時基本面摘要（收盤價/當日漲跌幅/本益比/最新財報/月營收/掛牌類別，供 /p 疊加）
 python tools/draw_kchart.py 2330 --period 60               # K 線圖 → 圖片路徑
+python tools/draw_intraday_chart.py 2330                   # 盤中分時走勢折線圖 → 圖片路徑
 python tools/fetch_news.py --all                           # 全部 15 來源最新新聞
 python tools/fetch_news.py 2330 --limit 5                  # 指定股票新聞（本地過濾）
 python tools/uanalyze.py 2330                              # UAnalyze AI 估值分析
