@@ -19,24 +19,15 @@ import httpx
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
-try:
-    from curl_cffi import requests as cffi_requests
-except ImportError:  # pragma: no cover - optional dependency
-    cffi_requests = None
-
 load_dotenv()
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 20.0
 DEFAULT_LIMIT = 10
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) StockBot/1.0"
-# TLS-fingerprint impersonation profile for curl_cffi (bypasses Cloudflare).
-# Kept on a current-but-widely-deployed Chrome (not the very newest) so the
-# fingerprint stays common and less likely to be singled out for a challenge.
-CFFI_IMPERSONATE = "chrome131"
 
 # News content cache: latest() writes here and reuses it within CACHE_TTL to
-# avoid re-hitting 16 sources on every /news, @mention, or scheduled run.
+# avoid re-hitting 15 sources on every /news, @mention, or scheduled run.
 NEWS_CACHE_FILE = Path(__file__).resolve().parent.parent / "data" / "news_cache.json"
 CACHE_TTL_SECONDS = 600  # 10 minutes
 
@@ -53,7 +44,6 @@ SOURCES = [
     {"name": "UAnalyze", "type": "uanalyze", "url": "https://uanalyze.com.tw/articles"},
     {"name": "Fugle", "type": "fugle", "url": "https://blog.fugle.tw/topic/industry-analysis"},
     {"name": "Vocus", "type": "vocus", "url": "https://vocus.cc"},
-    {"name": "MacroMicro", "type": "macromicro", "url": "https://www.macromicro.me/rss"},
     {"name": "FinGuider", "type": "finguider", "url": "https://finguider.cc/Api/article/"},
     {"name": "Fintastic", "type": "fintastic", "url": "https://fintastic.trading/wp-json/wp/v2/posts"},
     {
@@ -533,33 +523,9 @@ async def _fetch_forecastock(client: httpx.AsyncClient) -> list[dict]:
         return []
 
 
-def _cffi_get(url: str, params: dict | None = None):
-    """Blocking curl_cffi GET with Chrome TLS fingerprint. Returns response or None."""
-    if cffi_requests is None:
-        logger.warning("curl_cffi not installed; cannot bypass Cloudflare for %s", url)
-        return None
-    return cffi_requests.get(
-        url, params=params, impersonate=CFFI_IMPERSONATE, timeout=DEFAULT_TIMEOUT
-    )
-
-
-async def _fetch_macromicro(client: httpx.AsyncClient) -> list[dict]:
-    """MacroMicro RSS behind Cloudflare — fetch via curl_cffi TLS impersonation."""
-    url = "https://www.macromicro.me/rss"
-    try:
-        r = await asyncio.to_thread(_cffi_get, url)
-        if r is None or r.status_code != 200:
-            logger.warning("MacroMicro returned status %s", getattr(r, "status_code", "N/A"))
-            return []
-        return _parse_feed_text(r.text, "MacroMicro")
-    except Exception as e:
-        logger.warning("MacroMicro fetch failed: %s", e)
-        return []
-
-
 async def _fetch_fintastic(client: httpx.AsyncClient) -> list[dict]:
     """Fintastic WordPress JSON API. A full browser UA is enough to pass its
-    Cloudflare rule (curl_cffi's TLS fingerprint is actually blocked here)."""
+    Cloudflare rule."""
     url = "https://fintastic.trading/wp-json/wp/v2/posts"
     headers = {
         "User-Agent": (
@@ -693,8 +659,6 @@ async def _dispatch_source(source: dict, client: httpx.AsyncClient) -> list[dict
         return await _fetch_pocket(client)
     elif stype == "forecastock":
         return await _fetch_forecastock(client)
-    elif stype == "macromicro":
-        return await _fetch_macromicro(client)
     elif stype == "fintastic":
         return await _fetch_fintastic(client)
     elif stype == "ua_column":
@@ -759,7 +723,7 @@ def _sort_by_date(articles: list[dict]) -> list[dict]:
 
 
 async def latest(force_refresh: bool = False) -> dict:
-    """Fetch the latest news from all 16 sources, with a short-lived disk cache.
+    """Fetch the latest news from all 15 sources, with a short-lived disk cache.
 
     Within CACHE_TTL_SECONDS, repeated calls return the cached result instead of
     re-hitting every source. Pass force_refresh=True to bypass the cache.
@@ -807,7 +771,7 @@ def _write_news_cache(articles: list[dict]) -> None:
 
 
 async def _fetch_all_sources() -> dict:
-    """Fetch from all 16 sources in parallel (no cache)."""
+    """Fetch from all 15 sources in parallel (no cache)."""
     headers = {"User-Agent": USER_AGENT}
     async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT, headers=headers, follow_redirects=True) as client:
         # MoneyDJ needs verify=False, dispatched via type "rss" name "MoneyDJ" →
@@ -865,7 +829,7 @@ async def fetch(symbol: str | None = None, limit: int = 10) -> dict:
     if name and name != symbol:
         keywords.append(name)
 
-    # 1) "Database": the latest news already fetched from all 16 sources.
+    # 1) "Database": the latest news already fetched from all 15 sources.
     # 2) Supplement with CNYES keyword search (low precision, but occasional
     #    exclusives). Merge, then filter locally by keyword relevance.
     latest_result = await latest()

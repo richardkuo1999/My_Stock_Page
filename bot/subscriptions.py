@@ -168,7 +168,7 @@ async def unsub_uanalyze_handler(update: Update, context: ContextTypes.DEFAULT_T
 
 
 def _news_menu_keyboard() -> InlineKeyboardMarkup:
-    """Build the /news source-selection keyboard (全部 + 16 sources, 3 per row)."""
+    """Build the /news source-selection keyboard (全部 + 15 sources, 3 per row)."""
     from tools.fetch_news import SOURCES
 
     buttons = [InlineKeyboardButton("📚 全部來源", callback_data="news:all")]

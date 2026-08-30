@@ -214,9 +214,9 @@ async def test_latest_parallel():
 
 
 @pytest.mark.asyncio
-async def test_latest_returns_all_16_sources():
-    """Verify SOURCES list has exactly 16 entries."""
-    assert len(SOURCES) == 16
+async def test_latest_returns_all_15_sources():
+    """Verify SOURCES list has exactly 15 entries."""
+    assert len(SOURCES) == 15
 
 
 # --- fetch() Tests ---
@@ -410,8 +410,8 @@ def test_cli_with_symbol(monkeypatch):
 
 
 def test_sources_count():
-    """Verify all 16 sources are defined."""
-    assert len(SOURCES) == 16
+    """Verify all 15 sources are defined."""
+    assert len(SOURCES) == 15
     names = [s["name"] for s in SOURCES]
     assert "CNYES" in names
     assert "MoneyDJ" in names
@@ -421,7 +421,6 @@ def test_sources_count():
     assert "UAnalyze專欄" in names
     assert "Fugle" in names
     assert "Vocus" in names
-    assert "MacroMicro" in names
     assert "FinGuider" in names
     assert "Fintastic" in names
     assert "Forecastock" in names
@@ -476,50 +475,7 @@ async def test_fetch_forecastock_http_error():
     assert articles == []
 
 
-# --- MacroMicro (curl_cffi) + Fintastic (WordPress API) tests ---
-
-
-@pytest.mark.asyncio
-async def test_fetch_macromicro_parses_rss():
-    """MacroMicro fetch via curl_cffi parses RSS feed."""
-    from tools.fetch_news import _fetch_macromicro
-
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.text = SAMPLE_RSS_XML
-
-    with patch("tools.fetch_news._cffi_get", return_value=resp):
-        articles = await _fetch_macromicro(AsyncMock())
-
-    assert len(articles) == 2
-    assert articles[0]["source"] == "MacroMicro"
-    assert articles[0]["title"] == "台積電法說重點整理"
-
-
-@pytest.mark.asyncio
-async def test_fetch_macromicro_blocked():
-    """MacroMicro returns empty on 403 (Cloudflare block)."""
-    from tools.fetch_news import _fetch_macromicro
-
-    resp = MagicMock()
-    resp.status_code = 403
-    resp.text = ""
-
-    with patch("tools.fetch_news._cffi_get", return_value=resp):
-        articles = await _fetch_macromicro(AsyncMock())
-
-    assert articles == []
-
-
-@pytest.mark.asyncio
-async def test_fetch_macromicro_no_curl_cffi():
-    """MacroMicro returns empty gracefully if curl_cffi missing."""
-    from tools.fetch_news import _fetch_macromicro
-
-    with patch("tools.fetch_news._cffi_get", return_value=None):
-        articles = await _fetch_macromicro(AsyncMock())
-
-    assert articles == []
+# --- Fintastic (WordPress API) tests ---
 
 
 @pytest.mark.asyncio
