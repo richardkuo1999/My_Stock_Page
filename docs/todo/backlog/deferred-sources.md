@@ -1,37 +1,12 @@
 # 延後討論的引入來源（Not yet specified）
 
-> 這些是已知想引入、但**尚未進入 wayfinder map** 的來源。目前聚焦 `uanalyze_cli`（見 `docs/map-uanalyze-cli.md`）。
-> 待 uanalyze_cli 的 map 走完後，再逐一 graduate 成正式討論。
+<!-- labels: backlog, deferred -->
+
+> 這裡是已知想引入、但**尚未進入 wayfinder map** 的來源。
+> `uanalyze_cli` 的 map 已走完（見 `docs/done/projects/02-uanalyze-cli-import/`），
+> 剩餘來源待逐一 graduate 成正式討論。
 >
-> 整理時間：2026-08-22
-
----
-
-## 來源 B：`industry_agent`（產業研究報告產生器）
-
-**路徑：** `/Users/richardkuo/Desktop/stock code/stocktool/industry_agent`
-
-**一句話：** 自動化產業與個股基本面研究系統 — 多數據源整合 + PDF 法人報告解析 + 一鍵生成 Markdown/HTML 分析報告。專為台股及連動美股巨頭設計。
-
-**可搬功能盤點：**
-
-| # | 功能 | 檔案 | 與現有專案的關係 |
-|---|---|---|---|
-| B1 | 多數據源 fetcher：FinMind / Fugle / TWSE / yfinance | `scripts/{finmind,fugle,twse,yfinance}_fetcher.py` | **部分重疊** — 現專案已有 Fugle 股價、FinMind |
-| B2 | UAnalyze fetcher | `scripts/uanalyze_fetcher.py` | **重疊** — 現專案已有 `tools/uanalyze.py` |
-| B3 | PDF 法人報告解析器 | `scripts/file_parser.py` | 全新 — 掃 `data/raw/report/` 券商 PDF（富邦/國泰/中信/MS） |
-| B4 | 美台股聯動分析（美股巨頭 → 台股供應鏈） | `scripts/generate_report.py` | 全新 |
-| B5 | 一鍵產業報告生成 → Markdown + HTML | `scripts/generate_report.py` | 全新、**重功能**，含 SWOT / 產業護城河 / 領先指標 / 估值比較 |
-| B6 | Agent skills：top-down（產業）/ bottom-up（個股） | `.agents/skills/` | 另一套 Antigravity skill 設計，與現有 `agent/prompts.py` 相關 |
-
-**內建產業模組：** 記憶體、CPO 光通訊、CoWoS 先進封裝（可自訂 `--industry --giant --keywords --stocks`）。
-
-**額外數據源憑證：** 除了現有的 FinMind/Fugle/UAnalyze，還多一個「定錨 Anchors」（`ANCHORS_USERNAME/PASSWORD`）。
-
-**與現有架構的張力：**
-- 產出 HTML/Markdown 報告檔，跟「Telegram bot 薄殼」形態不同 → 需決定觸發與交付形態（bot 觸發產檔後傳連結/檔案？）
-- 多個 fetcher 與現有工具重疊，需決定合併或並存
-- 自帶 Agent skills，與現有 `@mention` prompt 設計如何整合
+> 整理時間：2026-08-22（2026-08-30 更新：來源 B `industry_agent` 已移除，另開獨立專案整併）
 
 ---
 
@@ -62,6 +37,7 @@
 
 ## 下一步
 
-1. 先完成 `uanalyze_cli` 的 wayfinder map（`docs/map-uanalyze-cli.md`）
-2. 之後 graduate 來源 B（`industry_agent`）— 可能自成一張 map（量大）
-3. 最後討論來源 C（`cb_analyzer`）— 單檔、單一資料域，可能一張 grilling ticket 就夠
+1. 先完成 `uanalyze_cli` 的 wayfinder map（已完成，見 `docs/done/projects/02-uanalyze-cli-import/`）
+2. graduate 來源 C（`cb_analyzer`）— 單檔、單一資料域，可能一張 grilling ticket 就夠
+
+> 來源 B（`industry_agent`）**不引入本專案**，之後另開獨立專案並與其他東西整併，已從本檔移除。

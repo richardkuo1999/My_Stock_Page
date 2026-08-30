@@ -1,6 +1,7 @@
 # Agent prompt 安全防護：不允許的 prompt 類型
 
 <!-- labels: backlog, security -->
+
 <!-- 獨立主題：對現有 agent/prompts.py 的安全增強，另行規劃 -->
 
 ## 來源

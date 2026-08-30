@@ -79,7 +79,7 @@
 - `tools/fetch_news.py` 新增來源（`type: "uanalyze_column"`）：`GET api.uanalyze.com.tw/data/fetch/column/search?Keywords=&page=&per_page=`（**斜線 `data/fetch`，非底線**；JWT + Origin/Referer）。回 `data.columns[]` + `data.meta{total, last_page, has_next}`（total≈2369）。
 - 列表 item：`id/title/tag/content(全文HTML)/created_at/image`。產出 `{title, source:"UAnalyze專欄", date:created_at, url:(空或指 pro 首頁), summary:(content 去 HTML 截斷)}`。
 - **無公開 permalink**（付費內容）→ `url` 留空或指首頁。內容為付費訂閱，使用者確認**自用**。
-- 全文 on-demand 屬**獨立 backlog**（`docs/backlog/news-fulltext-on-demand.md`），非本 spec 範圍；本 spec 只做「列表併入新聞來源」。
+- 全文 on-demand 屬**獨立 backlog**（`docs/todo/backlog/news-fulltext-on-demand.md`），非本 spec 範圍；本 spec 只做「列表併入新聞來源」。
 
 ### 股名對照表取代（ua-07）
 - 新增 `fetch_stock_pool()`（gidp `StockPool?country=TW`，回 12,361 檔 `{stock_code, stock_name}`）。

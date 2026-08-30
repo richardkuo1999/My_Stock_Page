@@ -13,7 +13,7 @@
 - 來源：`/Users/richardkuo/Desktop/stock code/stocktool/uanalyze_cli`
 - **形態不設橫切原則**：每個功能單獨在各自 ticket 裡決定觸發形態（使用者裁決 6）
 - 每個 grilling session 應諮詢 `/grilling` 和 `/domain-modeling`
-- **延後來源**（在霧裡，已存 `docs/backlog/deferred-sources.md`）：
+- **延後來源**（在霧裡，已存 `docs/todo/backlog/deferred-sources.md`）：
   - 來源 B `industry_agent`（產業報告產生器，量大，可能自成一張 map）
   - 來源 C `cb_analyzer.py`（可轉債選股，單檔單資料域）
 

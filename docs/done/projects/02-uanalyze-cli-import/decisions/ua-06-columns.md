@@ -9,7 +9,7 @@
 ## Resolution — A11 專欄文章庫
 
 - **引入 A11**，形態 = **併入現有新聞聚合（`fetch_news`）當新來源**（第 16 個來源，如 name「UAnalyze專欄」）。與現有第 5 來源 `UAnalyze`（`uanalyze.com.tw/articles`）**不重疊**（使用者確認）；與 `report-summaries`（個股研報摘要）也不同批——這批是**跨產業專欄長文**（DailyIssue 每日議題）。
-- **全文走 on-demand**：新聞列表顯示 title + created_at + tag；使用者**點某篇才輸出全文**（`content` 欄位）。此全文機制已另計獨立 backlog：`docs/backlog/news-fulltext-on-demand.md`（跨全來源，非本 map 範圍）。
+- **全文走 on-demand**：新聞列表顯示 title + created_at + tag；使用者**點某篇才輸出全文**（`content` 欄位）。此全文機制已另計獨立 backlog：`docs/todo/backlog/news-fulltext-on-demand.md`（跨全來源，非本 map 範圍）。
 - **版權**：內容為 UAnalyze **付費訂閱**專欄。使用者確認**自用**（自己看，不對外散布），版權疑慮在自用範圍可接受。
 
 ## API 事實（實測確認，2026-08-23）
