@@ -18,8 +18,24 @@ def test_system_prompt_lists_all_tools():
         "fetch_news.py",
         "uanalyze.py",
         "summarize_document.py",
+        "lookup_stock_name.py",
+        "cnyes.py",
+        "finmind.py",
+        "fugle.py",
+        "yfinance_data.py",
+        "valuation.py",
     ):
         assert tool in SYSTEM_PROMPT
+
+
+def test_system_prompt_describes_format_choice():
+    """Prompt 說明 Agent 可用 FORMAT 標記自選 text / html / markdown。"""
+    assert "FORMAT: html" in SYSTEM_PROMPT
+    assert "FORMAT: text" in SYSTEM_PROMPT
+    assert "FORMAT: markdown" in SYSTEM_PROMPT
+    # html/markdown 是「送檔案附件」而非 Telegram 訊息內嵌。
+    assert ".html 檔案" in SYSTEM_PROMPT
+    assert ".md 檔案" in SYSTEM_PROMPT
 
 
 def test_build_mention_prompt_includes_question_and_system():

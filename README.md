@@ -83,6 +83,19 @@ docker compose up -d
 每次 `/ask` 會由 `agent/prompts.py` 的 `build_mention_prompt()` 組合 system prompt
 （角色=台股助理 + 工具清單 + 執行流程）再送給 Agent，Agent 據此決定要跑哪些工具。
 
+**回覆格式由 Agent 自選**：Agent 可在回覆第一行放一個 `FORMAT:` 標記，決定呈現方式，
+由 `bot/handlers.py` 的 `_send_agent_reply()` 依標記路由：
+
+| 標記 | 呈現 | 適用 |
+|------|------|------|
+| `FORMAT: text`（或不放標記） | 純文字 Telegram 訊息（超過 4096 字元自動分段多則送） | 簡短回答、口語說明 |
+| `FORMAT: html` | 產生 **`.html` 檔案**當附件傳（`reply_document`），套用內嵌 CSS（表格框線／手機 responsive／深色模式） | 有標題、表格的完整分析報告 |
+| `FORMAT: markdown` | 產生 **`.md` 檔案**當附件傳 | 偏文字、條列、Markdown 表格的報告 |
+
+檔案模式（html/markdown）沒有訊息長度上限，適合多面向的完整報告；標記解析在
+`bot/reply_format.py`、檔案內容產生在 `bot/reply_docs.py`。檔案送出若失敗會自動退回
+純文字分段送，確保使用者一定收得到內容。
+
 > ⚠️ **搜尋範圍限制（已實作）**：bridge 呼叫 `agy` 時加 `--sandbox --add-dir <REPO_ROOT>`，
 > 把 Agent 關在專案 workspace 內——可正常執行 `tools/*.py`，但無法 `find` / 讀取專案目錄
 > 以外的檔案（實測：專案外存取回「被限制」）。這解決了先前 Agent 會掃整台電腦的問題。
@@ -241,7 +254,7 @@ source .venv/bin/activate
 python -m pytest tests/ -q
 ```
 
-目前 **395 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
+目前 **420 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
 
 ### 端到端驗證現況
 
@@ -262,15 +275,20 @@ python -m pytest tests/ -q
 ```
 main.py                 # 進入點
 bot/
-├── handlers.py         # Telegram 訊息處理 + /ask 路由
+├── handlers.py         # Telegram 訊息處理 + /ask 路由與回覆格式
 ├── scheduler.py        # APScheduler 新聞 / UAnalyze 推播 job
 ├── subscriptions.py    # /sub_* /unsub_* /news 指令
+├── reply_format.py     # 解析 Agent 回覆的 FORMAT: text/html/markdown 標記
+├── reply_docs.py       # 把 html/markdown 回覆包成 .html/.md 附件內容
+├── tables.py           # 等寬文字表格 helper
 ├── logging_conf.py     # 日誌設定（stdout + file rotation）
-└── error_notify.py     # 排程失敗 retry + 管理者通知
+├── error_notify.py     # 排程失敗 retry + 管理者通知
+└── log_audit.py        # 定時 AI log 稽核
 agent/
 ├── bridge.py           # AgentBridge ABC + AntigravityCLIBridge
-└── prompts.py          # Agent prompt templates
-tools/                  # 11 個工具 script（CLI + import 雙入口）
+├── prompts.py          # Agent prompt templates
+└── conversation_log.py # /ask 對話記錄
+tools/                  # 12 個工具 script（CLI + import 雙入口）
 data/                   # 執行期 JSON + 日誌
-tests/                  # 395 個測試
+tests/                  # 420 個測試
 ```

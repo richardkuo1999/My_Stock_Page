@@ -11,6 +11,7 @@ from telegram.ext import (
     ContextTypes,
 )
 
+from bot.reply_format import parse_reply_format
 from bot.tables import code_block_capped, render_table
 
 logger = logging.getLogger(__name__)
@@ -703,6 +704,90 @@ async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
+async def _send_agent_reply(
+    update: Update, reply: str, tools_line: str = ""
+) -> None:
+    """把 Agent 回覆送到 Telegram，由 Agent 用第一行 FORMAT 標記自選呈現方式。
+
+    - text（預設）：純文字訊息；超過 Telegram 4096 字元上限時自動分段多則送出。
+    - html：把內文包成完整 HTML5 文件（含 CSS），用 reply_document 傳 .html 附件。
+    - markdown：把內文寫成 .md，用 reply_document 傳附件。
+    檔案模式不受 4096 字元限制，適合放寬面向後的完整分析報告。
+
+    工具清單（開發用）：text 直接附在訊息尾；檔案模式附在檔案內容尾（HTML 用 <pre>、
+    markdown 用 code fence）。
+    安全網：檔案傳送若失敗，退回純文字分段送，確保使用者一定收得到內容。
+    """
+    mode, body = parse_reply_format(reply)
+
+    if mode in ("html", "markdown"):
+        try:
+            await _send_document_reply(update, mode, body, tools_line)
+            return
+        except Exception as e:  # noqa: BLE001 — 傳檔失敗一律退回純文字
+            logger.warning("%s 檔案送出失敗，退回純文字：%s", mode, e)
+            body = f"{body}\n\n（附件產生失敗，改以純文字呈現）"
+
+    # 純文字（預設，或檔案模式的 fallback）。
+    text = body if mode in ("html", "markdown") else reply
+    if tools_line:
+        text = f"{text}\n\n{tools_line}"
+    await _send_long_text(update, text)
+
+
+async def _send_document_reply(
+    update: Update, mode: str, body: str, tools_line: str
+) -> None:
+    """把內文包成 .html / .md 檔案，用 reply_document 傳附件。"""
+    import io
+
+    from bot.reply_docs import (
+        build_html_document,
+        build_markdown_document,
+        safe_filename,
+    )
+
+    if mode == "html":
+        if tools_line:
+            body = f"{body}\n<pre>{_html_escape(tools_line)}</pre>"
+        content = build_html_document(body)
+        filename = safe_filename("stock_report", "html")
+    else:  # markdown
+        if tools_line:
+            body = f"{body}\n\n```\n{tools_line}\n```"
+        content = build_markdown_document(body)
+        filename = safe_filename("stock_report", "md")
+
+    buffer = io.BytesIO(content.encode("utf-8"))
+    buffer.name = filename
+    await update.message.reply_document(document=buffer, filename=filename)
+
+
+async def _send_long_text(update: Update, text: str) -> None:
+    """純文字送出；超過 Telegram 上限時在換行邊界分段多則送。"""
+    limit = 4000  # 保留餘裕（Telegram 硬上限 4096）
+    if len(text) <= limit:
+        await update.message.reply_text(text)
+        return
+
+    # 盡量在換行處切，避免切斷句子。
+    remaining = text
+    while remaining:
+        if len(remaining) <= limit:
+            chunk, remaining = remaining, ""
+        else:
+            cut = remaining.rfind("\n", 0, limit)
+            if cut <= 0:
+                cut = limit
+            chunk, remaining = remaining[:cut], remaining[cut:].lstrip("\n")
+        await update.message.reply_text(chunk)
+
+
+def _html_escape(text: str) -> str:
+    """最小 HTML 跳脫（< > &），供 HTML 附件內嵌工具清單用。"""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /ask <question> — route the question to the Agent.
 
@@ -750,11 +835,8 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
 
         reply = result.response
-        # Dev aid: append which tools the Agent actually used.
-        # Toggle off with SHOW_AGENT_TOOLS=0 once out of dev.
-        if _show_agent_tools() and result.tools_line():
-            reply = f"{reply}\n\n{result.tools_line()}"
-        await update.message.reply_text(reply)
+        tools_line = result.tools_line() if _show_agent_tools() else ""
+        await _send_agent_reply(update, reply, tools_line)
     except TimeoutError:
         await update.message.reply_text("⚠️ Agent 暫時無法回應，請稍後再試")
     except RuntimeError as e:

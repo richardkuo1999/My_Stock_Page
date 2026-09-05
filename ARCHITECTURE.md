@@ -310,18 +310,32 @@ docker compose up -d
 stock-bot/
 ├── main.py                 # Entry point
 ├── bot/
-│   ├── handlers.py         # Telegram message handlers
+│   ├── handlers.py         # Telegram message handlers + /ask 回覆格式路由
 │   ├── scheduler.py        # APScheduler jobs
-│   └── subscriptions.py    # /sub_* /unsub_* 管理
+│   ├── subscriptions.py    # /sub_* /unsub_* 管理
+│   ├── reply_format.py     # 解析 Agent 回覆第一行 FORMAT: text/html/markdown 標記
+│   ├── reply_docs.py       # 把 html/markdown 回覆包成 .html/.md 檔案內容（附件）
+│   ├── tables.py           # 等寬文字表格 helper（/data 等呈現用）
+│   ├── logging_conf.py     # 日誌設定
+│   ├── error_notify.py     # 排程失敗 retry + 管理者通知
+│   └── log_audit.py        # 定時 AI log 稽核
 ├── agent/
 │   ├── bridge.py           # AgentBridge ABC + AntigravityCLIBridge
-│   └── prompts.py          # Agent prompt templates
-├── tools/
+│   ├── prompts.py          # Agent prompt templates
+│   └── conversation_log.py # /ask 對話記錄（append-only jsonl）
+├── tools/                  # 12 個工具 script（CLI + import 雙入口）
 │   ├── fetch_news.py
 │   ├── uanalyze.py
 │   ├── get_stock_price.py
 │   ├── draw_kchart.py
-│   └── summarize_document.py
+│   ├── draw_intraday_chart.py
+│   ├── summarize_document.py
+│   ├── lookup_stock_name.py
+│   ├── cnyes.py            # 鉅亨網 raw-data
+│   ├── finmind.py          # FinMind raw-data
+│   ├── fugle.py            # 富果 raw-data
+│   ├── yfinance_data.py    # Yahoo Finance raw-data
+│   └── valuation.py        # 估值計算（import 上述 raw-data）
 ├── data/
 │   ├── subscriptions.json
 │   ├── pushed_news.json

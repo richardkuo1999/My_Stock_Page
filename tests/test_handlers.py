@@ -42,6 +42,7 @@ def _make_ask_update(text: str):
     update.message = MagicMock()
     update.message.text = text
     update.message.reply_text = AsyncMock()
+    update.message.reply_document = AsyncMock()
     update.effective_user = MagicMock()
     update.effective_user.id = 12345
     update.effective_chat = MagicMock()
@@ -830,3 +831,137 @@ async def test_transcript_show_error(context):
         await transcript_callback(update, context)
 
     assert "無法取得逐字稿全文" in update.callback_query.edit_message_text.call_args[0][0]
+
+
+# --- Agent reply format routing (text / HTML self-selected by Agent) ---
+
+
+@pytest.mark.asyncio
+async def test_ask_html_reply_sends_html_document(context):
+    """Agent 用 FORMAT: html 時，handler 送出 .html 檔案附件（非訊息）。"""
+    from agent.bridge import AgentResult
+
+    mock_bridge = AsyncMock()
+    mock_bridge.send_detailed = AsyncMock(
+        return_value=AgentResult(
+            response="FORMAT: html\n<h1>台積電</h1><table><tr><td>x</td></tr></table>"
+        )
+    )
+    context.bot_data["agent_bridge"] = mock_bridge
+    update = _make_ask_update("/ask 台積電")
+
+    with patch("agent.conversation_log.log_conversation"), patch.dict(
+        "os.environ", {"SHOW_AGENT_TOOLS": "0"}
+    ):
+        await ask_command(update, context)
+
+    # 走 reply_document（附件），不是 reply_text。
+    update.message.reply_document.assert_called_once()
+    kwargs = update.message.reply_document.call_args.kwargs
+    assert kwargs["filename"].endswith(".html")
+    # 附件內容被包成完整 HTML 文件（含 CSS/樣式），且含 Agent 正文。
+    doc = kwargs["document"]
+    content = doc.getvalue().decode("utf-8")
+    assert "<!DOCTYPE html>" in content
+    assert "<style>" in content
+    assert "<h1>台積電</h1>" in content
+    update.message.reply_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ask_markdown_reply_sends_md_document(context):
+    """Agent 用 FORMAT: markdown 時，handler 送出 .md 檔案附件。"""
+    from agent.bridge import AgentResult
+
+    mock_bridge = AsyncMock()
+    mock_bridge.send_detailed = AsyncMock(
+        return_value=AgentResult(
+            response="FORMAT: markdown\n# 台積電\n\n| 指標 | 值 |\n|---|---|\n| EPS | 45 |"
+        )
+    )
+    context.bot_data["agent_bridge"] = mock_bridge
+    update = _make_ask_update("/ask 台積電")
+
+    with patch("agent.conversation_log.log_conversation"), patch.dict(
+        "os.environ", {"SHOW_AGENT_TOOLS": "0"}
+    ):
+        await ask_command(update, context)
+
+    update.message.reply_document.assert_called_once()
+    kwargs = update.message.reply_document.call_args.kwargs
+    assert kwargs["filename"].endswith(".md")
+    content = kwargs["document"].getvalue().decode("utf-8")
+    assert "# 台積電" in content
+    assert "| EPS | 45 |" in content
+    update.message.reply_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ask_document_falls_back_to_text_on_error(context):
+    """檔案送出失敗時，自動退回純文字訊息重送，確保收得到內容。"""
+    from agent.bridge import AgentResult
+
+    mock_bridge = AsyncMock()
+    mock_bridge.send_detailed = AsyncMock(
+        return_value=AgentResult(response="FORMAT: html\n<h1>台積電</h1>")
+    )
+    context.bot_data["agent_bridge"] = mock_bridge
+    update = _make_ask_update("/ask 台積電")
+    update.message.reply_document = AsyncMock(side_effect=Exception("upload failed"))
+
+    with patch("agent.conversation_log.log_conversation"), patch.dict(
+        "os.environ", {"SHOW_AGENT_TOOLS": "0"}
+    ):
+        await ask_command(update, context)
+
+    # 退回純文字：reply_text 被呼叫，內容為切掉標記後的正文。
+    update.message.reply_text.assert_called_once()
+    text = update.message.reply_text.call_args[0][0]
+    assert "<h1>台積電</h1>" in text
+
+
+@pytest.mark.asyncio
+async def test_ask_plain_text_reply_no_parse_mode(context):
+    """無 FORMAT 標記（純文字）時，用 reply_text 送、不帶 parse_mode、不送檔案。"""
+    from agent.bridge import AgentResult
+
+    mock_bridge = AsyncMock()
+    mock_bridge.send_detailed = AsyncMock(
+        return_value=AgentResult(response="台積電今天收盤 1000 元")
+    )
+    context.bot_data["agent_bridge"] = mock_bridge
+    update = _make_ask_update("/ask 台積電")
+
+    with patch("agent.conversation_log.log_conversation"), patch.dict(
+        "os.environ", {"SHOW_AGENT_TOOLS": "0"}
+    ):
+        await ask_command(update, context)
+
+    args, kwargs = update.message.reply_text.call_args
+    assert args[0] == "台積電今天收盤 1000 元"
+    assert "parse_mode" not in kwargs
+    update.message.reply_document.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ask_long_text_reply_is_split(context):
+    """純文字超過 4096 上限時，分段多則送出（不丟內容、不炸 too long）。"""
+    from agent.bridge import AgentResult
+
+    long_body = "\n".join(f"第{i}行內容" for i in range(2000))  # 遠超 4096 字元
+    mock_bridge = AsyncMock()
+    mock_bridge.send_detailed = AsyncMock(
+        return_value=AgentResult(response=long_body)
+    )
+    context.bot_data["agent_bridge"] = mock_bridge
+    update = _make_ask_update("/ask 很長的分析")
+
+    with patch("agent.conversation_log.log_conversation"), patch.dict(
+        "os.environ", {"SHOW_AGENT_TOOLS": "0"}
+    ):
+        await ask_command(update, context)
+
+    # 分成多則，且每則都在上限內。
+    assert update.message.reply_text.call_count >= 2
+    for call in update.message.reply_text.call_args_list:
+        assert len(call[0][0]) <= 4096
