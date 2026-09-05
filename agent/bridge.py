@@ -24,22 +24,51 @@ class ToolCall:
     parameters: dict = field(default_factory=dict)
 
     def summary(self) -> str:
-        """One-line human-readable summary, e.g. `run_command(2330)`.
+        """One-line human-readable summary, e.g. `run_command(python tools/get_stock_price.py 2330)`.
 
         Picks a couple of representative parameter values so the dev can see
         *what* the tool was called with without dumping the whole payload.
         """
         if not self.parameters:
             return self.name
-        # Show short scalar values only; skip long text / nested structures.
+
+        # 優先取 CommandLine / Command
+        cmd = self.parameters.get("CommandLine") or self.parameters.get("Command")
+        if cmd and isinstance(cmd, str):
+            # 移除為了編碼加的前綴，保留乾淨的指令
+            clean_cmd = (
+                cmd.replace('$env:PYTHONIOENCODING="utf-8"; ', "")
+                .replace("$env:PYTHONIOENCODING='utf-8'; ", "")
+                .replace('export PYTHONIOENCODING="utf-8" && ', "")
+                .replace("export PYTHONIOENCODING='utf-8' && ", "")
+            ).strip()
+            if len(clean_cmd) > 50:
+                clean_cmd = clean_cmd[:47] + "..."
+            return f"{self.name}({clean_cmd})"
+
+        # 其他工具走一般純量值挑選，優先跳過 metadata 欄位（如 toolAction, toolSummary）
         parts = []
         for k, v in self.parameters.items():
+            if k in ("toolAction", "toolSummary"):
+                continue
             if isinstance(v, (str, int, float, bool)):
                 s = str(v)
-                if len(s) <= 60:
-                    parts.append(s)
+                if len(s) > 40:
+                    s = s[:37] + "..."
+                parts.append(s)
             if len(parts) >= 2:
                 break
+
+        if not parts:
+            for k, v in self.parameters.items():
+                if isinstance(v, (str, int, float, bool)):
+                    s = str(v)
+                    if len(s) > 40:
+                        s = s[:37] + "..."
+                    parts.append(s)
+                if len(parts) >= 2:
+                    break
+
         return f"{self.name}({', '.join(parts)})" if parts else self.name
 
 

@@ -174,15 +174,45 @@ async def test_send_nonzero_exit(bridge):
 
 
 def test_toolcall_summary_truncates_long_params():
-    """ToolCall.summary() skips over-long param values and picks scalars."""
+    """ToolCall.summary() truncates over-long param values and picks scalars."""
     tc = ToolCall(name="view_file", parameters={"AbsolutePath": "/a/b/c.py"})
     assert tc.summary() == "view_file(/a/b/c.py)"
 
     long = ToolCall(name="edit", parameters={"content": "x" * 200})
-    # Over-long value is skipped → just the name.
-    assert long.summary() == "edit"
+    assert long.summary() == f"edit({'x' * 37}...)"
 
     assert ToolCall(name="lonely").summary() == "lonely"
+
+
+def test_toolcall_summary_handles_commandline():
+    """ToolCall.summary() extracts and cleans CommandLine/Command with priority."""
+    # 移除 env 前綴，保留乾淨的指令
+    tc_env = ToolCall(
+        name="run_command",
+        parameters={
+            "CommandLine": '$env:PYTHONIOENCODING="utf-8"; python tools/uanalyze.py 7873 --prompt 資料',
+            "Cwd": "C:/some/path",
+            "toolAction": "Running command",
+        },
+    )
+    assert tc_env.summary() == "run_command(python tools/uanalyze.py 7873 --prompt 資料)"
+
+    # 指令超過 50 字元時截斷
+    tc_long = ToolCall(
+        name="run_command",
+        parameters={
+            "CommandLine": "python tools/uanalyze.py 2330 --prompt 這是一段很長的中文提示內容用來測試截斷行為"
+        },
+    )
+    expected_clean = "python tools/uanalyze.py 2330 --prompt 這是一段很長的中文提示內容用來測試截斷行為"
+    assert tc_long.summary() == f"run_command({expected_clean[:47]}...)"
+
+    # Command 參數作為後援
+    tc_cmd = ToolCall(
+        name="run_command",
+        parameters={"Command": "python tools/get_stock_price.py 2330"},
+    )
+    assert tc_cmd.summary() == "run_command(python tools/get_stock_price.py 2330)"
 
 
 def test_agentresult_tools_line_empty_without_tools():
