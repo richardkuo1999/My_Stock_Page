@@ -1,5 +1,6 @@
 """APScheduler jobs for news push notifications."""
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -9,6 +10,48 @@ from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 logger = logging.getLogger(__name__)
+
+# Per-send retry for transient Telegram delivery failures (timeouts / network
+# blips). A single timed-out send should not silently drop a report, so we retry
+# a few times with a short backoff before giving up on that chat.
+SEND_MAX_ATTEMPTS = 3
+SEND_RETRY_BACKOFF_SEC = 1.0
+
+
+async def _send_with_retry(bot, **kwargs) -> bool:
+    """Send one Telegram message, retrying on transient errors.
+
+    Retries on telegram.error.TimedOut / NetworkError up to SEND_MAX_ATTEMPTS.
+    Returns True if a send succeeded, False if all attempts failed. Non-transient
+    errors are logged and return False without retrying.
+    """
+    try:
+        from telegram.error import NetworkError, TimedOut
+
+        transient = (TimedOut, NetworkError)
+    except Exception:  # telegram not importable in some test contexts
+        transient = ()
+
+    chat_id = kwargs.get("chat_id")
+    for attempt in range(1, SEND_MAX_ATTEMPTS + 1):
+        try:
+            await bot.send_message(**kwargs)
+            return True
+        except transient as e:
+            logger.warning(
+                "Transient send failure to %s (attempt %d/%d): %s",
+                chat_id,
+                attempt,
+                SEND_MAX_ATTEMPTS,
+                e,
+            )
+            if attempt < SEND_MAX_ATTEMPTS:
+                await asyncio.sleep(SEND_RETRY_BACKOFF_SEC * attempt)
+        except Exception as e:
+            logger.error("Failed to send message to %s: %s", chat_id, e)
+            return False
+    logger.error("Giving up sending to %s after %d attempts", chat_id, SEND_MAX_ATTEMPTS)
+    return False
 
 PUSHED_NEWS_PATH = Path("data/pushed_news.json")
 NEWS_TTL_DAYS = 7
@@ -151,13 +194,23 @@ async def news_push_job(bot, subscription_manager, agent_bridge) -> None:
     header = f"📰 新聞推播 ({len(new_articles)} 則新文章)\n{'=' * 20}\n\n"
     message = header + summary
 
+    # Push message to all subscribers. Track whether at least one delivery
+    # succeeded — only then do we mark these articles as pushed, so a total
+    # delivery failure (e.g. all timeouts) will be retried next run instead of
+    # being silently dropped.
+    any_success = False
     for chat_id, thread_id in subscribers:
-        try:
-            await bot.send_message(
-                chat_id=chat_id, text=message, message_thread_id=thread_id
-            )
-        except Exception as e:
-            logger.error("Failed to push news to %s: %s", chat_id, e)
+        if await _send_with_retry(
+            bot, chat_id=chat_id, text=message, message_thread_id=thread_id
+        ):
+            any_success = True
+
+    if not any_success:
+        logger.error(
+            "News push: all %d deliveries failed; not marking as pushed (will retry)",
+            len(subscribers),
+        )
+        return
 
     # Record pushed articles
     now = datetime.now(timezone.utc).isoformat()
@@ -284,33 +337,48 @@ async def uanalyze_push_job(bot, subscription_manager) -> None:
         return
 
     subscribers = subscription_manager.get_subscribers("uanalyze")
-    now = datetime.now(timezone.utc).isoformat()
     if not subscribers:
         logger.info("No UAnalyze subscribers")
+        now = datetime.now(timezone.utc).isoformat()
         for r in new_reports:
             pushed_records.append({"id": r["id"], "pushed_at": now})
         _save_pushed_uanalyze(pushed_records)
         return
 
     # Oldest-first so the newest report ends up at the bottom of the chat.
+    # Only mark a report as pushed if at least one delivery succeeded, so a
+    # transient all-timeout batch is retried next run instead of silently lost.
+    now = datetime.now(timezone.utc).isoformat()
+    delivered_ids = []
     for report in sorted(new_reports, key=lambda r: r["id"]):
         message = _format_uanalyze_report(report)
+        report_delivered = False
         for chat_id, thread_id in subscribers:
-            try:
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text=message,
-                    message_thread_id=thread_id,
-                    disable_web_page_preview=True,
-                )
-            except Exception as e:
-                logger.error("Failed to push UAnalyze report to %s: %s", chat_id, e)
+            if await _send_with_retry(
+                bot,
+                chat_id=chat_id,
+                text=message,
+                message_thread_id=thread_id,
+                disable_web_page_preview=True,
+            ):
+                report_delivered = True
+        if report_delivered:
+            delivered_ids.append(report["id"])
+        else:
+            logger.error(
+                "UAnalyze push: report %s failed to all subscribers; will retry next run",
+                report["id"],
+            )
 
-    for r in new_reports:
-        pushed_records.append({"id": r["id"], "pushed_at": now})
-    _save_pushed_uanalyze(pushed_records)
+    if delivered_ids:
+        for rid in delivered_ids:
+            pushed_records.append({"id": rid, "pushed_at": now})
+        _save_pushed_uanalyze(pushed_records)
     logger.info(
-        "Pushed %d UAnalyze reports to %d subscribers", len(new_reports), len(subscribers)
+        "Pushed %d/%d UAnalyze reports to %d subscribers",
+        len(delivered_ids),
+        len(new_reports),
+        len(subscribers),
     )
 
 
@@ -356,7 +424,7 @@ def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict, notif
 
     news_interval = config.get("news_schedule_interval_min", 60)
     uanalyze_interval = config.get("uanalyze_schedule_interval_min", 30)
-    log_audit_interval = config.get("log_audit_interval_min", 360)
+    log_audit_interval = config.get("log_audit_interval_min", 1440)
 
     if notifier:
         # Wrapped jobs with retry + error notification

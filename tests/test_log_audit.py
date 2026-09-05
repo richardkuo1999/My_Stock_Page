@@ -62,6 +62,23 @@ def test_read_new_bot_log_missing_file(paths):
     assert new_offset == 42
 
 
+def test_read_new_bot_log_filters_own_audit_lines(paths):
+    """The audit's own bookkeeping lines are stripped so it can't audit itself
+    into a self-referential alert loop. Cursor still advances to full size."""
+    content = (
+        "2026-09-05 00:00:00 bot.scheduler - ERROR - Timed out\n"
+        "2026-09-05 00:01:00 bot.log_audit - WARNING - Log audit found issues; admin notified\n"
+        "2026-09-05 00:02:00 bot.handlers - INFO - ok\n"
+    )
+    paths["bot_log"].write_text(content, encoding="utf-8")
+    text, new_offset = la._read_new_bot_log(0)
+    assert "bot.log_audit" not in text
+    assert "bot.scheduler - ERROR - Timed out" in text
+    assert "bot.handlers - INFO - ok" in text
+    # Cursor advances to the true file size, not the filtered length.
+    assert new_offset == len(content.encode("utf-8"))
+
+
 # --- reading new conversations ---
 
 

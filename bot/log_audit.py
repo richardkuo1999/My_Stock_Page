@@ -79,9 +79,21 @@ def _read_new_bot_log(offset: int) -> tuple[str, int]:
         with BOT_LOG_PATH.open("r", encoding="utf-8", errors="replace") as f:
             f.seek(start)
             text = f.read()
+        # Drop the audit module's own bookkeeping lines (e.g. "Log audit found
+        # issues; admin notified"). Otherwise each audit's own WARNING lands in
+        # bot.log and the next run flags it as an execution problem, creating a
+        # self-referential alert loop.
+        if text:
+            text = "".join(
+                line
+                for line in text.splitlines(keepends=True)
+                if "bot.log_audit" not in line
+            )
         # Keep only the tail if it exceeds the cap.
         if len(text) > MAX_LOG_CHARS:
             text = text[-MAX_LOG_CHARS:]
+        # Advance the cursor to the true file size regardless of filtering, so
+        # filtered lines are not re-read next run.
         return text, size
     except OSError as e:
         logger.warning("Failed to read bot.log: %s", e)

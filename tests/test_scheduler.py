@@ -9,12 +9,14 @@ import pytest
 
 from bot.scheduler import (
     NEWS_TTL_DAYS,
+    SEND_MAX_ATTEMPTS,
     SIMILARITY_THRESHOLD,
     _cleanup_expired,
     _format_uanalyze_report,
     _is_duplicate_title,
     _load_pushed_news,
     _save_pushed_news,
+    _send_with_retry,
     news_push_job,
     setup_scheduler,
     uanalyze_push_job,
@@ -368,9 +370,9 @@ def test_setup_scheduler_default_interval():
     # Interval trigger
     trigger = news_job.trigger
     assert trigger.interval == timedelta(minutes=60)
-    # Log audit job registered with default 360-min interval.
+    # Log audit job registered with default 1440-min (daily) interval.
     audit_job = next(j for j in jobs if j.id == "log_audit")
-    assert audit_job.trigger.interval == timedelta(minutes=360)
+    assert audit_job.trigger.interval == timedelta(minutes=1440)
 
 
 def test_setup_scheduler_custom_interval():
@@ -546,3 +548,120 @@ def test_setup_scheduler_registers_uanalyze_job():
     )
     job = next(j for j in scheduler.get_jobs() if j.id == "uanalyze_push")
     assert job.trigger.interval == timedelta(minutes=45)
+
+
+# ============================================================
+# Per-send retry on transient delivery failures
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_send_with_retry_success_first_try():
+    """A successful send returns True with a single attempt."""
+    bot = AsyncMock()
+    bot.send_message = AsyncMock()
+    ok = await _send_with_retry(bot, chat_id=1, text="hi")
+    assert ok is True
+    assert bot.send_message.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_send_with_retry_recovers_after_timeout():
+    """Transient TimedOut is retried and succeeds on a later attempt."""
+    from telegram.error import TimedOut
+
+    bot = AsyncMock()
+    bot.send_message = AsyncMock(side_effect=[TimedOut("t"), None])
+    with patch("bot.scheduler.asyncio.sleep", new_callable=AsyncMock):
+        ok = await _send_with_retry(bot, chat_id=1, text="hi")
+    assert ok is True
+    assert bot.send_message.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_send_with_retry_gives_up_after_max_attempts():
+    """All attempts time out → returns False after SEND_MAX_ATTEMPTS tries."""
+    from telegram.error import TimedOut
+
+    bot = AsyncMock()
+    bot.send_message = AsyncMock(side_effect=TimedOut("t"))
+    with patch("bot.scheduler.asyncio.sleep", new_callable=AsyncMock):
+        ok = await _send_with_retry(bot, chat_id=1, text="hi")
+    assert ok is False
+    assert bot.send_message.call_count == SEND_MAX_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_send_with_retry_non_transient_no_retry():
+    """A non-transient error is not retried and returns False."""
+    bot = AsyncMock()
+    bot.send_message = AsyncMock(side_effect=ValueError("bad chat"))
+    ok = await _send_with_retry(bot, chat_id=1, text="hi")
+    assert ok is False
+    assert bot.send_message.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_news_push_all_deliveries_fail_not_marked_pushed(
+    mock_bot, mock_subscription_manager, mock_agent_bridge, pushed_news_path, sample_articles
+):
+    """If every delivery times out, articles are NOT marked as pushed so they
+    get retried on the next run instead of being silently dropped."""
+    from telegram.error import TimedOut
+
+    mock_bot.send_message = AsyncMock(side_effect=TimedOut("t"))
+    with patch("bot.scheduler.asyncio.sleep", new_callable=AsyncMock), patch(
+        "tools.fetch_news.latest", new_callable=AsyncMock, return_value={"articles": sample_articles}
+    ):
+        await news_push_job(mock_bot, mock_subscription_manager, mock_agent_bridge)
+
+    # Nothing recorded as pushed → next run retries.
+    assert not pushed_news_path.exists() or json.loads(
+        pushed_news_path.read_text(encoding="utf-8")
+    ) == []
+
+
+@pytest.mark.asyncio
+async def test_uanalyze_push_all_deliveries_fail_not_marked_pushed(
+    mock_bot, pushed_uanalyze_path, sample_reports
+):
+    """If a report times out to every subscriber, it is NOT marked pushed and is
+    retried next run (state keeps only the previously-seeded id)."""
+    from telegram.error import TimedOut
+
+    pushed_uanalyze_path.write_text(
+        json.dumps([{"id": 101, "pushed_at": _recent_ts()}]),
+        encoding="utf-8",
+    )
+    mgr = MagicMock()
+    mgr.get_subscribers = MagicMock(return_value=[(111, None)])
+    mock_bot.send_message = AsyncMock(side_effect=TimedOut("t"))
+
+    with patch("bot.scheduler.asyncio.sleep", new_callable=AsyncMock), patch(
+        "tools.uanalyze.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}
+    ):
+        await uanalyze_push_job(mock_bot, mgr)
+
+    saved = json.loads(pushed_uanalyze_path.read_text(encoding="utf-8"))
+    # Report 102 failed → not added; only the seeded 101 remains.
+    assert {r["id"] for r in saved} == {101}
+
+
+@pytest.mark.asyncio
+async def test_uanalyze_push_partial_success_marks_only_delivered(
+    mock_bot, pushed_uanalyze_path, sample_reports
+):
+    """A report that succeeds to at least one subscriber is marked pushed."""
+    pushed_uanalyze_path.write_text(
+        json.dumps([{"id": 101, "pushed_at": _recent_ts()}]),
+        encoding="utf-8",
+    )
+    mgr = MagicMock()
+    mgr.get_subscribers = MagicMock(return_value=[(111, None)])
+    mock_bot.send_message = AsyncMock()  # succeeds
+
+    with patch("tools.uanalyze.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}):
+        await uanalyze_push_job(mock_bot, mgr)
+
+    saved = json.loads(pushed_uanalyze_path.read_text(encoding="utf-8"))
+    assert {r["id"] for r in saved} == {101, 102}
