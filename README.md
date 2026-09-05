@@ -145,6 +145,62 @@ python tools/lookup_stock_name.py --set 9999 某公司        # 手動寫回對�
 python tools/lookup_stock_name.py --refresh                # 從 UAnalyze StockPool 全表刷新對照表
 ```
 
+### 原始資料工具（raw-data，CLI + import 雙入口）
+
+以下工具把各資料源「能拿的資料」各做成獨立 function，供 Agent 按需呼叫、也可被
+`tools/valuation.py` import。皆回 JSON、不呼叫 AI。
+
+```bash
+# 鉅亨網 CNYES（免金鑰）
+python tools/cnyes.py --eps 2330            # FactSet 各年度預估 EPS
+python tools/cnyes.py --target 2330         # 分析師目標價共識
+python tools/cnyes.py --quote 2330          # 即時報價（數字代碼欄位已解碼）
+python tools/cnyes.py --candles 2330 --days 365   # 歷史日K線
+
+# FinMind（需 FINMIND_TOKENS）
+python tools/finmind.py --per 2330          # 本益比/淨值比/殖利率歷史序列
+python tools/finmind.py --price 2330        # 日收盤價量
+python tools/finmind.py --revenue 2330      # 月營收
+python tools/finmind.py --income 2330       # 綜合損益表
+python tools/finmind.py --balance 2330      # 資產負債表
+python tools/finmind.py --cashflow 2330     # 現金流量表
+python tools/finmind.py --dividend 2330     # 股利政策
+python tools/finmind.py --institution 2330  # 三大法人買賣超
+python tools/finmind.py --margin 2330       # 融資融券
+python tools/finmind.py --shareholding 2330 # 外資持股比率
+python tools/finmind.py --info 2330         # 基本資料（名稱/產業/上市櫃）
+python tools/finmind.py --news 2330         # 相關新聞
+
+# 富果 Fugle（需 FUGLE_API_KEY）
+python tools/fugle.py --quote 2330          # 即時報價（含五檔）
+python tools/fugle.py --ticker 2330         # 交易屬性（漲跌停/產業/可否當沖）
+python tools/fugle.py --candles 2330 --days 1277   # 歷史日K（>1年自動分段合併）
+python tools/fugle.py --intraday-candles 2330      # 當日分鐘K
+python tools/fugle.py --trades 2330         # 當日成交明細
+python tools/fugle.py --volumes 2330        # 當日分價量
+python tools/fugle.py --stats 2330          # 52週高低/成交統計
+
+# Yahoo Finance（yfinance，免金鑰）
+python tools/yfinance_data.py --info 2330       # 精選基本面欄位
+python tools/yfinance_data.py --target 2330     # 分析師目標價 + 評等
+python tools/yfinance_data.py --history 2330 --period 1y   # 歷史價
+python tools/yfinance_data.py --financials 2330 # 年度損益表
+```
+
+### 估值工具（`tools/valuation.py`）
+
+不直接打 API，而是 import 上述 raw-data function 拿資料、套用估值公式（數學核心搬自舊版
+`math_utils.py`，純 numpy）。回 JSON、不呼叫 AI。
+
+```bash
+python tools/valuation.py --lohas 2330 --years 3.5   # 樂活五線譜（股價線性回歸 ±3SD 七線 + 回歸機率）← Fugle 歷史K
+python tools/valuation.py --pe 2330                  # PE 河流圖（歷史本益比四分位 + ±3SD 帶 + 現值百分位）← FinMind
+python tools/valuation.py --pb 2330                  # PB 河流圖（歷史股價淨值比，同上）← FinMind
+python tools/valuation.py --eps-momentum 2330        # EPS 動能（FactSet 跨年度預估上/下修趨勢）← CNYES
+python tools/valuation.py --target 2330              # 目標價彙整（CNYES 分析師共識 + Yahoo 目標均價）← CNYES + yfinance
+python tools/valuation.py --all 2330                 # 全部彙整
+```
+
 ### 個股新聞如何過濾
 
 台股新聞標題寫公司中文名（「台積電」）而非代號（2330）。`fetch_news.py <代號>` 會：
@@ -185,7 +241,7 @@ source .venv/bin/activate
 python -m pytest tests/ -q
 ```
 
-目前 **262 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
+目前 **395 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
 
 ### 端到端驗證現況
 
@@ -214,7 +270,7 @@ bot/
 agent/
 ├── bridge.py           # AgentBridge ABC + AntigravityCLIBridge
 └── prompts.py          # Agent prompt templates
-tools/                  # 6 個工具 script（CLI + import 雙入口）
+tools/                  # 11 個工具 script（CLI + import 雙入口）
 data/                   # 執行期 JSON + 日誌
-tests/                  # 262 個測試
+tests/                  # 395 個測試
 ```
