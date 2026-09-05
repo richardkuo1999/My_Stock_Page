@@ -1,8 +1,13 @@
 """uanalyze — UAnalyze AI 估值分析
 用法: python tools/uanalyze.py SYMBOL [--prompt PROMPT]
+     python tools/uanalyze.py --multi SYMBOL --prompts a,b,c [--concurrency N]
      python tools/uanalyze.py --reports [--limit N]
 回傳: JSON {"analysis": str}
+   或 --multi: {"symbol","requested","ok","failed","results":{面向: {analysis|error}}}
    或 {"reports": [{id, stock_code, stock_name, title, date, summary}]}
+
+面向清單（--prompt / --multi 用）見 UA_PROMPTS（DEFAULT_PROMPT 之後）。--multi 由
+呼叫端自行選面向並以逗號傳入，內部並行跑（預設同時 4 個），單一面向失敗不影響其他。
 
 認證：一次帳密登入（UAnalyzeAuth.login）後，可依 domain 取得三種認證材料：
   - jwt_headers():     data.uanalyze.twobitto.com / api.uanalyze.com.tw（Bearer <access_token>）
@@ -369,6 +374,76 @@ async def analyze(symbol: str, prompt: str = DEFAULT_PROMPT) -> dict:
         return {"error": "UANALYZE_EMAIL 或 UANALYZE_PASSWORD 未設定"}
 
     return await get_completion(symbol, prompt)
+
+
+# 併發預設值：實測 UAnalyze 對同時 4 個面向容忍良好且不被擋（見探測）。
+DEFAULT_MULTI_CONCURRENCY = 4
+
+
+async def analyze_multi(
+    symbol: str,
+    prompts: list[str],
+    concurrency: int = DEFAULT_MULTI_CONCURRENCY,
+) -> dict:
+    """一次「並行」跑多個分析面向，共用同一登入 token。
+
+    面向由呼叫端（Agent）自行決定並傳入——本工具不寫死面向清單。內部用
+    asyncio.gather + Semaphore 分批並行（預設同時 4 個），避免一次轟炸 UAnalyze
+    後端。單一面向失敗（無資料 / 逾時）只在該面向記為 error，不影響其他面向。
+
+    Args:
+        symbol: 股票代號（如 '4906'）。
+        prompts: 要分析的面向清單（如 ['近況發展','產品線分析','利多因素']）。
+        concurrency: 同時並行的面向數上限。
+
+    Returns:
+        {
+          "symbol": "4906",
+          "results": {"近況發展": {"analysis": "..."}, "產品線分析": {"error": "..."}, ...},
+          "requested": [...], "ok": [...], "failed": [...]
+        }
+        或整體性錯誤時回 {"error": "..."}。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {"error": "請輸入股票代號"}
+    if not prompts:
+        return {"error": "請提供至少一個分析面向（--prompts a,b,c）"}
+
+    email = os.getenv("UANALYZE_EMAIL", "").strip()
+    password = os.getenv("UANALYZE_PASSWORD", "").strip()
+    if not email or not password:
+        return {"error": "UANALYZE_EMAIL 或 UANALYZE_PASSWORD 未設定"}
+
+    # 去重但保留順序（Agent 可能重複帶入）。
+    seen: set[str] = set()
+    ordered = [p for p in (x.strip() for x in prompts) if p and not (p in seen or seen.add(p))]
+
+    # 先確保已登入一次，讓併發請求共用 token（避免 N 個請求各觸發登入）。
+    await _auth.ensure_token()
+
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def _one(p: str) -> tuple[str, dict]:
+        async with sem:
+            try:
+                return p, await get_completion(symbol, p)
+            except Exception as e:  # noqa: BLE001 — 單顆失敗隔離，不拖垮整批
+                logger.warning("面向 %s 分析失敗：%s", p, e)
+                return p, {"error": f"面向 {p} 分析失敗：{e}"}
+
+    pairs = await asyncio.gather(*[_one(p) for p in ordered])
+
+    results = {p: r for p, r in pairs}
+    ok = [p for p, r in pairs if "analysis" in r]
+    failed = [p for p, r in pairs if "analysis" not in r]
+    return {
+        "symbol": symbol,
+        "requested": ordered,
+        "ok": ok,
+        "failed": failed,
+        "results": results,
+    }
 
 
 def _latest_periods(data_map: dict, n: int) -> list[tuple[str, float]]:
@@ -1046,6 +1121,30 @@ if __name__ == "__main__":
             prompt = args[args.index("--prompt") + 1]
         except IndexError:
             pass
+
+    if args[0] == "--multi":
+        # 一次並行跑多個面向：--multi <代號> --prompts a,b,c [--concurrency N]
+        # 面向由 Agent 自行決定並以逗號分隔傳入；本工具不寫死清單。
+        try:
+            sym = args[1]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --multi <代號> --prompts a,b,c [--concurrency N]"}, ensure_ascii=False))
+            sys.exit(1)
+        prompts: list[str] = []
+        if "--prompts" in args:
+            try:
+                prompts = [p for p in args[args.index("--prompts") + 1].split(",") if p.strip()]
+            except IndexError:
+                pass
+        concurrency = DEFAULT_MULTI_CONCURRENCY
+        if "--concurrency" in args:
+            try:
+                concurrency = int(args[args.index("--concurrency") + 1])
+            except (IndexError, ValueError):
+                pass
+        result = asyncio.run(analyze_multi(sym, prompts, concurrency))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
 
     if args[0] == "--reports":
         # List latest site-wide reports (monitor feed), no symbol needed.

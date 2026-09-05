@@ -1,5 +1,6 @@
 """Tests for tools/uanalyze.py."""
 
+import asyncio
 import json
 import subprocess
 import sys
@@ -10,11 +11,13 @@ import pytest
 from tools.uanalyze import (
     GIDP_TOKEN,
     WACC,
+    DEFAULT_MULTI_CONCURRENCY,
     UAnalyzeAuth,
     _auth,
     _compute_dcf,
     _request_with_auth,
     analyze,
+    analyze_multi,
     fetch_dcf_valuation,
     fetch_eps_consensus,
     fetch_order_visibility,
@@ -1225,3 +1228,101 @@ async def test_fetch_transcript_detail_uses_country_twn():
     call = mock_client.get.call_args
     assert call.kwargs["params"]["country"] == "TWN"
     assert call.kwargs["params"]["id"] == "202607162330"
+
+
+# --- analyze_multi（批次並行多面向）---
+
+_ENV = {"UANALYZE_EMAIL": "a@b.com", "UANALYZE_PASSWORD": "pass"}
+
+
+@pytest.mark.asyncio
+async def test_analyze_multi_runs_all_prompts():
+    """並行跑多個面向，全部成功時 results 含每個面向、ok 列出全部。"""
+    async def fake_completion(symbol, prompt):
+        return {"analysis": f"{prompt} 的分析", "prompt": prompt, "symbol": symbol}
+
+    with patch.dict("os.environ", _ENV), patch(
+        "tools.uanalyze.get_completion", side_effect=fake_completion
+    ), patch("tools.uanalyze._auth.ensure_token", new=AsyncMock(return_value="tok")):
+        res = await analyze_multi("4906", ["近況發展", "利多因素", "利空因素"])
+
+    assert res["symbol"] == "4906"
+    assert res["ok"] == ["近況發展", "利多因素", "利空因素"]
+    assert res["failed"] == []
+    assert res["results"]["近況發展"]["analysis"] == "近況發展 的分析"
+
+
+@pytest.mark.asyncio
+async def test_analyze_multi_isolates_single_failure():
+    """單一面向失敗（無資料 / 例外）只記在該面向，不拖垮其他。"""
+    async def fake_completion(symbol, prompt):
+        if prompt == "產品線分析":
+            return {"error": "無資料"}
+        if prompt == "利空因素":
+            raise RuntimeError("timeout")
+        return {"analysis": "ok", "prompt": prompt, "symbol": symbol}
+
+    with patch.dict("os.environ", _ENV), patch(
+        "tools.uanalyze.get_completion", side_effect=fake_completion
+    ), patch("tools.uanalyze._auth.ensure_token", new=AsyncMock(return_value="tok")):
+        res = await analyze_multi("4906", ["近況發展", "產品線分析", "利空因素"])
+
+    assert res["ok"] == ["近況發展"]
+    assert set(res["failed"]) == {"產品線分析", "利空因素"}
+    assert "error" in res["results"]["產品線分析"]
+    assert "error" in res["results"]["利空因素"]  # 例外被捕捉成 error
+
+
+@pytest.mark.asyncio
+async def test_analyze_multi_respects_concurrency_limit():
+    """Semaphore 限制同時在跑的面向數不超過 concurrency。"""
+    active = 0
+    max_active = 0
+
+    async def fake_completion(symbol, prompt):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+        return {"analysis": "x", "prompt": prompt, "symbol": symbol}
+
+    with patch.dict("os.environ", _ENV), patch(
+        "tools.uanalyze.get_completion", side_effect=fake_completion
+    ), patch("tools.uanalyze._auth.ensure_token", new=AsyncMock(return_value="tok")):
+        res = await analyze_multi(
+            "4906", [f"面向{i}" for i in range(10)], concurrency=3
+        )
+
+    assert len(res["ok"]) == 10
+    assert max_active <= 3  # 從未同時超過 3 個
+
+
+@pytest.mark.asyncio
+async def test_analyze_multi_dedupes_prompts():
+    """重複面向去重但保留順序。"""
+    async def fake_completion(symbol, prompt):
+        return {"analysis": "x", "prompt": prompt, "symbol": symbol}
+
+    with patch.dict("os.environ", _ENV), patch(
+        "tools.uanalyze.get_completion", side_effect=fake_completion
+    ), patch("tools.uanalyze._auth.ensure_token", new=AsyncMock(return_value="tok")):
+        res = await analyze_multi("4906", ["近況發展", "利多因素", "近況發展"])
+
+    assert res["requested"] == ["近況發展", "利多因素"]
+
+
+@pytest.mark.asyncio
+async def test_analyze_multi_empty_prompts_errors():
+    """沒給面向回錯誤。"""
+    with patch.dict("os.environ", _ENV):
+        res = await analyze_multi("4906", [])
+    assert "error" in res
+
+
+@pytest.mark.asyncio
+async def test_analyze_multi_missing_credentials_errors():
+    """缺帳密回錯誤、不呼叫 API。"""
+    with patch.dict("os.environ", {"UANALYZE_EMAIL": "", "UANALYZE_PASSWORD": ""}):
+        res = await analyze_multi("4906", ["近況發展"])
+    assert "error" in res

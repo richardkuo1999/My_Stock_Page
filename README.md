@@ -144,6 +144,7 @@ python tools/draw_intraday_chart.py 2330                   # 盤中分時走勢�
 python tools/fetch_news.py --all                           # 全部 15 來源最新新聞
 python tools/fetch_news.py 2330 --limit 5                  # 指定股票新聞（本地過濾）
 python tools/uanalyze.py 2330                              # UAnalyze AI 估值分析
+python tools/uanalyze.py --multi 2330 --prompts 近況發展,利多因素,利空因素   # 一次並行跑多個面向（做完整報告用，比逐一快）
 python tools/uanalyze.py --reports --limit 50              # UAnalyze 最新研究報告列表（監控用）
 python tools/uanalyze.py --consensus 2330                  # 法人共識（單季 EPS 實際 vs 預估 + 月營收共識）摘要
 python tools/uanalyze.py --pershare 2330                   # 近年每股財務指標摘要（FCF/EPS/EBITDA/ROE/ROIC…）
@@ -254,7 +255,7 @@ source .venv/bin/activate
 python -m pytest tests/ -q
 ```
 
-目前 **420 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
+目前 **429 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
 
 ### 端到端驗證現況
 
@@ -290,5 +291,5 @@ agent/
 └── conversation_log.py # /ask 對話記錄
 tools/                  # 12 個工具 script（CLI + import 雙入口）
 data/                   # 執行期 JSON + 日誌
-tests/                  # 420 個測試
+tests/                  # 429 個測試
 ```
