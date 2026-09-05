@@ -173,6 +173,62 @@ async def test_send_nonzero_exit(bridge):
             await bridge.send("bad command")
 
 
+@pytest.mark.asyncio
+async def test_send_retries_once_then_succeeds(bridge):
+    """暫時性失敗（exit 1）會自動重試一次；第二次成功則正常回覆。"""
+    fail_proc = AsyncMock()
+    fail_proc.communicate = AsyncMock(return_value=(b"", b"transient glitch"))
+    fail_proc.returncode = 1
+
+    ok_proc = AsyncMock()
+    ok_proc.communicate = AsyncMock(return_value=(_sample_stream("重試後成功"), b""))
+    ok_proc.returncode = 0
+
+    with patch(
+        "asyncio.create_subprocess_exec", side_effect=[fail_proc, ok_proc]
+    ) as m:
+        result = await bridge.send("台積電")
+
+    assert result == "重試後成功"
+    assert m.call_count == 2  # 首次失敗 + 重試一次
+
+
+@pytest.mark.asyncio
+async def test_send_error_detail_from_stdout(bridge):
+    """agy 把錯誤寫在 stdout（stderr 空）時，錯誤訊息仍要抽得出來，非 Unknown。"""
+    err_stream = _stream(
+        {"event": "result", "result": {"status": "ERROR", "error": "工具執行逾時"}}
+    )
+    mock_proc = AsyncMock()
+    # stderr 為空，錯誤只在 stdout —— 這正是 21:21 那次 "Unknown error" 的情境。
+    mock_proc.communicate = AsyncMock(return_value=(err_stream, b""))
+    mock_proc.returncode = 1
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+        with pytest.raises(RuntimeError, match="工具執行逾時"):
+            await bridge.send("q")
+
+
+@pytest.mark.asyncio
+async def test_send_timeout_not_retried(bridge):
+    """逾時不重試（重試只會再等一輪），直接拋 TimeoutError。"""
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+    mock_proc.kill = MagicMock()
+    mock_proc.returncode = -9
+
+    async def always_timeout(coro, *, timeout):
+        coro.close()
+        raise asyncio.TimeoutError()
+
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc) as m:
+        with patch("asyncio.wait_for", side_effect=always_timeout):
+            with pytest.raises(TimeoutError):
+                await bridge.send("slow")
+
+    assert m.call_count == 1  # 只跑一次，沒重試
+
+
 def test_toolcall_summary_truncates_long_params():
     """ToolCall.summary() truncates over-long param values and picks scalars."""
     tc = ToolCall(name="view_file", parameters={"AbsolutePath": "/a/b/c.py"})

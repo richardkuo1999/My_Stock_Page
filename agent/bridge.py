@@ -134,10 +134,27 @@ class AntigravityCLIBridge(AgentBridge):
         per line. `step_update` events with `step_type=tool` carry the tool
         name/params; the final `result` event carries the answer + usage.
 
+        暫時性失敗（agy 回非 0 exit code，非 timeout）會自動重試一次——實測相同
+        prompt 有時瞬時失敗、重跑即成功（agy 內部/網路抖動）。
+
         Raises:
             TimeoutError: if process exceeds timeout
-            RuntimeError: if process exits with non-zero code
+            RuntimeError: if process exits with non-zero code（重試後仍失敗）
         """
+        last_error = ""
+        for attempt in range(1, 3):  # 最多兩次（首次 + 重試一次）
+            try:
+                return await self._run_once(prompt)
+            except TimeoutError:
+                raise  # 逾時不重試（可能本來就跑很久，重試只會再等一輪）
+            except RuntimeError as e:
+                last_error = str(e)
+                if attempt == 1:
+                    logger.warning("Agent 第 %d 次失敗，重試一次：%s", attempt, e)
+        raise RuntimeError(last_error)
+
+    async def _run_once(self, prompt: str) -> AgentResult:
+        """實際呼叫一次 agy 子程序並解析結果。"""
         try:
             proc = await asyncio.create_subprocess_exec(
                 "agy", "-p", prompt,
@@ -172,12 +189,52 @@ class AntigravityCLIBridge(AgentBridge):
             logger.error("Agent timed out after %ds", self.timeout)
             raise TimeoutError(f"Agent timed out after {self.timeout}s")
 
-        if proc.returncode != 0:
-            error_msg = stderr.decode().strip() if stderr else "Unknown error"
-            logger.error("Agent exited with code %d: %s", proc.returncode, error_msg)
-            raise RuntimeError(f"Agent error (code {proc.returncode}): {error_msg}")
+        out = stdout.decode() if stdout else ""
+        err = stderr.decode().strip() if stderr else ""
 
-        return self._parse_stream(stdout.decode())
+        if proc.returncode != 0:
+            # agy 常把錯誤細節寫在 stdout（stream-json 的 result event 或純文字），
+            # stderr 可能是空的。合併兩者，優先取 stdout 裡可解析的錯誤，讓 log 有
+            # 實際線索、而非只有 "Unknown error"。
+            detail = self._extract_error(out) or err or "Unknown error"
+            logger.error(
+                "Agent exited with code %d: %s", proc.returncode, detail
+            )
+            raise RuntimeError(f"Agent error (code {proc.returncode}): {detail}")
+
+        return self._parse_stream(out)
+
+    @staticmethod
+    def _extract_error(raw: str) -> str:
+        """從 agy stdout 抽出可讀的錯誤訊息（供非 0 exit 時診斷用）。
+
+        優先找 stream-json 裡 status 非 SUCCESS 的 result/error 事件；找不到就
+        回傳去空白後的原始輸出尾段（截斷避免灌爆 log）。
+        """
+        if not raw:
+            return ""
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            res = event.get("result")
+            if isinstance(res, dict) and res.get("status") not in (None, "SUCCESS"):
+                msg = res.get("error") or res.get("response") or res.get("status")
+                if msg:
+                    return str(msg)[:500]
+            if event.get("event") == "error" or "error" in event:
+                msg = event.get("error") or event.get("message")
+                if msg:
+                    return str(msg)[:500]
+        # 無結構化錯誤：回原始輸出尾段當線索。
+        tail = raw.strip()[-300:]
+        return tail if tail else ""
 
     @staticmethod
     def _parse_stream(raw: str) -> AgentResult:
