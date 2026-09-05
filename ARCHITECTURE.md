@@ -142,6 +142,12 @@ Google AI Pro 方案不提供 `GEMINI_API_KEY`，SDK 需要此 key 才能執行�
 | `tools/draw_kchart.py` | K 線圖（mplfinance 繪製，回傳圖片路徑） | `python tools/draw_kchart.py 2330 --period 60` |
 | `tools/summarize_document.py` | URL/PDF 文件摘要 | `python tools/summarize_document.py https://...` |
 | `tools/lookup_stock_name.py` | 代號↔公司名對照表（純資料讀/寫；主資料為 UAnalyze StockPool 全表） | `python tools/lookup_stock_name.py 2330` |
+| `tools/draw_intraday_chart.py` | 盤中分時走勢折線圖（回傳圖片路徑） | `python tools/draw_intraday_chart.py 2330` |
+| `tools/cnyes.py` | 鉅亨網 raw-data：FactSet 預估EPS / 分析師目標價 / 即時報價 / 歷史K線 | `python tools/cnyes.py --target 2330` |
+| `tools/finmind.py` | FinMind raw-data：PER/PBR、價量、月營收、三大財報、股利、法人、融資券、外資持股、基本資料、新聞 | `python tools/finmind.py --per 2330` |
+| `tools/fugle.py` | 富果 raw-data：報價/交易屬性/盤中K・成交・分價量/歷史日K/52週統計 | `python tools/fugle.py --quote 2330` |
+| `tools/yfinance_data.py` | Yahoo Finance raw-data：基本面 info / 分析師目標價+評等 / 歷史價 / 年度財報 | `python tools/yfinance_data.py --target 2330` |
+| `tools/valuation.py` | 估值計算（import 上述 raw-data）：樂活五線譜 / PE・PB 河流圖 / EPS 動能 / 目標價彙整 | `python tools/valuation.py --lohas 2330` |
 
 > **工具不呼叫 AI**：所有工具皆為純粹確定性程式。對照表主資料由 `lookup_stock_name.py`
 > `--refresh` 從 UAnalyze StockPool 全表拉取灌入（純資料拉取，非 AI）；StockPool 仍未涵蓋
