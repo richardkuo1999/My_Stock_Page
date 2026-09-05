@@ -13,7 +13,10 @@ def test_error_handler_is_registered(mock_app_cls, mock_setup_scheduler, monkeyp
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
 
     app = MagicMock()
-    mock_app_cls.builder.return_value.token.return_value.build.return_value = app
+    (
+        mock_app_cls.builder.return_value.token.return_value
+        .concurrent_updates.return_value.build.return_value
+    ) = app
     # run_polling must not actually block / connect
     app.run_polling = MagicMock()
 
@@ -43,7 +46,10 @@ async def test_error_handler_replies_and_notifies():
     with patch("main.setup_scheduler"), patch("main.Application") as mock_app_cls, patch(
         "main.JobErrorNotifier"
     ) as mock_notifier_cls, patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "fake"}):
-        mock_app_cls.builder.return_value.token.return_value.build.return_value = monkey_app
+        (
+            mock_app_cls.builder.return_value.token.return_value
+            .concurrent_updates.return_value.build.return_value
+        ) = monkey_app
         monkey_app.run_polling = MagicMock()
         notifier = mock_notifier_cls.return_value
         notifier.notify_admin = AsyncMock()

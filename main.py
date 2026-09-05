@@ -42,7 +42,12 @@ def main() -> None:
     config = _load_config()
     logger.info("Starting bot...")
 
-    application = Application.builder().token(token).build()
+    # concurrent_updates(True)：允許同時處理多個 update（預設值 1 會序列化，導致
+    # 同時發多個 /ask 只能一個一個跑）。無上限——每個 /ask 各開獨立 agy 子程序並行；
+    # 若日後資源吃緊（記憶體 / agy rate limit）再改成有上限的整數。
+    application = (
+        Application.builder().token(token).concurrent_updates(True).build()
+    )
 
     # Components
     bridge = AntigravityCLIBridge()
