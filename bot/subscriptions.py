@@ -243,28 +243,12 @@ async def news_source_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text(f"😕 {label} 目前沒有新聞")
         return
 
-    bridge = context.bot_data.get("agent_bridge")
-    summary = None
-    if bridge:
-        try:
-            news_json = json.dumps(
-                [{"title": a.get("title", ""), "source": a.get("source", ""), "url": a["url"]} for a in batch],
-                ensure_ascii=False,
-            )
-            prompt = (
-                "請用繁體中文摘要以下新聞，每則一行，"
-                "格式「• [來源] 標題摘要\\n  └ URL」：\n" + news_json
-            )
-            summary = await bridge.send(prompt)
-        except Exception as e:
-            logger.warning("Agent summarization failed for /news, using fallback: %s", e)
-
-    if not summary:
-        lines = [
-            f"• [{a.get('source', '?')}] {a.get('title', '')}\n  └ {a['url']}"
-            for a in batch
-        ]
-        summary = "\n".join(lines)
+    # Plain title + URL list (no Agent summarization — direct, fast, no token cost).
+    lines = [
+        f"• [{a.get('source', '?')}] {a.get('title', '')}\n  └ {a['url']}"
+        for a in batch
+    ]
+    summary = "\n".join(lines)
 
     header = f"📰 {label} 最新新聞 ({len(batch)} 則)\n{'=' * 20}\n\n"
     back = InlineKeyboardMarkup(

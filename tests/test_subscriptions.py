@@ -469,29 +469,12 @@ async def test_news_callback_fetch_error(news_context):
 
 
 @pytest.mark.asyncio
-async def test_news_callback_uses_agent_summary():
-    """Callback uses agent summary when a bridge is available."""
-    fake = {"articles": [{"title": "T", "source": "S", "url": "https://x/1"}]}
-    bridge = MagicMock()
-    bridge.send = AsyncMock(return_value="• [S] 摘要內容\n  └ https://x/1")
-    ctx = MagicMock()
-    ctx.bot_data = {"agent_bridge": bridge}
-    update = _make_news_callback_update("news:all")
-
-    with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value=fake):
-        await news_source_callback(update, ctx)
-
-    bridge.send.assert_awaited_once()
-    last = update.callback_query.edit_message_text.call_args_list[-1][0][0]
-    assert "摘要內容" in last
-
-
-@pytest.mark.asyncio
-async def test_news_callback_agent_fallback():
-    """Callback falls back to a plain list if the agent fails."""
+async def test_news_callback_never_uses_agent():
+    """Callback shows a plain title + URL list and never calls the Agent,
+    even when a bridge is present in bot_data."""
     fake = {"articles": [{"title": "標題X", "source": "CNYES", "url": "https://x/1"}]}
     bridge = MagicMock()
-    bridge.send = AsyncMock(side_effect=TimeoutError())
+    bridge.send = AsyncMock()
     ctx = MagicMock()
     ctx.bot_data = {"agent_bridge": bridge}
     update = _make_news_callback_update("news:all")
@@ -499,6 +482,7 @@ async def test_news_callback_agent_fallback():
     with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value=fake):
         await news_source_callback(update, ctx)
 
+    bridge.send.assert_not_called()
     last = update.callback_query.edit_message_text.call_args_list[-1][0][0]
     assert "標題X" in last and "https://x/1" in last
 

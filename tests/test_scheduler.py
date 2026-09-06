@@ -229,12 +229,12 @@ async def test_news_push_job_all_pushed(
 async def test_news_push_job_success(
     mock_bot, mock_subscription_manager, mock_agent_bridge, pushed_news_path, sample_articles
 ):
-    """New articles are summarized and pushed to subscribers."""
+    """New articles are listed (title + URL) and pushed to subscribers — no Agent."""
     with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value={"articles": sample_articles}):
         await news_push_job(mock_bot, mock_subscription_manager, mock_agent_bridge)
 
-    # Agent bridge was called for summarization
-    mock_agent_bridge.send.assert_called_once()
+    # Agent bridge must NOT be called — push is a plain title + URL list now.
+    mock_agent_bridge.send.assert_not_called()
 
     # Bot sent message to both subscribers
     assert mock_bot.send_message.call_count == 2
@@ -244,6 +244,8 @@ async def test_news_push_job_success(
     assert calls[1].kwargs["chat_id"] == 67890
     assert calls[1].kwargs["message_thread_id"] == 7
     assert "新聞推播" in calls[0].kwargs["text"]
+    # Plain list contains source tag + raw URL.
+    assert "https://example.com/1" in calls[0].kwargs["text"]
 
     # Records written to file
     saved = json.loads(pushed_news_path.read_text(encoding="utf-8"))
@@ -271,17 +273,18 @@ async def test_news_push_job_no_subscribers(
 
 
 @pytest.mark.asyncio
-async def test_news_push_job_agent_failure_fallback(
+async def test_news_push_job_ignores_agent_bridge(
     mock_bot, mock_subscription_manager, pushed_news_path, sample_articles
 ):
-    """When agent fails, falls back to simple formatted list."""
-    failing_bridge = AsyncMock()
-    failing_bridge.send = AsyncMock(side_effect=RuntimeError("Agent down"))
+    """Push never calls the Agent, even when a bridge is provided."""
+    bridge = AsyncMock()
+    bridge.send = AsyncMock()
 
     with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value={"articles": sample_articles}):
-        await news_push_job(mock_bot, mock_subscription_manager, failing_bridge)
+        await news_push_job(mock_bot, mock_subscription_manager, bridge)
 
-    # Message still sent (fallback format)
+    bridge.send.assert_not_called()
+    # Message still sent as a plain title + URL list.
     assert mock_bot.send_message.call_count == 2
     text = mock_bot.send_message.call_args_list[0].kwargs["text"]
     assert "https://example.com/1" in text

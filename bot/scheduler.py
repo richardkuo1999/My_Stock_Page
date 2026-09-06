@@ -166,29 +166,12 @@ async def news_push_job(bot, subscription_manager, agent_bridge) -> None:
         _save_pushed_news(pushed_records)
         return
 
-    # Summarize via AgentBridge (batch, max 10 articles)
-    summary = None
+    # Plain title + URL list (no Agent summarization — direct, fast, no token cost).
     batch = new_articles[:10]
-    if agent_bridge:
-        try:
-            news_json = json.dumps(
-                [{"title": a.get("title", ""), "source": a.get("source", ""), "url": a["url"]} for a in batch],
-                ensure_ascii=False,
-            )
-            prompt = (
-                "請用繁體中文摘要以下新聞，每則一行，"
-                "格式「• [來源] 標題摘要\\n  └ URL」：\n" + news_json
-            )
-            summary = await agent_bridge.send(prompt)
-        except Exception as e:
-            logger.warning("Agent summarization failed, using fallback: %s", e)
-
-    # Fallback: simple formatted list
-    if not summary:
-        lines = []
-        for a in batch:
-            lines.append(f"• [{a.get('source', '?')}] {a.get('title', '')}\n  └ {a['url']}")
-        summary = "\n".join(lines)
+    lines = []
+    for a in batch:
+        lines.append(f"• [{a.get('source', '?')}] {a.get('title', '')}\n  └ {a['url']}")
+    summary = "\n".join(lines)
 
     # Push message to all subscribers
     header = f"📰 新聞推播 ({len(new_articles)} 則新文章)\n{'=' * 20}\n\n"
