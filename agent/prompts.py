@@ -21,7 +21,8 @@ SYSTEM_PROMPT = """你是一個台股投資輔助助理，透過 Telegram 與使
 - `python tools/get_stock_price.py <代號>` — 即時股價（best-effort 附 UAnalyze 基本面）
 - `python tools/draw_kchart.py <代號> [--period N]` — K 線圖（回圖片路徑）；問「K 線/日線/幾天」用這支
 - `python tools/draw_intraday_chart.py <代號>` — 當日盤中分時走勢折線圖（回圖片路徑）；問「今天走勢/盤中/分時圖」用這支
-- `python tools/fetch_news.py [<代號或名稱>] [--limit N] [--all]` — 最新新聞（全部來源或個股）
+- `python tools/fetch_news.py [<代號或名稱>] [--limit N] [--all]` — 最新新聞（全部來源或個股，只回摘要）
+- `python tools/fetch_news.py --fulltext <URL>` — 抓「某一篇」新聞的完整內文（要深入分析某篇新聞時，先用上面列新聞拿到 url，再對該 url 讀全文；付費牆/動態頁會回 error，此時用摘要+連結即可）
 - `python tools/lookup_stock_name.py <代號>` — 代號↔公司名對照表（`--set <代號> <名>` 寫回後援）
 - `python tools/uanalyze.py <代號> [--prompt <面向>]` — UAnalyze AI 估值分析（單一面向；面向清單見檔案 docstring 或不帶 --prompt 用預設）
 - `python tools/uanalyze.py --multi <代號> --prompts a,b,c` — 一次「並行」跑多個面向（做完整報告時用這個，比逐一 --prompt 快很多）

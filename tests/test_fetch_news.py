@@ -752,3 +752,104 @@ async def test_fetch_ua_column_dispatch():
 
     assert len(articles) == 2
     assert articles[0]["source"] == "UAnalyze專欄"
+
+
+# --- fetch_fulltext (on-demand single-article body) ---
+
+_ARTICLE_HTML = """
+<html><head><title>t</title><style>.x{}</style></head>
+<body>
+  <nav>menu junk that should be dropped entirely from output</nav>
+  <article>
+    <h1>台積電第三季營收創新高</h1>
+    <p>台積電今日公布第三季營收，受惠 AI 與高效能運算需求強勁，單季營收較去年同期成長超過三成，創下歷史新高紀錄。</p>
+    <p>公司表示，先進製程產能持續滿載，三奈米製程貢獻度顯著提升，並看好第四季維持高檔水準的動能延續。</p>
+  </article>
+  <footer>copyright footer noise</footer>
+</body></html>
+"""
+
+
+@pytest.fixture
+def fulltext_cache_tmp(tmp_path, monkeypatch):
+    import tools.fetch_news as fn
+
+    cache = tmp_path / "news_fulltext_cache.json"
+    monkeypatch.setattr(fn, "FULLTEXT_CACHE_FILE", cache)
+    return cache
+
+
+def _mock_client(html_text):
+    """Build a mock httpx.AsyncClient context manager returning html_text."""
+    resp = MagicMock()
+    resp.text = html_text
+    resp.raise_for_status = MagicMock()
+    client = MagicMock()
+    client.get = AsyncMock(return_value=resp)
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=client)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    return cm
+
+
+@pytest.mark.asyncio
+async def test_fulltext_extracts_body(fulltext_cache_tmp):
+    from tools.fetch_news import fetch_fulltext
+
+    with patch("httpx.AsyncClient", return_value=_mock_client(_ARTICLE_HTML)):
+        r = await fetch_fulltext("https://news.example.com/a")
+
+    assert "error" not in r
+    assert "AI 與高效能運算" in r["text"]
+    assert "先進製程產能持續滿載" in r["text"]
+    # nav / footer noise dropped
+    assert "menu junk" not in r["text"]
+    assert "copyright footer" not in r["text"]
+    assert r["chars"] == len(r["text"])
+    assert r["truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_fulltext_cache_hit_skips_fetch(fulltext_cache_tmp):
+    from tools.fetch_news import fetch_fulltext
+
+    url = "https://news.example.com/a"
+    with patch("httpx.AsyncClient", return_value=_mock_client(_ARTICLE_HTML)) as m:
+        await fetch_fulltext(url)
+        assert m.call_count == 1
+        # second call served from cache — no new client created
+        r2 = await fetch_fulltext(url)
+        assert m.call_count == 1
+    assert r2.get("cached") is True
+
+
+@pytest.mark.asyncio
+async def test_fulltext_short_body_returns_error(fulltext_cache_tmp):
+    from tools.fetch_news import fetch_fulltext
+
+    thin = "<html><body><p>太短</p></body></html>"
+    with patch("httpx.AsyncClient", return_value=_mock_client(thin)):
+        r = await fetch_fulltext("https://paywall.example.com/x")
+    assert "error" in r
+    assert "text" not in r
+
+
+@pytest.mark.asyncio
+async def test_fulltext_invalid_url():
+    from tools.fetch_news import fetch_fulltext
+
+    r = await fetch_fulltext("not-a-url")
+    assert "error" in r
+
+
+@pytest.mark.asyncio
+async def test_fulltext_truncates_long_body(fulltext_cache_tmp):
+    from tools.fetch_news import FULLTEXT_MAX_CHARS, fetch_fulltext
+
+    para = "這是一段夠長的新聞內文段落用來測試截斷行為。" * 20  # >100 chars
+    body = "".join(f"<p>{para}{i}</p>" for i in range(200))
+    html_doc = f"<html><body><article>{body}</article></body></html>"
+    with patch("httpx.AsyncClient", return_value=_mock_client(html_doc)):
+        r = await fetch_fulltext("https://news.example.com/long")
+    assert r["truncated"] is True
+    assert r["chars"] == FULLTEXT_MAX_CHARS

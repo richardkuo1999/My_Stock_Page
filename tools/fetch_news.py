@@ -1,6 +1,15 @@
-"""fetch_news — 取得指定股票的最新新聞
-用法: python tools/fetch_news.py [SYMBOL] [--limit N] [--all]
-回傳: JSON {"articles": [{title, source, date, url, summary}]}
+"""fetch_news — 取得指定股票的最新新聞，或抓取單篇新聞全文
+用法:
+  python tools/fetch_news.py [SYMBOL] [--limit N] [--all]
+      列出最新新聞（全部來源或指定個股）。每篇回傳 {title, source, date, url, summary}，
+      summary 只是「摘要/前導段」，**不是全文**。
+  python tools/fetch_news.py --fulltext <URL>
+      抓「某一篇」新聞的完整內文（on-demand）。傳入上面某篇文章的 url 即可。
+      要深入分析某篇新聞時，先用上面列出新聞拿到 url，再對該 url 呼叫 --fulltext 讀全文。
+回傳:
+  列表模式: {"articles": [{title, source, date, url, summary}]}
+  --fulltext: {"url", "text", "chars", "truncated"}，失敗或抓不到正文時回 {"url", "error"}
+              （付費牆 / JS 動態頁 / 版型不支援時會回 error，此時改用 summary + 原文連結）。
 """
 
 import asyncio
@@ -887,6 +896,134 @@ def _lookup_get_name(symbol: str) -> str | None:
     return get_name(symbol)
 
 
+# --- Single-article full-text (on-demand) ---
+
+# Full-text cache: fetched article bodies are stored here so the same URL is not
+# re-scraped repeatedly. News article bodies do not change, so a long TTL is fine.
+FULLTEXT_CACHE_FILE = (
+    Path(__file__).resolve().parent.parent / "data" / "news_fulltext_cache.json"
+)
+FULLTEXT_TTL_SECONDS = 86400  # 24 hours
+FULLTEXT_MAX_CHARS = 12000  # cap to keep JSON output / prompts bounded
+
+
+def _read_fulltext_cache(url: str) -> str | None:
+    """Return cached body for *url* if fresh, else None."""
+    try:
+        if not FULLTEXT_CACHE_FILE.exists():
+            return None
+        data = json.loads(FULLTEXT_CACHE_FILE.read_text(encoding="utf-8"))
+        entry = data.get(url)
+        if not entry:
+            return None
+        if time.time() - entry.get("fetched_at", 0) > FULLTEXT_TTL_SECONDS:
+            return None
+        text = entry.get("text")
+        return text if isinstance(text, str) and text else None
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Failed to read fulltext cache: %s", e)
+        return None
+
+
+def _write_fulltext_cache(url: str, text: str) -> None:
+    """Persist *text* for *url* with a timestamp (best-effort)."""
+    try:
+        FULLTEXT_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        data = {}
+        if FULLTEXT_CACHE_FILE.exists():
+            try:
+                data = json.loads(FULLTEXT_CACHE_FILE.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                data = {}
+        data[url] = {"text": text, "fetched_at": time.time()}
+        FULLTEXT_CACHE_FILE.write_text(
+            json.dumps(data, ensure_ascii=False), encoding="utf-8"
+        )
+    except OSError as e:
+        logger.warning("Failed to write fulltext cache: %s", e)
+
+
+def _extract_main_text(html_text: str) -> str:
+    """Heuristically extract the main article body from an HTML page.
+
+    Strategy (dependency-light, BeautifulSoup only):
+    1. Drop non-content tags (script/style/nav/header/footer/aside/form).
+    2. Prefer an <article> element; else the <div>/<section> whose combined
+       paragraph text is longest; else fall back to all <p> on the page.
+    3. Join paragraph texts with blank lines.
+    """
+    soup = BeautifulSoup(html_text, "html.parser")
+    for tag in soup(["script", "style", "nav", "header", "footer", "aside", "form", "noscript"]):
+        tag.decompose()
+
+    def _text_of(node) -> str:
+        paras = [p.get_text(" ", strip=True) for p in node.find_all("p")]
+        paras = [p for p in paras if len(p) >= 20]  # drop nav/caption cruft
+        return "\n\n".join(paras)
+
+    # 1) <article> if present
+    article = soup.find("article")
+    best = _text_of(article) if article else ""
+
+    # 2) largest container by paragraph text length
+    if len(best) < 200:
+        containers = soup.find_all(["div", "section", "main"])
+        for c in containers:
+            t = _text_of(c)
+            if len(t) > len(best):
+                best = t
+
+    # 3) fall back to all <p>
+    if len(best) < 200:
+        best = _text_of(soup)
+
+    return best.strip()
+
+
+async def fetch_fulltext(url: str) -> dict:
+    """Fetch and extract the main body text of a single news article URL.
+
+    On-demand / lazy: only the requested URL is fetched. Result is cached
+    (FULLTEXT_TTL_SECONDS) so repeat reads of the same article are free.
+
+    Args:
+        url: The article URL (from an article's "url" field).
+
+    Returns:
+        dict: {"url", "text", "chars", "truncated"} on success, or
+              {"url", "error"} on failure. Empty/short extraction returns an
+              error so the caller can fall back to the summary + link.
+    """
+    url = (url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        return {"url": url, "error": "無效的 URL（需以 http/https 開頭）"}
+
+    cached = _read_fulltext_cache(url)
+    if cached is not None:
+        return {"url": url, "text": cached, "chars": len(cached), "truncated": False, "cached": True}
+
+    headers = {"User-Agent": USER_AGENT}
+    try:
+        # verify=False: several TW sources have SSL chain quirks (see source notes).
+        async with httpx.AsyncClient(
+            timeout=DEFAULT_TIMEOUT, headers=headers, follow_redirects=True, verify=False
+        ) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            text = _extract_main_text(resp.text)
+    except Exception as e:
+        logger.warning("fetch_fulltext failed for %s: %s", url, e)
+        return {"url": url, "error": f"抓取全文失敗：{e}"}
+
+    if len(text) < 100:
+        return {"url": url, "error": "無法擷取正文（可能為付費牆、JS 動態頁或版型不支援），請改用摘要與原文連結"}
+
+    truncated = len(text) > FULLTEXT_MAX_CHARS
+    if truncated:
+        text = text[:FULLTEXT_MAX_CHARS]
+    _write_fulltext_cache(url, text)
+    return {"url": url, "text": text, "chars": len(text), "truncated": truncated}
+
 
 # --- CLI Entry Point ---
 
@@ -894,7 +1031,15 @@ def _lookup_get_name(symbol: str) -> str | None:
 if __name__ == "__main__":
     args = sys.argv[1:]
 
-    if "--all" in args:
+    if "--fulltext" in args:
+        # On-demand single-article full text: python tools/fetch_news.py --fulltext <URL>
+        try:
+            url = args[args.index("--fulltext") + 1]
+        except IndexError:
+            result = {"error": "用法: python tools/fetch_news.py --fulltext <URL>"}
+        else:
+            result = asyncio.run(fetch_fulltext(url))
+    elif "--all" in args:
         # CLI --all always hits live sources (bypasses cache) for debugging.
         result = asyncio.run(latest(force_refresh=True))
     elif args and not args[0].startswith("--"):
