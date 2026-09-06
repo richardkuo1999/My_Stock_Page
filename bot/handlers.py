@@ -745,18 +745,23 @@ async def _send_document_reply(
         build_html_document,
         build_markdown_document,
         safe_filename,
+        title_from_body,
     )
+
+    # 先從原始內文抓標題（在附加工具清單之前），讓檔名看得出內容。
+    title = title_from_body(body, mode)
+    stem = title or "stock_report"
 
     if mode == "html":
         if tools_line:
             body = f"{body}\n<pre>{_html_escape(tools_line)}</pre>"
-        content = build_html_document(body)
-        filename = safe_filename("stock_report", "html")
+        content = build_html_document(body, title=title or "台股分析報告")
+        filename = safe_filename(stem, "html")
     else:  # markdown
         if tools_line:
             body = f"{body}\n\n```\n{tools_line}\n```"
         content = build_markdown_document(body)
-        filename = safe_filename("stock_report", "md")
+        filename = safe_filename(stem, "md")
 
     buffer = io.BytesIO(content.encode("utf-8"))
     buffer.name = filename

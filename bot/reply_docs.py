@@ -19,7 +19,14 @@ __all__ = [
     "build_html_document",
     "build_markdown_document",
     "safe_filename",
+    "title_from_body",
 ]
+
+# 從內文抓標題用：HTML 第一個 <h1>…</h1>；Markdown 第一個 #~###### 標題行。
+_H1_RE = re.compile(r"<h1[^>]*>(.*?)</h1>", re.IGNORECASE | re.DOTALL)
+_MD_HEADING_RE = re.compile(r"^\s*#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
+# 清掉標題內殘留的 HTML 標籤（如 <b>）。
+_TAG_RE = re.compile(r"<[^>]+>")
 
 # 內嵌 CSS：無外部相依，離線可讀；行動裝置友善。
 _HTML_TEMPLATE = """<!DOCTYPE html>
@@ -115,3 +122,42 @@ def safe_filename(stem: str, ext: str) -> str:
     stem = re.sub(r"\s+", "_", stem)
     stem = stem[:60].rstrip("._") or "report"
     return f"{stem}.{ext}"
+
+
+def title_from_body(body: str, mode: str) -> str:
+    """從內文萃取標題當檔名主體，讓附件檔名看得出內容（而非固定 stock_report）。
+
+    Args:
+        body: Agent 產出的內文（HTML 片段或 Markdown）。
+        mode: "html" → 取第一個 <h1>；"markdown" → 取第一個 # 標題行。
+
+    Returns:
+        乾淨的標題字串（已去除內層 HTML 標籤、HTML 實體、多餘空白）；
+        找不到標題時回傳空字串，交由呼叫端決定後援檔名。
+    """
+    if not body:
+        return ""
+
+    raw = ""
+    if mode == "html":
+        m = _H1_RE.search(body)
+        if m:
+            raw = m.group(1)
+    elif mode == "markdown":
+        m = _MD_HEADING_RE.search(body)
+        if m:
+            raw = m.group(1)
+
+    if not raw:
+        return ""
+
+    # 去掉標題內殘留 HTML 標籤（<b> 等）、還原常見 HTML 實體、壓平空白。
+    text = _TAG_RE.sub("", raw)
+    text = (
+        text.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&nbsp;", " ")
+        .replace("&quot;", '"')
+    )
+    return re.sub(r"\s+", " ", text).strip()
