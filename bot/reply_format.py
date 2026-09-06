@@ -24,9 +24,17 @@ _FORMAT_RE = re.compile(
     r"^\s*FORMAT\s*[:：]\s*(html|text|markdown)\s*$", re.IGNORECASE
 )
 
+# 一行只有 code fence（```、~~~，後面可跟語言名如 ```html）。Agent 常把整段
+# 回覆包在 fence 裡，或在標記前留空行/fence，這些都不該讓標記失效。
+_FENCE_RE = re.compile(r"^\s*(?:```|~~~)[a-zA-Z0-9]*\s*$")
+
 
 def parse_reply_format(reply: str) -> tuple[str, str]:
-    """從 Agent 回覆第一行解析格式標記。
+    """從 Agent 回覆開頭解析格式標記。
+
+    容忍常見的 LLM 雜訊：標記前的空白行、以及把整段回覆包起來的 code fence
+    （```／~~~，可含語言名）。只要在這些雜訊之後、真正內文之前出現 FORMAT 標記
+    即算數；若標記前有實質文字（非空白、非 fence）則視為純文字，內容原樣返回。
 
     Args:
         reply: Agent 回傳的完整字串。
@@ -34,17 +42,44 @@ def parse_reply_format(reply: str) -> tuple[str, str]:
     Returns:
         (mode, body)
         - mode: "html" / "markdown" / "text"（無法辨識或缺標記時為 "text"）。
-        - body: 切掉標記行後的內容；若第一行不是標記則原樣返回。
+        - body: 切掉標記行（與包裹用的前導/收尾 fence）後的內容；
+          非標記時原樣返回。
     """
     if not reply:
         return "text", reply
 
-    first, sep, rest = reply.partition("\n")
-    m = _FORMAT_RE.match(first)
-    if not m:
-        # 第一行不是格式標記 → 視為純文字，內容原樣不動。
+    lines = reply.split("\n")
+    saw_fence = False
+    idx = 0
+
+    # 跳過標記前的空白行與（至多一層）開頭 code fence。
+    while idx < len(lines):
+        line = lines[idx]
+        if line.strip() == "":
+            idx += 1
+            continue
+        if not saw_fence and _FENCE_RE.match(line):
+            saw_fence = True
+            idx += 1
+            continue
+        break
+
+    if idx >= len(lines) or not _FORMAT_RE.match(lines[idx]):
+        # 標記前有實質內容或根本沒有標記 → 純文字，原樣不動。
         return "text", reply
 
-    mode = m.group(1).lower()
-    # 切掉標記行；rest 可能還有前導換行，去掉一層即可。
-    return mode, rest.lstrip("\n") if sep else ""
+    mode = _FORMAT_RE.match(lines[idx]).group(1).lower()
+
+    body_lines = lines[idx + 1 :]
+
+    # 若開頭吃掉一層 fence，對應把收尾 fence 也切掉（若存在）。
+    if saw_fence:
+        for j in range(len(body_lines) - 1, -1, -1):
+            if body_lines[j].strip() == "":
+                continue
+            if _FENCE_RE.match(body_lines[j]):
+                body_lines = body_lines[:j]
+            break
+
+    body = "\n".join(body_lines).lstrip("\n").rstrip()
+    return mode, body

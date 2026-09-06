@@ -71,3 +71,50 @@ def test_html_marker_only_no_body():
     mode, body = parse_reply_format("FORMAT: html")
     assert mode == "html"
     assert body == ""
+
+
+def test_leading_blank_lines_before_marker():
+    """標記前有空白行仍能辨識（LLM 常見雜訊）。"""
+    mode, body = parse_reply_format("\n\nFORMAT: html\n<h1>hi</h1>")
+    assert mode == "html"
+    assert body == "<h1>hi</h1>"
+
+
+def test_code_fence_wrapped_reply():
+    """整段回覆被 ``` code fence 包住，仍能辨識並去除包裹。"""
+    reply = "```\nFORMAT: html\n<h1>hi</h1>\n```"
+    mode, body = parse_reply_format(reply)
+    assert mode == "html"
+    assert body == "<h1>hi</h1>"
+
+
+def test_code_fence_with_language_tag():
+    """開頭 fence 帶語言名（```html）也能辨識。"""
+    reply = "```html\nFORMAT: html\n<h1>hi</h1>\n```"
+    mode, body = parse_reply_format(reply)
+    assert mode == "html"
+    assert body == "<h1>hi</h1>"
+
+
+def test_tilde_fence_wrapped_reply():
+    """~~~ 形式的 fence 同樣支援。"""
+    reply = "~~~\nFORMAT: markdown\n# hi\n~~~"
+    mode, body = parse_reply_format(reply)
+    assert mode == "markdown"
+    assert body == "# hi"
+
+
+def test_prose_before_marker_still_text():
+    """標記前有實質文字（非空白、非 fence）→ 仍視為純文字，不誤判。"""
+    reply = "好的，以下是報告：\nFORMAT: html\n<h1>hi</h1>"
+    mode, body = parse_reply_format(reply)
+    assert mode == "text"
+    assert body == reply
+
+
+def test_fence_wrap_multiline_html_body_preserved():
+    """fence 包住的多行 HTML，內文換行需保留、只切掉包裹 fence。"""
+    reply = "```\nFORMAT: html\n<h1>標題</h1>\n<p>段落</p>\n```"
+    mode, body = parse_reply_format(reply)
+    assert mode == "html"
+    assert body == "<h1>標題</h1>\n<p>段落</p>"
