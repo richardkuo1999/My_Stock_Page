@@ -2,6 +2,25 @@
 
 <!-- labels: backlog, investigation -->
 
+> **2026-09-06 複查結論（已完成，移入 done/）**
+>
+> - **INV-01：已解決（commit 892d4bc + 9fa790d）。** `agent/prompts.py` 的 `SYSTEM_PROMPT`
+>   已改為不逐條列面向（9fa790d），而是叫 Agent 自己 `head -40 tools/uanalyze.py` 讀
+>   `UA_PROMPTS`；`UA_PROMPTS` 本身在 892d4bc 被移到 `tools/uanalyze.py` 當**單一事實來源**
+>   （handlers.py 改 re-export），並同步補齊 ARCHITECTURE 工具清單——正是 INV-01 建議的根治
+>   方向。工具清單也擴充到 14 支、移除已不存在的 `fetch_threads`。`UA_PROMPTS` 現為 34 項，
+>   但因 prompt 改指向原始碼，數量增減不再需要同步改 prompt。殘留僅「將 prompts.py 納入
+>   文件同步紀律 checklist」的流程性事項。
+> - **INV-02：修復完成。** 逐一複查五個嫌疑：
+>   - concurrent_updates → `main.py` 已設 `concurrent_updates(True)`。✅
+>   - 同步 requests/time.sleep → 全 `tools/` 已無，全改 async httpx。✅
+>   - 共享阻塞鎖/登入序列化 → 未發現（只有非阻塞的 round-robin token 選號）。✅
+>   - yfinance 同步庫 → 已用 `asyncio.to_thread` 包起。✅
+>   - **matplotlib CPU 阻塞 → 本次修復：** `tools/draw_kchart.py` 與
+>     `tools/draw_intraday_chart.py` 的 `async def draw()` 原本直接同步呼叫
+>     `_render_chart(...)`，會卡住事件迴圈；已改為
+>     `await asyncio.to_thread(_render_chart, ...)`。全 455 測試通過。
+
 <!-- 與來源 B/C 引入同性質：未來待辦，非目前 uanalyze_cli 引入實作範圍 -->
 
 本檔記錄兩個**既有**問題（非 uanalyze_cli 引入產生），使用者於 2026-08-23 規劃 uanalyze_cli 引入時提出，判定為**未來獨立處理**（比照來源 B/C 延後）。但在 uanalyze_cli 引入的**實作過程中須注意、不得惡化**（見各項「引入實作中的即時注意」）。

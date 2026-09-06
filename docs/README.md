@@ -44,7 +44,7 @@ docs/
 | `done/projects/01-bot-rebuild` | Bot 重建專案（12 張 ticket 全 done） |
 | `done/projects/02-uanalyze-cli-import` | 引入 uanalyze_cli（決策全 closed、implementation 全 DONE） |
 | `done/backlog/data-display-tables.md` | 資料顯示表格化（2026-08-26 完成） |
-| `todo/backlog/existing-issues-investigation.md` | INV-01 prompts.py 工具清單缺漏、INV-02 並發阻塞 |
+| `done/backlog/existing-issues-investigation.md` | INV-01（prompts.py 工具清單，commit 892d4bc）、INV-02（並發卡住，畫圖改 to_thread）皆已解決（2026-09-06） |
 | `todo/backlog/agent-prompt-safety.md` | Agent prompt 安全防護（拒絕規則） |
 | `todo/backlog/news-fulltext-on-demand.md` | 新聞全文 on-demand 抓取 |
 | `todo/backlog/deferred-sources.md` | 延後引入來源 C（cb_analyzer 可轉債選股）；來源 B industry_agent 已移除另開專案 |

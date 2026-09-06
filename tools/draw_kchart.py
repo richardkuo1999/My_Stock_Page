@@ -133,7 +133,8 @@ async def draw(symbol: str, period: int = DEFAULT_PERIOD) -> dict:
         return {"error": f"找不到股票代號 {symbol} 的歷史資料"}
 
     try:
-        path = _render_chart(df, symbol, period)
+        # matplotlib 繪圖是同步 CPU 工作，offload 到 thread 避免卡住事件迴圈
+        path = await asyncio.to_thread(_render_chart, df, symbol, period)
         return {"image_path": path}
     except ValueError as e:
         return {"error": str(e)}
