@@ -52,11 +52,20 @@ def test_unrecognized_format_value_falls_back_to_text():
     assert body == "FORMAT: pdf\n# 標題"
 
 
-def test_format_word_mid_text_is_not_a_marker():
-    """只認第一行的標記；內文出現 FORMAT 字樣不算。"""
-    mode, body = parse_reply_format("台積電\nFORMAT: html")
+def test_body_like_line_before_marker_is_not_a_marker():
+    """標記前先出現「像正文的行」（HTML 標籤）→ 停手判純文字，不誤救。"""
+    reply = "<p>台積電今天大漲</p>\nFORMAT: html\n<h1>x</h1>"
+    mode, body = parse_reply_format(reply)
     assert mode == "text"
-    assert body == "台積電\nFORMAT: html"
+    assert body == reply
+
+
+def test_markdown_table_line_before_marker_is_not_a_marker():
+    """標記前出現 Markdown 表格列（含 |）→ 判純文字。"""
+    reply = "| 指標 | 值 |\nFORMAT: markdown\n# x"
+    mode, body = parse_reply_format(reply)
+    assert mode == "text"
+    assert body == reply
 
 
 def test_empty_reply():
@@ -104,12 +113,47 @@ def test_tilde_fence_wrapped_reply():
     assert body == "# hi"
 
 
-def test_prose_before_marker_still_text():
-    """標記前有實質文字（非空白、非 fence）→ 仍視為純文字，不誤判。"""
+def test_preamble_before_marker_recovered_to_html():
+    """標記前有一句前言（Agent 常自作主張加旁白）→ 兜底救回 html，前言被丟掉。"""
     reply = "好的，以下是報告：\nFORMAT: html\n<h1>hi</h1>"
     mode, body = parse_reply_format(reply)
-    assert mode == "text"
-    assert body == reply
+    assert mode == "html"
+    assert body == "<h1>hi</h1>"
+
+
+def test_chinese_progress_preamble_recovered():
+    """中文進度句前言（『正在為您擷取…請稍候…』）仍能救回 html。"""
+    reply = "正在為您擷取金像電（2368）的資料，請稍候...\nFORMAT: html\n<h1>報告</h1>"
+    mode, body = parse_reply_format(reply)
+    assert mode == "html"
+    assert body == "<h1>報告</h1>"
+
+
+def test_english_progress_preamble_recovered():
+    """英文旁白前言（『Wait, let's wait for task-6…』）仍能救回 html。"""
+    reply = "這是目前的結果....Wait, let's wait for task-6 to finish.\nFORMAT: html\n<h1>x</h1>"
+    mode, body = parse_reply_format(reply)
+    assert mode == "html"
+    assert body == "<h1>x</h1>"
+
+
+def test_multiple_preamble_lines_within_window_recovered():
+    """標記前多行前言、但仍在開頭窗口內 → 救回 markdown。"""
+    reply = "第一句\n第二句\nFORMAT: markdown\n# 標題"
+    mode, body = parse_reply_format(reply)
+    assert mode == "markdown"
+    assert body == "# 標題"
+
+
+def test_many_english_wait_preamble_lines_recovered():
+    """實測案例：8 行英文等待旁白後才出現標記 → 不限行數仍救回 html。"""
+    preamble = "\n".join(
+        f"I will wait for command {i} to finish." for i in range(8)
+    )
+    reply = f"{preamble}\nFORMAT: html\n<h1>金像電 (2368) 報告</h1>"
+    mode, body = parse_reply_format(reply)
+    assert mode == "html"
+    assert body == "<h1>金像電 (2368) 報告</h1>"
 
 
 def test_fence_wrap_multiline_html_body_preserved():
