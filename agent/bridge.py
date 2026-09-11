@@ -154,11 +154,32 @@ class AntigravityCLIBridge(AgentBridge):
         raise RuntimeError(last_error)
 
     async def _run_once(self, prompt: str) -> AgentResult:
-        """實際呼叫一次 agy 子程序並解析結果。"""
+        """實際呼叫一次 agy 子程序並解析結果。
+
+        prompt 走 stdin（--input-format stream-json，一行 NDJSON），而非命令列參數。
+        原本用 `agy -p <prompt>` 會把整段 prompt 當命令列參數；長 prompt（如 log
+        稽核含上萬字 log）在 Windows 會超過命令列長度上限而報 WinError 206「檔名或副
+        檔名太長」。改由 stdin 餵入即無長度限制、跨平台一致。stdin 訊息格式（實測）：
+        {"event":"user","message":{"role":"user","content":<prompt>}}
+        """
+        stdin_msg = json.dumps(
+            {"event": "user", "message": {"role": "user", "content": prompt}},
+            ensure_ascii=False,
+        ) + "\n"
+        # agy 內層有自己的 --print-timeout（預設 5 分鐘）；若比外層 asyncio.wait_for
+        # 短，會「內層先爆」→ log 出現 agy 的「timeout waiting for response」而外層的
+        # self.timeout 根本用不到。故由 self.timeout 動態推導 agy 的 print-timeout，
+        # 設為略短於外層（留 BUFFER 秒緩衝，讓外層 asyncio 當最後防線），下限 30s。
+        _PRINT_TIMEOUT_BUFFER = 30
+        agy_print_timeout = max(30, int(self.timeout) - _PRINT_TIMEOUT_BUFFER)
         try:
             proc = await asyncio.create_subprocess_exec(
-                "agy", "-p", prompt,
+                # -p 仍需帶值（agy 要求），給空字串；真正的 prompt 走 stdin。
+                "agy", "-p", "",
+                "--input-format", "stream-json",
                 "--output-format", "stream-json",
+                # agy 內層 print 逾時，與外層 self.timeout 對齊（略短，見上）。
+                "--print-timeout", f"{agy_print_timeout}s",
                 # SCOPE: declare the repo as the Agent's workspace and run in a
                 # sandbox with terminal restrictions. Together these confine file
                 # search / access to the project — the Agent can still run
@@ -176,12 +197,13 @@ class AntigravityCLIBridge(AgentBridge):
                 # Planned proper fix: expose the tools as an MCP server (agy mcp)
                 # so the Agent can ONLY call those tools. See ARCHITECTURE.
                 "--dangerously-skip-permissions",
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=REPO_ROOT,  # tools are referenced as tools/xxx.py relative to here
             )
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=self.timeout
+                proc.communicate(input=stdin_msg.encode("utf-8")), timeout=self.timeout
             )
         except asyncio.TimeoutError:
             proc.kill()
