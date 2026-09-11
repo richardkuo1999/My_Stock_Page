@@ -15,7 +15,7 @@
    預設:         {"analysis": str, "prompt", "symbol"}
    --multi:      {"symbol","requested","ok","failed","results":{面向: {analysis|error}}}
    --reports:    {"reports": [{id, stock_code, stock_name, title, date, summary}]}
-   --consensus:  {"symbol","eps":{…},"revenue":{…}}
+   --consensus:  {"symbol","eps":{…},"revenue":{…},"annual":[…],"broker_eps":[…]}
    --pershare:   {"symbol","metrics":[{name, values:{年份: 值}}]}
    --supply:     {"symbol","peers":[代號…]}
    --order:      {"symbol","order_visibility"?,"contract_liability"?}
@@ -476,10 +476,15 @@ def _latest_periods(data_map: dict, n: int) -> list[tuple[str, float]]:
 
 
 async def fetch_eps_consensus(symbol: str, recent: int = 4) -> dict:
-    """A3 法人共識：單季 EPS 實際 vs 法人預估（cronjob）+ 月營收共識（gidp）。
+    """A3 法人共識：單季 EPS + 月營收 + 年度預估共識 + 各券商 EPS 明細。
 
-    純資料函式（不呼叫 AI，用 async httpx）。兩段各自 best-effort：任一失敗/空
-    不影響另一段。回摘要 dict（只取最新幾期），兩段都空回 error dict。
+    純資料函式（不呼叫 AI，用 async httpx）。四段各自 best-effort：任一失敗/空
+    不影響其他段。回摘要 dict：
+      eps        單季 EPS 實際 vs 法人預估（cronjob）
+      revenue    月營收共識/達成率（gidp）
+      annual     年度預估共識對照（gidp；每年 營收/EPS/本業EPS）
+      broker_eps 法人最新 EPS 明細（gidp；近 90 天，以發布日期區分，逐年 2026E~2030E）
+    四段全空回 error dict。
     """
     symbol = symbol.strip().upper()
     if not symbol:
@@ -544,13 +549,97 @@ async def fetch_eps_consensus(symbol: str, recent: int = 4) -> dict:
     except Exception as e:
         logger.warning("fetch_eps_consensus revenue section failed for %s: %s", symbol, e)
 
-    if not eps_summary and not rev_summary:
+    # --- 年度預估共識對照表（gidp，GIDP token）---
+    # C 表：法人對「每一年」的營收/EPS/本業EPS 預估（歷史+未來年度並排）。
+    # 端點 EPSRevenueConsensusEstimate 三欄：ua50189_cp=營收、ua50187_cp=EPS、
+    # ua50209_cp=本業EPS。與 --dcf 內部同端點，但這裡三欄都取、按年份組表。
+    annual_rows: list[dict] = []
+    try:
+        headers = _auth.gidp_headers()
+        url = f"{GIDP_BASE_URL}/data_fetch/api/EPSRevenueConsensusEstimate/{symbol}"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(url, headers=headers, params={"country": "TW"})
+        if r.status_code == 200:
+            raw = (r.json().get("data") or {}).get("data") or {}
+            rev_y = (raw.get("ua50189_cp") or {}).get("Data") or {}
+            eps_y = (raw.get("ua50187_cp") or {}).get("Data") or {}
+            core_y = (raw.get("ua50209_cp") or {}).get("Data") or {}
+            # 年份鍵可能帶 (f) forecast 後綴，統一去掉再排序（保留原標記於 is_forecast）。
+            years: list[str] = []
+            for d in (rev_y, eps_y, core_y):
+                if isinstance(d, dict):
+                    for y in d.keys():
+                        if y not in years:
+                            years.append(y)
+            for y in sorted(years, key=lambda s: str(s).replace("(f)", "").strip()):
+                annual_rows.append({
+                    "year": str(y).replace("(f)", "").strip(),
+                    "is_forecast": "(f)" in str(y),
+                    "營收": rev_y.get(y),
+                    "EPS": eps_y.get(y),
+                    "本業EPS": core_y.get(y),
+                })
+    except Exception as e:
+        logger.warning("fetch_eps_consensus annual section failed for %s: %s", symbol, e)
+
+    # --- 各家法人 EPS 明細（gidp，GIDP token）---
+    # D 表：法人最新發布的逐年（2026E~2030E）預估 EPS。端點 EPSFilterTableE0001
+    # 回「全市場」以發布日期為鍵，需以 stock_code 過濾本檔；只取近 broker_days 天。
+    # 註：此端點無「發布券商/分析師名」欄位（只有 stock_name），故各筆以「發布日期」
+    # 區分——同股不同日期即不同一份法人預估。
+    broker_rows: list[dict] = []
+    try:
+        headers = _auth.gidp_headers()
+        url = f"{GIDP_BASE_URL}/data_fetch/api/EPSFilterTableE0001"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(url, headers=headers, params={"country": "TW"})
+        if r.status_code == 200:
+            data_dict = (r.json().get("data") or {}).get("data") or {}
+            today = datetime.now()
+            broker_days = 90  # 只取近 90 天內發布的預估（過期的剔除）
+            for date_key, items in (data_dict.items() if isinstance(data_dict, dict) else []):
+                if not isinstance(items, list):
+                    continue
+                try:
+                    if (today - datetime.strptime(date_key, "%Y%m%d")).days > broker_days:
+                        continue
+                except ValueError:
+                    pass
+                for item in items:
+                    if not isinstance(item, dict) or str(item.get("stock_code")) != symbol:
+                        continue
+                    fmt_date = (
+                        f"{date_key[:4]}/{date_key[4:6]}/{date_key[6:]}"
+                        if len(date_key) == 8 else date_key
+                    )
+
+                    def _eps(field: str) -> str:
+                        raw_v = str(item.get(field, "") or "").split(",")[0].strip()
+                        return raw_v if raw_v else "-"
+
+                    broker_rows.append({
+                        "date": fmt_date,
+                        "2026E": _eps("uae10193_cp"),
+                        "2027E": _eps("uae10194_cp"),
+                        "2028E": _eps("uae10195_cp"),
+                        "2029E": _eps("uae10196_cp"),
+                        "2030E": _eps("uae10197_cp"),
+                    })
+            broker_rows.sort(key=lambda x: x["date"], reverse=True)
+    except Exception as e:
+        logger.warning("fetch_eps_consensus broker section failed for %s: %s", symbol, e)
+
+    if not eps_summary and not rev_summary and not annual_rows and not broker_rows:
         return {"error": f"查無 {symbol} 的法人共識資料"}
 
     if eps_summary:
         result["eps"] = eps_summary
     if rev_summary:
         result["revenue"] = rev_summary
+    if annual_rows:
+        result["annual"] = annual_rows
+    if broker_rows:
+        result["broker_eps"] = broker_rows
     return result
 
 
