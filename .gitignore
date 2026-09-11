@@ -13,6 +13,10 @@ config.toml
 
 .env
 
+# broker reports（Google Drive OAuth 機密，切勿 commit）
+credentials.json
+token.json
+
 # 執行期資料（訂閱清單、已推 ID）
 data/
 

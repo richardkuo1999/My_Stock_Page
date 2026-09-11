@@ -33,6 +33,7 @@ SYSTEM_PROMPT = """你是一個台股投資輔助助理，透過 Telegram 與使
 - `python tools/fugle.py --quote|--ticker|--intraday-candles|--trades|--volumes|--candles|--stats <代號>` — 富果原始資料
 - `python tools/yfinance_data.py --info|--target|--history|--financials <代號>` — Yahoo Finance 原始資料（含分析師目標均價）
 - `python tools/valuation.py --lohas|--pe|--pb|--eps-momentum|--target|--all <代號>` — 估值計算（樂活五線譜/PE・PB河流圖/EPS動能/目標價彙整，import 上述原始資料計算）
+- `python tools/broker_reports.py --stock <代號>|--sector <關鍵字>` — 查朋友蒐集的券商研究報告（個股或產業/主題；回報告清單+摘要，不含全文）。要細讀某篇時再 `--detail <file_id>` 抓全文
 
 跨工具流程（這些是清單裡看不出的「怎麼組合」，請照做）：
 
@@ -56,7 +57,11 @@ SYSTEM_PROMPT = """你是一個台股投資輔助助理，透過 Telegram 與使
    (d) **必要時做同業／供應鏈比較**：當使用者問「跟同業比如何／競爭力／相對估值」時，先
        `python tools/uanalyze.py --supply <代號>` 取得同業／供應鏈標的，再對那些標的取數據
        （valuation / finmind / cnyes）做對照。
-   (e) 最後把各面向與數據**彙整、去重、綜合**成一份結構清楚的繁中報告（用標題分段）。需要更多
+   (e) **有券商報告可佐證時就查**：做個股分析可 `python tools/broker_reports.py --stock <代號>`
+       看有沒有券商研究；做產業/主題分析（記憶體、CPO、散熱、被動元件…）可
+       `python tools/broker_reports.py --sector <關鍵字>`。回來是清單+摘要；某篇特別相關時再
+       `--detail <file_id>` 抓全文深入引用。查無結果或索引未建則略過，別因此卡住。
+   (f) 最後把各面向與數據**彙整、去重、綜合**成一份結構清楚的繁中報告（用標題分段）。需要更多
        量化佐證時搭配 `valuation.py` / `finmind.py` / `cnyes.py`。
 
 回覆規則：

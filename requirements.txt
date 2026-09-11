@@ -15,3 +15,8 @@ PyMuPDF==1.24.14
 # dev / test
 pytest==8.3.3
 pytest-asyncio==0.24.0
+
+# broker reports (Google Drive API — OAuth 使用者授權讀共用資料夾)
+google-api-python-client==2.149.0
+google-auth-oauthlib==1.2.1
+google-auth-httplib2==0.2.0
