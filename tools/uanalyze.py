@@ -1,10 +1,27 @@
-"""uanalyze — UAnalyze AI 估值分析
-用法: python tools/uanalyze.py SYMBOL [--prompt PROMPT]
-     python tools/uanalyze.py --multi SYMBOL --prompts a,b,c [--concurrency N]
-     python tools/uanalyze.py --reports [--limit N]
-回傳: JSON {"analysis": str}
-   或 --multi: {"symbol","requested","ok","failed","results":{面向: {analysis|error}}}
-   或 {"reports": [{id, stock_code, stock_name, title, date, summary}]}
+"""uanalyze — UAnalyze AI 估值分析 + 純數據查詢
+用法（AI 分析）:
+     python tools/uanalyze.py SYMBOL [--prompt PROMPT]        # 單一面向 AI 分析
+     python tools/uanalyze.py --multi SYMBOL --prompts a,b,c [--concurrency N]  # 並行多面向
+用法（純數據，不呼叫 AI）:
+     python tools/uanalyze.py --reports [--limit N]           # 全站最新研究報告清單
+     python tools/uanalyze.py --consensus SYMBOL              # 法人共識（單季 EPS + 月營收）
+     python tools/uanalyze.py --pershare SYMBOL               # 每股財務指標（FCF/EPS/ROE/ROIC…）
+     python tools/uanalyze.py --supply SYMBOL                 # 同業／供應鏈對照標的清單
+     python tools/uanalyze.py --order SYMBOL                  # 訂單能見度 + 合約負債（資料稀疏）
+     python tools/uanalyze.py --fundamentals SYMBOL           # 即時基本面（收盤/漲跌/本益比…；無資料回 {}）
+     python tools/uanalyze.py --dcf SYMBOL                    # 時間加權動態 DCF 估值（純計算）
+     python tools/uanalyze.py --transcript SYMBOL [id 或 date]  # 法說會逐字稿（無 selector 列清單，有則回摘要）
+回傳: 一律 JSON。
+   預設:         {"analysis": str, "prompt", "symbol"}
+   --multi:      {"symbol","requested","ok","failed","results":{面向: {analysis|error}}}
+   --reports:    {"reports": [{id, stock_code, stock_name, title, date, summary}]}
+   --consensus:  {"symbol","eps":{…},"revenue":{…}}
+   --pershare:   {"symbol","metrics":[{name, values:{年份: 值}}]}
+   --supply:     {"symbol","peers":[代號…]}
+   --order:      {"symbol","order_visibility"?,"contract_liability"?}
+   --dcf:        {"symbol","每股合理內在價值","1年後前瞻合理價值","信心度",…}
+   --transcript: 清單 {"symbol","transcripts":[{date,id}]} 或摘要 {id,title,date,字數,摘要}
+   查無資料/失敗一律回 {"error": str}（--fundamentals 例外，best-effort 回 {}）。
 
 面向清單（--prompt / --multi 用）見 UA_PROMPTS（DEFAULT_PROMPT 之後）。--multi 由
 呼叫端自行選面向並以逗號傳入，內部並行跑（預設同時 4 個），單一面向失敗不影響其他。
@@ -1213,7 +1230,8 @@ if __name__ == "__main__":
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(0)
 
-    if args[0] == "--dcf":        # A5 時間加權動態 DCF 估值摘要（Agent 用；純計算，不呼叫 AI）。
+    if args[0] == "--dcf":
+        # A5 時間加權動態 DCF 估值摘要（Agent 用；純計算，不呼叫 AI）。
         try:
             sym = args[1]
         except IndexError:
