@@ -409,7 +409,15 @@ _CREDENTIALS_PATH = os.getenv("BROKER_DRIVE_CREDENTIALS", "credentials.json")
 _TOKEN_PATH = os.getenv("BROKER_DRIVE_TOKEN", "token.json")
 
 # 頂層要跳過的資料夾名（大小寫不敏感比對）。
-_SKIP_TOP = {"_archive", "_unsorted", "us_stocks", "cn_stocks", "jp_stocks", "kr_stocks"}
+# 只跳過「封存」與「未分類」——它們不是正式分類好的報告。各地區個股
+# （tw/us/cn/jp/kr_stocks）全部納入（使用者選 C：個股不限台股）。
+_SKIP_TOP = {"_archive", "_unsorted"}
+
+# 個股地區資料夾名 → 地區碼（存入 stock 列的 category 欄，供查詢時區分 TW/US…）。
+_STOCK_REGION_FOLDERS = {
+    "tw_stocks": "TW", "us_stocks": "US", "cn_stocks": "CN",
+    "jp_stocks": "JP", "kr_stocks": "KR",
+}
 
 
 def _load_creds():
@@ -539,8 +547,10 @@ def _pair_files_to_reports(files: list[dict], scope: str, stock=None) -> list[Re
 def drive_sync(db_path: str = DEFAULT_DB_PATH) -> dict:
     """列 Drive → 解析 → 重建/更新本地 metadata 索引。回摘要 dict。
 
-    走訪 tw_stocks/<代號-名>/、sector/、Digitimes/，跳過 _SKIP_TOP 與 zip。
-    不下載任何內文，只記 metadata + file_id。回 {indexed, stock, sector, ...}。
+    走訪各地區個股資料夾（tw/us/cn/jp/kr_stocks）/<代號-名>/、sector/、Digitimes/，
+    只跳過 _SKIP_TOP（_archive/_unsorted）與 zip。stock 列的 category 記地區碼。
+    不下載任何內文，只記 metadata + file_id。回 {indexed, stock, stock_by_region,
+    sector, ...}。
     """
     try:
         creds = _load_creds()
@@ -554,12 +564,11 @@ def drive_sync(db_path: str = DEFAULT_DB_PATH) -> dict:
     top = _list_children(service, _ROOT_FOLDER_ID)
     top_by_name = {t["name"]: t for t in top}
 
-    # 1) tw_stocks/<代號-名>/ — 每個子資料夾一檔股票。
-    #    瓶頸：426 個資料夾各需一次 Drive 列檔往返。改用執行緒池「並行」列檔，
-    #    把總時間從「426×往返」壓成約「426÷併發×往返」。
-    #    執行緒安全：googleapiclient 的 service（內含單一 http 連線）非執行緒安全，
-    #    故每執行緒用 thread-local 各自 _build_service(creds)（共用同一份 OAuth
-    #    憑證，但各自的 http 連線）。併發數保守設 16，避免觸發 Drive 讀取速率限制。
+    # 1) 各地區個股資料夾（tw/us/cn/jp/kr_stocks）/<代號-名>/ — 每子資料夾一檔股票。
+    #    把所有地區的個股子資料夾收成一批一起並行列檔（總數約數百，各需一次 Drive
+    #    列檔往返）。執行緒安全：googleapiclient 的 service 非執行緒安全，故每執行緒
+    #    用 thread-local 各自 _build_service(creds)（共用憑證、各自 http）。併發 16
+    #    保守避免觸發 Drive 讀取速率限制。stock 列的 category 欄記地區碼（TW/US…）。
     from concurrent.futures import ThreadPoolExecutor
     import threading
 
@@ -572,23 +581,33 @@ def drive_sync(db_path: str = DEFAULT_DB_PATH) -> dict:
             _tls.svc = svc
         return svc
 
-    tw = top_by_name.get("tw_stocks")
+    # 收集 (子資料夾, 地區碼)，跨所有地區個股資料夾。
+    stock_tasks: list[tuple[dict, str]] = []
+    for folder_name, region in _STOCK_REGION_FOLDERS.items():
+        node = top_by_name.get(folder_name)
+        if node and node.get("mimeType") == _FOLDER_MIME:
+            for sub in _list_children(service, node["id"]):
+                if sub.get("mimeType") == _FOLDER_MIME:
+                    stock_tasks.append((sub, region))
+
     stock_count = 0
-    if tw and tw.get("mimeType") == _FOLDER_MIME:
-        subfolders = [
-            s for s in _list_children(service, tw["id"])
-            if s.get("mimeType") == _FOLDER_MIME
-        ]
+    by_region: dict[str, int] = {}
 
-        def _one_stock(sub: dict) -> list[ReportMeta]:
-            code, name = parse_stock_folder(sub["name"])
-            files = _list_children(_thread_service(), sub["id"])
-            return _pair_files_to_reports(files, scope="stock", stock=(code, name))
+    def _one_stock(task: tuple[dict, str]) -> tuple[str, list[ReportMeta]]:
+        sub, region = task
+        code, name = parse_stock_folder(sub["name"])
+        files = _list_children(_thread_service(), sub["id"])
+        reps = _pair_files_to_reports(files, scope="stock", stock=(code, name))
+        for m in reps:
+            m.category = region  # 地區碼（TW/US/CN/JP/KR）
+        return region, reps
 
+    if stock_tasks:
         with ThreadPoolExecutor(max_workers=16) as pool:
-            for reps in pool.map(_one_stock, subfolders):
+            for region, reps in pool.map(_one_stock, stock_tasks):
                 all_reports.extend(reps)
                 stock_count += len(reps)
+                by_region[region] = by_region.get(region, 0) + len(reps)
 
     # 2) sector/ 與 Digitimes/ — 扁平檔案，scope=sector（各一次列檔，無需並行）
     sector_count = 0
@@ -604,6 +623,7 @@ def drive_sync(db_path: str = DEFAULT_DB_PATH) -> dict:
     return {
         "indexed": indexed,
         "stock": stock_count,
+        "stock_by_region": by_region,
         "sector": sector_count,
         "skipped_top": sorted(_SKIP_TOP),
     }
