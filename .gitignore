@@ -8,6 +8,7 @@ __pycache__
 .gemini/
 his.txt
 log.txt
+*.log
 test_lohas*.py
 config.toml
 
