@@ -368,7 +368,7 @@ def test_setup_scheduler_default_interval():
 
     scheduler = setup_scheduler(bot, mgr, bridge, {})
     jobs = scheduler.get_jobs()
-    assert len(jobs) == 4  # news + uanalyze + stock_pool_refresh + log_audit
+    assert len(jobs) == 5  # news + uanalyze + stock_pool_refresh + log_audit + broker_reports_sync
     news_job = next(j for j in jobs if j.id == "news_push")
     # Interval trigger
     trigger = news_job.trigger
@@ -376,6 +376,9 @@ def test_setup_scheduler_default_interval():
     # Log audit job registered with default 1440-min (daily) interval.
     audit_job = next(j for j in jobs if j.id == "log_audit")
     assert audit_job.trigger.interval == timedelta(minutes=1440)
+    # Broker reports sync registered with default 60-min (hourly) interval.
+    broker_job = next(j for j in jobs if j.id == "broker_reports_sync")
+    assert broker_job.trigger.interval == timedelta(minutes=60)
 
 
 def test_setup_scheduler_custom_interval():

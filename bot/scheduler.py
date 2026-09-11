@@ -384,6 +384,28 @@ async def stock_pool_refresh_job() -> None:
         logger.warning("Stock pool refresh failed: %s", e)
 
 
+async def broker_reports_sync_job() -> None:
+    """Scheduled job: refresh the local broker-report metadata index from Drive.
+
+    drive_sync() 是同步、會阻塞（實測約 18s，並行列 Drive 檔）；用 asyncio.to_thread
+    丟到執行緒跑，避免卡住事件迴圈。缺憑證/套件時 drive_sync 回 {'error':...}（不丟例外），
+    這裡記 warning 略過即可——排程照樣下小時再試。"""
+    from tools.broker_reports import drive_sync
+
+    logger.info("Broker reports sync job started")
+    try:
+        result = await asyncio.to_thread(drive_sync)
+        if "error" in result:
+            logger.warning("Broker reports sync skipped: %s", result["error"])
+        else:
+            logger.info(
+                "Broker reports synced: indexed=%s (stock=%s, sector=%s)",
+                result.get("indexed"), result.get("stock"), result.get("sector"),
+            )
+    except Exception as e:  # noqa: BLE001 — 排程 job 不因單次失敗中斷後續排程
+        logger.warning("Broker reports sync failed: %s", e)
+
+
 def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict, notifier=None) -> AsyncIOScheduler:
     """Create and configure the APScheduler with news and UAnalyze push jobs."""
     from datetime import datetime as _dt
@@ -402,6 +424,21 @@ def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict, notif
         id="stock_pool_refresh",
         name="Stock Pool Refresh",
         misfire_grace_time=3600,
+        next_run_time=_dt.now(),
+    )
+
+    # Broker report index: refresh from Drive on an interval (default hourly),
+    # plus a one-shot run shortly after startup so the index is current on boot.
+    # drive_sync() self-handles missing credentials/deps (logs + skips), so this
+    # is safe to register unconditionally — it just no-ops until OAuth is set up.
+    broker_sync_interval = config.get("broker_sync_interval_min", 60)
+    scheduler.add_job(
+        broker_reports_sync_job,
+        "interval",
+        minutes=broker_sync_interval,
+        id="broker_reports_sync",
+        name="Broker Reports Sync",
+        misfire_grace_time=600,
         next_run_time=_dt.now(),
     )
 
@@ -475,9 +512,10 @@ def setup_scheduler(bot, subscription_manager, agent_bridge, config: dict, notif
         )
 
     logger.info(
-        "Scheduler configured: news=%dmin, uanalyze=%dmin, log_audit=%dmin",
+        "Scheduler configured: news=%dmin, uanalyze=%dmin, log_audit=%dmin, broker_sync=%dmin",
         news_interval,
         uanalyze_interval,
         log_audit_interval,
+        broker_sync_interval,
     )
     return scheduler
