@@ -24,6 +24,7 @@ from tools.uanalyze import (
     fetch_company_keywords,
     fetch_dividend_policy,
     fetch_ai_chat,
+    fetch_forecast_route,
     fetch_holder_structure,
     fetch_institutional_chips,
     fetch_margin_trading,
@@ -31,6 +32,7 @@ from tools.uanalyze import (
     fetch_peers_comparison,
     fetch_per_share_metrics,
     fetch_profit_margins,
+    fetch_smart_estimate,
     fetch_supply_chain,
     fetch_transcript_detail,
     fetch_transcript_list,
@@ -2451,4 +2453,211 @@ async def test_fetch_company_keywords_no_token():
     """登入失敗 → error dict。"""
     with patch.dict("os.environ", {"UANALYZE_EMAIL": "", "UANALYZE_PASSWORD": ""}):
         result = await fetch_company_keywords("台積電")
+    assert "error" in result
+
+
+# --- fetch_smart_estimate() tests (A20 前瞻共識) ---
+
+
+def _smart_payload(avg, low, high, label):
+    """Mimic gidp ReutersSmartEstimate_*: 三欄(平均/最低/最高)，年度 (f) key。"""
+    return {
+        "data": {
+            "data": {
+                "refinitiv_1": {"ChineseAccount": f"{label}平均值", "Data": avg},
+                "refinitiv_2": {"ChineseAccount": f"{label}最低值", "Data": low},
+                "refinitiv_3": {"ChineseAccount": f"{label}最高值", "Data": high},
+            }
+        }
+    }
+
+
+def _smart_client_router():
+    """Route each gidp SmartEstimate endpoint; EPS 有值、其餘回空以測容錯。"""
+    eps = _smart_payload(
+        {"2027(f)": 150.0, "2028(f)": 181.38},
+        {"2027(f)": 140.0, "2028(f)": 149.76},
+        {"2027(f)": 160.0, "2028(f)": 210.6},
+        "每股盈餘EPS",
+    )
+    empty = {"data": {"data": {}}}
+
+    def _make_get():
+        async def _get(url, *args, **kwargs):
+            if "ReutersSmartEstimate_EPS" in url:
+                return _make_httpx_response(200, eps)
+            return _make_httpx_response(200, empty)
+        return _get
+
+    def _factory(**kwargs):
+        client = AsyncMock()
+        client.get = _make_get()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        return client
+
+    return _factory
+
+
+@pytest.mark.asyncio
+async def test_fetch_smart_estimate_success():
+    """EPS 段解析出年度平均/最低/最高（含 (f) 年）；空段被略過。"""
+    _auth.access_token = "tok"
+
+    with patch("httpx.AsyncClient", side_effect=_smart_client_router()):
+        result = await fetch_smart_estimate("2330")
+
+    assert result["symbol"] == "2330"
+    assert "EPS" in result["estimates"]
+    last = result["estimates"]["EPS"][-1]
+    assert last["year"] == "2028(f)"
+    assert last["平均"] == 181.38
+    assert last["最低"] == 149.76
+    assert last["最高"] == 210.6
+
+
+@pytest.mark.asyncio
+async def test_fetch_smart_estimate_empty_string_to_none():
+    """未來太遠年份的空字串轉 None（_clean_num）。"""
+    _auth.access_token = "tok"
+    eps = _smart_payload(
+        {"2029(f)": "", "2028(f)": 100.0},
+        {"2029(f)": "", "2028(f)": 90.0},
+        {"2029(f)": "", "2028(f)": 110.0},
+        "每股盈餘EPS",
+    )
+
+    def _factory(**kwargs):
+        client = AsyncMock()
+
+        async def _get(url, *a, **k):
+            if "ReutersSmartEstimate_EPS" in url:
+                return _make_httpx_response(200, eps)
+            return _make_httpx_response(200, {"data": {"data": {}}})
+        client.get = _get
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        return client
+
+    with patch("httpx.AsyncClient", side_effect=_factory):
+        result = await fetch_smart_estimate("2330")
+
+    last = result["estimates"]["EPS"][-1]  # 2029(f)
+    assert last["year"] == "2029(f)"
+    assert last["平均"] is None  # 空字串 → None
+
+
+@pytest.mark.asyncio
+async def test_fetch_smart_estimate_all_empty():
+    """全部端點空 → error dict。"""
+    _auth.access_token = "tok"
+
+    def _factory(**kwargs):
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_make_httpx_response(200, {"data": {"data": {}}}))
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        return client
+
+    with patch("httpx.AsyncClient", side_effect=_factory):
+        result = await fetch_smart_estimate("9999")
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_smart_estimate_no_token():
+    with patch.dict("os.environ", {"UANALYZE_EMAIL": "", "UANALYZE_PASSWORD": ""}):
+        result = await fetch_smart_estimate("2330")
+    assert "error" in result
+
+
+# --- fetch_forecast_route() tests (A21 前瞻共識) ---
+
+
+def _route_payload():
+    return {
+        "data": {
+            "data": {
+                "ua50225_cp": {"ChineseAccount": "未來五季營收預估路徑",
+                               "Data": {"2027Q2(f)": 1758079, "2027Q3(f)": 1925470}},
+                "ua50224_cp": {"ChineseAccount": "未來五季EPS預估路徑",
+                               "Data": {"2027Q2(f)": 34.19, "2027Q3(f)": 38.01}},
+            }
+        }
+    }
+
+
+def _rating_payload():
+    return {
+        "data": {
+            "data": {
+                "ua70232_cp": {"ChineseAccount": "樂觀評等佔比", "Data": {"202608": 88.24, "202609": 88.18}},
+                "ua70233_cp": {"ChineseAccount": "中立評等佔比", "Data": {"202608": 11.76, "202609": 11.82}},
+                "ua70234_cp": {"ChineseAccount": "悲觀評等佔比", "Data": {"202608": 0.0, "202609": 0.0}},
+                "ua70001_cp": {"ChineseAccount": "月收盤價", "Data": {"202608": 2405.0, "202609": 2410.0}},
+            }
+        }
+    }
+
+
+def _forecast_client_router(route_payload, margin_payload, rating_payload):
+    def _resp(p):
+        return _make_httpx_response(200, p) if p is not None else _make_httpx_response(500, {})
+
+    def _factory(**kwargs):
+        client = AsyncMock()
+
+        async def _get(url, *a, **k):
+            if "QEPSRevenueConsensusEstimateRoute" in url:
+                return _resp(route_payload)
+            if "QMargingsConsensusEstimateRoute" in url:
+                return _resp(margin_payload)
+            return _resp(rating_payload)
+        client.get = _get
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        return client
+
+    return _factory
+
+
+@pytest.mark.asyncio
+async def test_fetch_forecast_route_success():
+    """路徑 + 評等趨勢都解析出來。"""
+    _auth.access_token = "tok"
+    factory = _forecast_client_router(_route_payload(), {"data": {"data": {}}}, _rating_payload())
+    with patch("httpx.AsyncClient", side_effect=factory):
+        result = await fetch_forecast_route("2330")
+
+    assert result["symbol"] == "2330"
+    assert "未來五季EPS預估路徑" in result["route"]
+    assert result["route"]["未來五季EPS預估路徑"][-1] == {"period": "2027Q3(f)", "value": 38.01}
+    assert result["rating_trend"][-1]["樂觀"] == 88.18
+    assert result["rating_trend"][-1]["收盤價"] == 2410.0
+
+
+@pytest.mark.asyncio
+async def test_fetch_forecast_route_route_only():
+    """評等端點掛掉 → 仍回 route 段。"""
+    _auth.access_token = "tok"
+    factory = _forecast_client_router(_route_payload(), {"data": {"data": {}}}, None)
+    with patch("httpx.AsyncClient", side_effect=factory):
+        result = await fetch_forecast_route("2330")
+    assert "route" in result
+    assert "rating_trend" not in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_forecast_route_all_empty():
+    _auth.access_token = "tok"
+    factory = _forecast_client_router(None, None, None)
+    with patch("httpx.AsyncClient", side_effect=factory):
+        result = await fetch_forecast_route("9999")
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_forecast_route_no_token():
+    with patch.dict("os.environ", {"UANALYZE_EMAIL": "", "UANALYZE_PASSWORD": ""}):
+        result = await fetch_forecast_route("2330")
     assert "error" in result

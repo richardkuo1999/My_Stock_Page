@@ -144,7 +144,7 @@ AI 呼叫失敗時不推進游標，下一輪會重試同一區間。讀 `bot.lo
 
 - **快捷 / 即時**：`get_stock_price.py`（即時股價）、`draw_kchart.py`（K 線圖）、`draw_intraday_chart.py`（盤中分時圖）
 - **新聞 / 文件**：`fetch_news.py`（15 來源新聞 + 單篇全文）、`summarize_document.py`（URL/PDF 擷取）、`broker_reports.py`（券商研究報告）
-- **UAnalyze**：`uanalyze.py`（AI 分析 + AI 知識庫問答 + 批次雷達 + 20 餘種純數據：基本面/法人共識/每股指標/供應鏈/訂單/DCF/PE-PB/三大法人/三率/現金流/股利/同業比較/融資融券/籌碼結構/法說會逐字稿…）、`dcf_to_csv.py`（DCF 批次輸出 CSV）
+- **UAnalyze**：`uanalyze.py`（AI 分析 + AI 知識庫問答 + 批次雷達 + 20 餘種純數據：基本面/法人共識/每股指標/供應鏈/訂單/DCF/PE-PB/三大法人/三率/現金流/股利/同業比較/融資融券/籌碼結構/法人前瞻預估/預估路徑/法說會逐字稿…）、`dcf_to_csv.py`（DCF 批次輸出 CSV）
 - **原始資料源**：`cnyes.py`、`finmind.py`、`fugle.py`、`yfinance_data.py`（各家 API 各做成獨立 function，供 Agent 按需呼叫 / 被 `valuation.py` import）
 - **估值計算**：`valuation.py`（樂活五線譜 / PE-PB 河流圖 / EPS 動能 / 目標價彙整，不打 API、import 上面 raw-data 工具算）
 - **資料工具**：`lookup_stock_name.py`（代號 ↔ 公司名對照表）
@@ -189,7 +189,7 @@ source .venv/bin/activate
 python -m pytest tests/ -q
 ```
 
-目前 **539 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
+目前 **549 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
 
 ### 端到端驗證現況
 
@@ -225,5 +225,5 @@ agent/
 └── conversation_log.py # /ask 對話記錄
 tools/                  # 15 個工具 script（CLI + import 雙入口，能力清單見 tools/README.md）
 data/                   # 執行期 JSON + 日誌
-tests/                  # 539 個測試
+tests/                  # 549 個測試
 ```

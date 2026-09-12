@@ -481,7 +481,7 @@ async def test_data_command_no_arg(context):
 
 
 def test_data_menu_keyboard_options():
-    """Menu keyboard has all thirteen data buttons with data: callbacks."""
+    """Menu keyboard has all fifteen data buttons with data: callbacks."""
     from bot.handlers import _data_menu_keyboard
 
     kb = _data_menu_keyboard("2330").inline_keyboard
@@ -500,7 +500,9 @@ def test_data_menu_keyboard_options():
     assert "data:2330:peers" in callbacks
     assert "data:2330:margin" in callbacks
     assert "data:2330:holders" in callbacks
-    assert len(flat) == 13
+    assert "data:2330:smart_estimate" in callbacks
+    assert "data:2330:forecast_route" in callbacks
+    assert len(flat) == 15
 
 
 @pytest.mark.asyncio
@@ -909,6 +911,56 @@ async def test_data_callback_holders(context):
     calls = update.callback_query.edit_message_text.call_args_list
     assert any("籌碼結構" in c.args[0] for c in calls)
     assert any("13.22" in c.args[0] for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_data_callback_smart_estimate(context):
+    """Pressing 法人預估 calls fetch_smart_estimate and renders the estimates table."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:2330:smart_estimate"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    fake = {
+        "symbol": "2330",
+        "unit_note": "營收為千元…",
+        "estimates": {"EPS": [{"year": "2028(f)", "平均": 181.38, "最低": 149.76, "最高": 210.6}]},
+    }
+    with patch("tools.uanalyze.fetch_smart_estimate", new=AsyncMock(return_value=fake)) as mock_fn:
+        await data_callback(update, context)
+
+    mock_fn.assert_awaited_once_with("2330")
+    calls = update.callback_query.edit_message_text.call_args_list
+    assert any("前瞻預估" in c.args[0] for c in calls)
+    assert any("181.38" in c.args[0] for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_data_callback_forecast_route(context):
+    """Pressing 預估路徑 calls fetch_forecast_route and renders route + rating."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:2330:forecast_route"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    fake = {
+        "symbol": "2330",
+        "route": {"未來五季EPS預估路徑": [{"period": "2027Q3(f)", "value": 38.01}]},
+        "rating_trend": [{"month": "202609", "樂觀": 88.18, "中立": 11.82, "悲觀": 0.0, "收盤價": 2410.0}],
+    }
+    with patch("tools.uanalyze.fetch_forecast_route", new=AsyncMock(return_value=fake)) as mock_fn:
+        await data_callback(update, context)
+
+    mock_fn.assert_awaited_once_with("2330")
+    calls = update.callback_query.edit_message_text.call_args_list
+    assert any("預估路徑" in c.args[0] for c in calls)
+    assert any("88.18" in c.args[0] for c in calls)
 
 
 @pytest.mark.asyncio

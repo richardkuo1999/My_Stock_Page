@@ -21,6 +21,8 @@
      python tools/uanalyze.py --transcript SYMBOL [id 或 date]  # 法說會逐字稿（無 selector 列清單，有則回全文）
      python tools/uanalyze.py --ask SYMBOL "問題" [general|knowledge|teacher]  # AI 知識庫問答（串流收集成完整答案）
      python tools/uanalyze.py --radar 關鍵字 [types]         # 批次雷達（多類全站資料，落地成檔回路徑+摘要；可數十MB）
+     python tools/uanalyze.py --smart-estimate SYMBOL       # 前瞻共識：法人預估EPS/營收/毛利率/淨利/資本支出/股息（平均/最低/最高，年度）
+     python tools/uanalyze.py --forecast-route SYMBOL       # 前瞻共識：未來五季營收/EPS/毛利率/營益率預估路徑 + 分析師評等佔比趨勢
 回傳: 一律 JSON。
    預設:         {"analysis": str, "prompt", "symbol"}
    --multi:      {"symbol","requested","ok","failed","results":{面向: {analysis|error}}}
@@ -41,6 +43,8 @@
    --transcript: 清單 {"symbol","transcripts":[{date,id}]} 或全文 {id,title,date,stock,字數,transcript}
    --ask:        {"symbol","question","knowledge_base","answer"}
    --radar:      {"keyword","types","file","bytes","summary":{類別: 筆數}}（內容寫檔，不整包回傳）
+   --smart-estimate: {"symbol","unit_note","estimates":{"EPS":[{year,平均,最低,最高}],"營收":[…],…}}
+   --forecast-route: {"symbol","route":{"未來五季EPS預估路徑":[{period,value}],…},"rating_trend":[{month,樂觀,中立,悲觀,收盤價}]}
    查無資料/失敗一律回 {"error": str}（--fundamentals 例外，best-effort 回 {}）。
 
 面向清單（--prompt / --multi 用）見 UA_PROMPTS（DEFAULT_PROMPT 之後）。--multi 由
@@ -2165,6 +2169,214 @@ async def fetch_company_keywords(keyword: str, types: str = DEFAULT_RADAR_TYPES)
     }
 
 
+# ── A20 前瞻共識：Reuters SmartEstimate 法人預估（gidp，country=TW）───────────
+# 沿用既有 gidp 模式（gidp_headers() + params country=TW），不碰 DCF 取數路徑。
+# 每項端點回 3 欄（平均/最低/最高值），年度 key 帶 (f) 後綴（如 2027(f)）。
+
+# SmartEstimate 端點 → 中文短名。全部 gidp domain（cronjob 亦有部分，但 gidp 版齊全）。
+_SMART_ESTIMATE_ENDPOINTS: dict[str, str] = {
+    "ReutersSmartEstimate_EPS": "EPS",
+    "ReutersSmartEstimate_Revenue": "營收",
+    "ReutersSmartEstimate_GrossMargin": "毛利率",
+    "ReutersSmartEstimate_EBIT": "EBIT",
+    "ReutersSmartEstimate_EBITDA": "EBITDA",
+    "ReutersSmartEstimate_NetIncome": "稅後淨利",
+    "ReutersSmartEstimate_Capex": "資本支出",
+    "ReutersSmartEstimate_DividendPerShare": "每股股息",
+}
+
+
+def _clean_num(v: object) -> float | None:
+    """SmartEstimate 未來太遠年份常為空字串，轉 None；數字原樣。"""
+    if isinstance(v, (int, float)):
+        return v
+    if isinstance(v, str) and v.strip():
+        try:
+            return float(v)
+        except ValueError:
+            return None
+    return None
+
+
+async def fetch_smart_estimate(symbol: str, recent: int = 5) -> dict:
+    """A20 前瞻共識：Reuters（Refinitiv）法人預估的平均/最低/最高值（純資料）。
+
+    並行抓 8 個 gidp SmartEstimate 端點（EPS/營收/毛利率/EBIT/EBITDA/淨利/資本支出/
+    股息），各取最近 recent 個年度（含未來 (f) 預估年）。
+
+    Returns:
+      {
+        "symbol", "unit_note",
+        "estimates": {"EPS": [{"year","平均","最低","最高"}, ...], "營收": [...], ...},
+      }
+    全空回 {"error": ...}。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {"error": "請輸入股票代號"}
+    if not await _auth.ensure_token():
+        return {"error": "UAnalyze 登入失敗（請確認 UANALYZE_EMAIL / UANALYZE_PASSWORD）"}
+
+    headers = _auth.gidp_headers()
+
+    async def _get(endpoint: str) -> tuple[str, dict | None]:
+        try:
+            url = f"{GIDP_BASE_URL}/data_fetch/api/{endpoint}/{symbol}"
+            async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+                r = await client.get(url, headers=headers, params={"country": "TW"})
+            if r.status_code == 200:
+                return endpoint, r.json()
+        except Exception as e:
+            logger.warning("fetch_smart_estimate %s failed for %s: %s", endpoint, symbol, e)
+        return endpoint, None
+
+    results = await asyncio.gather(*[_get(ep) for ep in _SMART_ESTIMATE_ENDPOINTS])
+
+    estimates: dict = {}
+    for endpoint, payload in results:
+        label = _SMART_ESTIMATE_ENDPOINTS[endpoint]
+        if not payload:
+            continue
+        rows = (payload.get("data") or {}).get("data") or {}
+        if not isinstance(rows, dict):
+            continue
+        # refinitiv_1=平均, _2=最低, _3=最高（依 ChineseAccount 判斷更穩）。
+        avg = low = high = {}
+        for row in rows.values():
+            if not isinstance(row, dict):
+                continue
+            nm = row.get("ChineseAccount", "")
+            data_map = row.get("Data", {})
+            if "平均" in nm:
+                avg = data_map
+            elif "最低" in nm:
+                low = data_map
+            elif "最高" in nm:
+                high = data_map
+        years = sorted(set(avg) | set(low) | set(high))[-recent:]
+        series = [
+            {
+                "year": y,
+                "平均": _clean_num(avg.get(y)),
+                "最低": _clean_num(low.get(y)),
+                "最高": _clean_num(high.get(y)),
+            }
+            for y in years
+        ]
+        if series:
+            estimates[label] = series
+
+    if not estimates:
+        return {"error": f"查無 {symbol} 的法人前瞻預估資料"}
+    return {
+        "symbol": symbol,
+        "unit_note": "營收/EBIT/EBITDA/淨利為千元；EPS/每股股息為元；毛利率為 %；(f) 為預估年度",
+        "estimates": estimates,
+    }
+
+
+# ── A21 前瞻共識：未來五季預估路徑 + 評等佔比趨勢（gidp，country=TW）──────────
+
+
+async def fetch_forecast_route(symbol: str, recent: int = 6) -> dict:
+    """A21 未來五季 營收/EPS/毛利率/營益率 預估路徑 + 分析師評等佔比趨勢（純資料）。
+
+    Returns:
+      {
+        "symbol",
+        "route": {"未來五季營收預估路徑":[{"period","value"}], "未來五季EPS預估路徑":[...],
+                  "未來五季毛利率預估路徑":[...], "未來五季營業利益率預估路徑":[...]},
+        "rating_trend": [{"month","樂觀","中立","悲觀","收盤價"}, ...],  # 近 recent 月
+      }
+    全空回 {"error": ...}。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {"error": "請輸入股票代號"}
+    if not await _auth.ensure_token():
+        return {"error": "UAnalyze 登入失敗（請確認 UANALYZE_EMAIL / UANALYZE_PASSWORD）"}
+
+    headers = _auth.gidp_headers()
+
+    async def _get(endpoint: str) -> dict | None:
+        try:
+            url = f"{GIDP_BASE_URL}/data_fetch/api/{endpoint}/{symbol}"
+            async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+                r = await client.get(url, headers=headers, params={"country": "TW"})
+            if r.status_code == 200:
+                return r.json()
+        except Exception as e:
+            logger.warning("fetch_forecast_route %s failed for %s: %s", endpoint, symbol, e)
+        return None
+
+    eps_rev_json, margin_json, rating_json = await asyncio.gather(
+        _get("QEPSRevenueConsensusEstimateRoute"),
+        _get("QMargingsConsensusEstimateRoute"),
+        _get("AnalystRatingChangeTrend"),
+    )
+
+    route: dict = {}
+
+    def _add_routes(payload: dict | None) -> None:
+        if not payload:
+            return
+        rows = (payload.get("data") or {}).get("data") or {}
+        if not isinstance(rows, dict):
+            return
+        for row in rows.values():
+            if not isinstance(row, dict):
+                continue
+            nm = row.get("ChineseAccount", "")
+            data_map = row.get("Data", {})
+            if nm and data_map:
+                route[nm] = [
+                    {"period": p, "value": _clean_num(v)} for p, v in _latest_periods(data_map, 5)
+                ]
+
+    _add_routes(eps_rev_json)
+    _add_routes(margin_json)
+
+    # 評等佔比趨勢
+    rating_trend: list[dict] = []
+    if rating_json:
+        rows = (rating_json.get("data") or {}).get("data") or {}
+        if isinstance(rows, dict):
+            opt = mid = pess = price = {}
+            for row in rows.values():
+                if not isinstance(row, dict):
+                    continue
+                nm = row.get("ChineseAccount", "")
+                dm = row.get("Data", {})
+                if "樂觀" in nm:
+                    opt = dm
+                elif "中立" in nm:
+                    mid = dm
+                elif "悲觀" in nm:
+                    pess = dm
+                elif "收盤價" in nm:
+                    price = dm
+            months = sorted(set(opt) | set(mid) | set(pess))[-recent:]
+            rating_trend = [
+                {
+                    "month": m,
+                    "樂觀": _clean_num(opt.get(m)),
+                    "中立": _clean_num(mid.get(m)),
+                    "悲觀": _clean_num(pess.get(m)),
+                    "收盤價": _clean_num(price.get(m)),
+                }
+                for m in months
+            ]
+
+    if not route and not rating_trend:
+        return {"error": f"查無 {symbol} 的預估路徑/評等資料"}
+    result: dict = {"symbol": symbol}
+    if route:
+        result["route"] = route
+    if rating_trend:
+        result["rating_trend"] = rating_trend
+    return result
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     if not args:
@@ -2457,6 +2669,28 @@ if __name__ == "__main__":
             sys.exit(1)
         types = args[2] if len(args) > 2 else DEFAULT_RADAR_TYPES
         result = asyncio.run(fetch_company_keywords(kw, types))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
+
+    if args[0] == "--smart-estimate":
+        # A20 前瞻共識：法人 SmartEstimate 平均/最低/最高值（Agent 用；純資料）。
+        try:
+            sym = args[1]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --smart-estimate <代號>"}, ensure_ascii=False))
+            sys.exit(1)
+        result = asyncio.run(fetch_smart_estimate(sym))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
+
+    if args[0] == "--forecast-route":
+        # A21 前瞻共識：未來五季預估路徑 + 評等佔比趨勢（Agent 用；純資料）。
+        try:
+            sym = args[1]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --forecast-route <代號>"}, ensure_ascii=False))
+            sys.exit(1)
+        result = asyncio.run(fetch_forecast_route(sym))
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(1 if "error" in result else 0)
 

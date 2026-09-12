@@ -39,7 +39,7 @@ HELP_TEXT = (
     "/p `<代號>` — 即時股價＋盤中分時走勢圖（附基本面：本益比/最新財報等），例 `/p 2330`\n"
     "/k `<代號> [天數]` — K 線圖，例 `/k 2330 60`\n"
     "/ua `<代號>` — UAnalyze 估值分析＋法說會逐字稿選單，例 `/ua 2330`\n"
-    "/data `<代號>` — 法人共識/財務/供應鏈/訂單/DCF/PE-PB/法人/三率/現金流/股利/同業/融資券/籌碼選單，例 `/data 2330`\n"
+    "/data `<代號>` — 法人共識/財務/供應鏈/訂單/DCF/PE-PB/法人/三率/現金流/股利/同業/融資券/籌碼/法人預估/預估路徑選單，例 `/data 2330`\n"
     "/news — 立即抓最新新聞\n\n"
     "*問 AI（自然語言，會自動組合工具）*\n"
     "/ask `<問題>` — 例：`/ask 台積電最近怎麼樣？`（群組、私訊皆可）\n\n"
@@ -67,6 +67,8 @@ DATA_OPTIONS: list[tuple[str, str]] = [
     ("同業比較", "peers"),
     ("融資融券", "margin"),
     ("籌碼結構", "holders"),
+    ("法人預估", "smart_estimate"),
+    ("預估路徑", "forecast_route"),
 ]
 
 
@@ -904,6 +906,72 @@ def _format_holders(symbol: str, r: dict) -> str:
     return "\n".join(lines)
 
 
+def _format_smart_estimate(symbol: str, r: dict) -> str:
+    """Condense fetch_smart_estimate into per-指標 年度 × 平均/最低/最高 tables。"""
+    lines = [f"📑 {symbol} · 法人前瞻預估（Reuters SmartEstimate）", ""]
+
+    def _fmt(v: object) -> str:
+        if isinstance(v, float):
+            return f"{v:,.2f}"
+        if isinstance(v, int):
+            return f"{v:,}"
+        return "-"
+
+    for label, series in (r.get("estimates") or {}).items():
+        rows = [[str(s.get("year")), _fmt(s.get("平均")), _fmt(s.get("最低")), _fmt(s.get("最高"))]
+                for s in series]
+        lines.append(f"【{label}】")
+        lines.append(render_table(
+            ["年度", "平均", "最低", "最高"], rows,
+            aligns=["left", "right", "right", "right"],
+        ))
+        lines.append("")
+    note = r.get("unit_note")
+    if note:
+        lines.append(f"＊{note}")
+    return "\n".join(lines)
+
+
+def _format_forecast_route(symbol: str, r: dict) -> str:
+    """Condense fetch_forecast_route into 預估路徑 + 評等趨勢 tables。"""
+    lines = [f"📑 {symbol} · 未來預估路徑 + 分析師評等", ""]
+
+    def _fmt(v: object) -> str:
+        if isinstance(v, float):
+            return f"{v:,.2f}"
+        if isinstance(v, int):
+            return f"{v:,}"
+        return "-"
+
+    route = r.get("route") or {}
+    if route:
+        # 各路徑以 period 為欄併成一表：列=指標，欄=季度。
+        periods: list[str] = []
+        for series in route.values():
+            for pt in series:
+                p = str(pt.get("period"))
+                if p not in periods:
+                    periods.append(p)
+        lines.append("【未來五季預估路徑】")
+        for label, series in route.items():
+            by_p = {str(pt.get("period")): pt.get("value") for pt in series}
+            short = label.replace("未來五季", "").replace("預估路徑", "")
+            row_vals = "  ".join(f"{p[-6:]}:{_fmt(by_p.get(p))}" for p in periods)
+            lines.append(f"{short}｜{row_vals}")
+        lines.append("")
+
+    trend = r.get("rating_trend") or []
+    if trend:
+        rows = [[str(t.get("month")), _fmt(t.get("樂觀")), _fmt(t.get("中立")),
+                 _fmt(t.get("悲觀")), _fmt(t.get("收盤價"))] for t in trend]
+        lines.append("【分析師評等佔比(%)】")
+        lines.append(render_table(
+            ["月份", "樂觀", "中立", "悲觀", "收盤價"], rows,
+            aligns=["left", "right", "right", "right", "right"],
+        ))
+    return "\n".join(lines)
+
+
 async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle a /data menu button press: fetch the chosen data set, or return
     to the menu when the back button is pressed."""
@@ -939,6 +1007,7 @@ async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         fetch_dcf_valuation,
         fetch_dividend_policy,
         fetch_eps_consensus,
+        fetch_forecast_route,
         fetch_holder_structure,
         fetch_institutional_chips,
         fetch_margin_trading,
@@ -946,6 +1015,7 @@ async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         fetch_peers_comparison,
         fetch_per_share_metrics,
         fetch_profit_margins,
+        fetch_smart_estimate,
         fetch_supply_chain,
         fetch_valuation_bands,
     )
@@ -975,6 +1045,10 @@ async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             r = await fetch_margin_trading(symbol)
         elif key == "holders":
             r = await fetch_holder_structure(symbol)
+        elif key == "smart_estimate":
+            r = await fetch_smart_estimate(symbol)
+        elif key == "forecast_route":
+            r = await fetch_forecast_route(symbol)
         else:
             r = await fetch_order_visibility(symbol)
     except Exception as e:
@@ -1010,6 +1084,10 @@ async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         text = _format_margin(symbol, r)
     elif key == "holders":
         text = _format_holders(symbol, r)
+    elif key == "smart_estimate":
+        text = _format_smart_estimate(symbol, r)
+    elif key == "forecast_route":
+        text = _format_forecast_route(symbol, r)
     else:
         text = _format_order(symbol, r)
     back = InlineKeyboardMarkup(
