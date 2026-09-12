@@ -64,15 +64,16 @@ docker compose up -d
 | `/start` / `/help` | 歡迎訊息 / 指令與功能說明 |
 | `/sub_news` / `/unsub_news` | 訂閱 / 取消新聞推播（每小時） |
 | `/sub_ua_reports` / `/unsub_ua_reports` | 訂閱 / 取消 UAnalyze 新研究報告推播（每 30 分鐘） |
-| `/news` | 跳出選單選新聞來源（全部或指定 15 來源之一），回覆該來源最新新聞（標題 + 連結，不經 AI） |
 | `/p <代號>` | 即時股價（直接跑工具，秒回），並 best-effort 附上 UAnalyze 基本面（本益比/最新財報/月營收等）與**盤中分時走勢折線圖**，例 `/p 2330` |
 | `/k <代號> [天數]` | K 線圖（回傳圖片），例 `/k 2330 60` |
-| `/ua <代號>` | UAnalyze AI 分析：跳出選單選分析面向（近況/產業/資本支出…），另含「法說會逐字稿」入口（列歷次法說會→選一場→分頁閱讀完整逐字稿全文，翻頁走記憶體快取不重打 API），例 `/ua 2330` |
-| `/data <代號>` | 跳出選單選資料類型（法人共識 / 財務指標 / 供應鏈 / 訂單能見度 / DCF 估值），回濃縮數據，例 `/data 2330` |
 | `/ask <問題>` | 自然語言問 Agent（群組、私訊皆可），交給 Agent 決定呼叫哪些工具，例 `/ask 台積電最近怎麼樣`（需先設定 Antigravity CLI，見下） |
 
-> 快捷指令（`/p` `/k` `/ua` `/news`）直接呼叫工具、不經 AI，回應快且省 token；
-> 需要組合多個工具或自然語言提問時才用 `/ask`。排程推播只發給訂閱者且會去重。
+> 快捷指令（`/p` `/k`）直接呼叫工具、不經 AI，回應快且省 token；估值分析、財務數據、
+> 新聞、法說會逐字稿等進階查詢**改由 `/ask` 交給 Agent**（Agent 會呼叫 `tools/` 下工具組合回答）。
+> 排程推播（新聞、UAnalyze 新報告）只發給訂閱者且會去重。
+
+> 📌 **v2 起互動選單指令 `/ua` `/data` `/news` 已移除**，功能改以 `/ask` 為統一入口
+> （底層工具 `tools/uanalyze.py`、`tools/fetch_news.py` 都還在，Agent 照常呼叫）。**推播訂閱不受影響**。
 
 ## Agent（`/ask`）
 
@@ -189,7 +190,7 @@ source .venv/bin/activate
 python -m pytest tests/ -q
 ```
 
-目前 **549 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
+目前 **505 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
 
 ### 端到端驗證現況
 
@@ -199,7 +200,7 @@ python -m pytest tests/ -q
 | `fetch_news <代號>` 個股過濾 | ✅ 已手動實測 |
 | 代號對照表 命中/miss/寫回/再命中 | ✅ CLI 實測 |
 | `/ask` → `agy` → 跑工具 → 回真實數據 | ✅ 透過真實 bridge 實測 |
-| UAnalyze 真登入 + 分析 | ✅ 真憑證實測（`/ua`、`analyze()`） |
+| UAnalyze 真登入 + 分析 | ✅ 真憑證實測（`analyze()`、`--ask` 知識庫問答） |
 | `python main.py` 啟動 → 連上 Telegram → 排程啟動 → 乾淨關閉 | ✅ 實際啟動驗證 |
 | **手機端互動**（真人發指令、`/ask`、排程實際推播到訂閱者） | ❌ 尚未測試（需真人操作） |
 | Docker build | ❌ 尚未實跑 |
@@ -225,5 +226,5 @@ agent/
 └── conversation_log.py # /ask 對話記錄
 tools/                  # 15 個工具 script（CLI + import 雙入口，能力清單見 tools/README.md）
 data/                   # 執行期 JSON + 日誌
-tests/                  # 549 個測試
+tests/                  # 505 個測試
 ```
