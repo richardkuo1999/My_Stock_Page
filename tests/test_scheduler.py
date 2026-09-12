@@ -204,7 +204,7 @@ def test_is_duplicate_title_empty_existing():
 @pytest.mark.asyncio
 async def test_news_push_job_no_articles(mock_bot, mock_subscription_manager, mock_agent_bridge, pushed_news_path):
     """When latest() returns no articles, nothing is pushed."""
-    with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value={"articles": []}):
+    with patch("tools.analysis.news.latest", new_callable=AsyncMock, return_value={"articles": []}):
         await news_push_job(mock_bot, mock_subscription_manager, mock_agent_bridge)
 
     mock_bot.send_message.assert_not_called()
@@ -219,7 +219,7 @@ async def test_news_push_job_all_pushed(
     pushed_records = [{"url": a["url"], "title": a["title"], "pushed_at": now} for a in sample_articles]
     pushed_news_path.write_text(json.dumps(pushed_records), encoding="utf-8")
 
-    with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value={"articles": sample_articles}):
+    with patch("tools.analysis.news.latest", new_callable=AsyncMock, return_value={"articles": sample_articles}):
         await news_push_job(mock_bot, mock_subscription_manager, mock_agent_bridge)
 
     mock_bot.send_message.assert_not_called()
@@ -230,7 +230,7 @@ async def test_news_push_job_success(
     mock_bot, mock_subscription_manager, mock_agent_bridge, pushed_news_path, sample_articles
 ):
     """New articles are listed (title + URL) and pushed to subscribers — no Agent."""
-    with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value={"articles": sample_articles}):
+    with patch("tools.analysis.news.latest", new_callable=AsyncMock, return_value={"articles": sample_articles}):
         await news_push_job(mock_bot, mock_subscription_manager, mock_agent_bridge)
 
     # Agent bridge must NOT be called — push is a plain title + URL list now.
@@ -261,7 +261,7 @@ async def test_news_push_job_no_subscribers(
     mgr = MagicMock()
     mgr.get_subscribers = MagicMock(return_value=[])
 
-    with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value={"articles": sample_articles}):
+    with patch("tools.analysis.news.latest", new_callable=AsyncMock, return_value={"articles": sample_articles}):
         await news_push_job(mock_bot, mgr, mock_agent_bridge)
 
     mock_bot.send_message.assert_not_called()
@@ -280,7 +280,7 @@ async def test_news_push_job_ignores_agent_bridge(
     bridge = AsyncMock()
     bridge.send = AsyncMock()
 
-    with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value={"articles": sample_articles}):
+    with patch("tools.analysis.news.latest", new_callable=AsyncMock, return_value={"articles": sample_articles}):
         await news_push_job(mock_bot, mock_subscription_manager, bridge)
 
     bridge.send.assert_not_called()
@@ -296,7 +296,7 @@ async def test_news_push_job_no_bridge_fallback(
     mock_bot, mock_subscription_manager, pushed_news_path, sample_articles
 ):
     """When agent_bridge is None, uses simple formatted list."""
-    with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value={"articles": sample_articles}):
+    with patch("tools.analysis.news.latest", new_callable=AsyncMock, return_value={"articles": sample_articles}):
         await news_push_job(mock_bot, mock_subscription_manager, None)
 
     assert mock_bot.send_message.call_count == 2
@@ -309,7 +309,7 @@ async def test_news_push_job_fetch_failure(
     mock_bot, mock_subscription_manager, mock_agent_bridge, pushed_news_path
 ):
     """When fetch_news.latest() raises, job exits gracefully."""
-    with patch("tools.fetch_news.latest", new_callable=AsyncMock, side_effect=Exception("Network error")):
+    with patch("tools.analysis.news.latest", new_callable=AsyncMock, side_effect=Exception("Network error")):
         await news_push_job(mock_bot, mock_subscription_manager, mock_agent_bridge)
 
     mock_bot.send_message.assert_not_called()
@@ -331,7 +331,7 @@ async def test_news_push_job_fuzzy_dedup(
         {"title": "台積電法說會：AI需求強勁帶動成長!", "source": "CNYES", "url": "https://other-url.com/1", "date": "2026-08-22"},
     ]
 
-    with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value={"articles": articles}):
+    with patch("tools.analysis.news.latest", new_callable=AsyncMock, return_value={"articles": articles}):
         await news_push_job(mock_bot, mock_subscription_manager, mock_agent_bridge)
 
     # Fuzzy dedup should filter it out
@@ -347,7 +347,7 @@ async def test_news_push_job_cleans_expired(
     old_records = [{"url": "https://expired.com/x", "title": "Old news", "pushed_at": old_time}]
     pushed_news_path.write_text(json.dumps(old_records), encoding="utf-8")
 
-    with patch("tools.fetch_news.latest", new_callable=AsyncMock, return_value={"articles": sample_articles}):
+    with patch("tools.analysis.news.latest", new_callable=AsyncMock, return_value={"articles": sample_articles}):
         await news_push_job(mock_bot, mock_subscription_manager, mock_agent_bridge)
 
     saved = json.loads(pushed_news_path.read_text(encoding="utf-8"))
@@ -458,7 +458,7 @@ async def test_uanalyze_push_first_run_seeds_state(
     mgr = MagicMock()
     mgr.get_subscribers = MagicMock(return_value=[(111, None)])
 
-    with patch("tools.uanalyze.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}):
+    with patch("tools.analysis.reports.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}):
         await uanalyze_push_job(mock_bot, mgr)
 
     mock_bot.send_message.assert_not_called()
@@ -479,7 +479,7 @@ async def test_uanalyze_push_new_report(
     mgr = MagicMock()
     mgr.get_subscribers = MagicMock(return_value=[(111, None), (222, 9)])
 
-    with patch("tools.uanalyze.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}):
+    with patch("tools.analysis.reports.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}):
         await uanalyze_push_job(mock_bot, mgr)
 
     # New report 102 pushed to both subscribers.
@@ -509,7 +509,7 @@ async def test_uanalyze_push_no_new(mock_bot, pushed_uanalyze_path, sample_repor
     mgr = MagicMock()
     mgr.get_subscribers = MagicMock(return_value=[(111, None)])
 
-    with patch("tools.uanalyze.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}):
+    with patch("tools.analysis.reports.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}):
         await uanalyze_push_job(mock_bot, mgr)
 
     mock_bot.send_message.assert_not_called()
@@ -527,7 +527,7 @@ async def test_uanalyze_push_no_subscribers(
     mgr = MagicMock()
     mgr.get_subscribers = MagicMock(return_value=[])
 
-    with patch("tools.uanalyze.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}):
+    with patch("tools.analysis.reports.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}):
         await uanalyze_push_job(mock_bot, mgr)
 
     mock_bot.send_message.assert_not_called()
@@ -541,7 +541,7 @@ async def test_uanalyze_push_fetch_error(mock_bot, pushed_uanalyze_path):
     mgr = MagicMock()
     mgr.get_subscribers = MagicMock(return_value=[(111, None)])
 
-    with patch("tools.uanalyze.list_latest_reports", new_callable=AsyncMock, return_value={"error": "boom"}):
+    with patch("tools.analysis.reports.list_latest_reports", new_callable=AsyncMock, return_value={"error": "boom"}):
         await uanalyze_push_job(mock_bot, mgr)
 
     mock_bot.send_message.assert_not_called()
@@ -617,7 +617,7 @@ async def test_news_push_all_deliveries_fail_not_marked_pushed(
 
     mock_bot.send_message = AsyncMock(side_effect=TimedOut("t"))
     with patch("bot.scheduler.asyncio.sleep", new_callable=AsyncMock), patch(
-        "tools.fetch_news.latest", new_callable=AsyncMock, return_value={"articles": sample_articles}
+        "tools.analysis.news.latest", new_callable=AsyncMock, return_value={"articles": sample_articles}
     ):
         await news_push_job(mock_bot, mock_subscription_manager, mock_agent_bridge)
 
@@ -644,7 +644,7 @@ async def test_uanalyze_push_all_deliveries_fail_not_marked_pushed(
     mock_bot.send_message = AsyncMock(side_effect=TimedOut("t"))
 
     with patch("bot.scheduler.asyncio.sleep", new_callable=AsyncMock), patch(
-        "tools.uanalyze.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}
+        "tools.analysis.reports.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}
     ):
         await uanalyze_push_job(mock_bot, mgr)
 
@@ -666,7 +666,7 @@ async def test_uanalyze_push_partial_success_marks_only_delivered(
     mgr.get_subscribers = MagicMock(return_value=[(111, None)])
     mock_bot.send_message = AsyncMock()  # succeeds
 
-    with patch("tools.uanalyze.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}):
+    with patch("tools.analysis.reports.list_latest_reports", new_callable=AsyncMock, return_value={"reports": sample_reports}):
         await uanalyze_push_job(mock_bot, mgr)
 
     saved = json.loads(pushed_uanalyze_path.read_text(encoding="utf-8"))

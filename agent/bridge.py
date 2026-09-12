@@ -6,6 +6,7 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,19 @@ DEFAULT_TIMEOUT = 600  # seconds (10 min) — @mention Agent 可能跑多個工�
 # Repo root = parent of the `agent/` package. Used as the working directory for
 # the agy subprocess so the Agent can run tools via relative paths (tools/xxx.py).
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# `/usage` 額度查詢用的較短逾時（只是查表，不該拖住回覆）。
+QUOTA_TIMEOUT = 30  # seconds
+
+# `/usage` 回傳的英文標籤 → 顯示用短名（對不到就保留原文）。
+_QUOTA_GROUPS = {
+    "Gemini Models": "Gemini",
+    "Claude and GPT models": "Claude·GPT",
+}
+_QUOTA_WINDOWS = {
+    "Weekly Limit Remaining": "週",
+    "Five Hour Limit Remaining": "5 小時",
+}
 
 
 @dataclass
@@ -24,10 +38,11 @@ class ToolCall:
     parameters: dict = field(default_factory=dict)
 
     def summary(self) -> str:
-        """One-line human-readable summary, e.g. `run_command(python tools/get_stock_price.py 2330)`.
+        """One-line human-readable summary, e.g. `run_command(python tools/analysis/get_stock_price.py 2330)`.
 
-        Picks a couple of representative parameter values so the dev can see
-        *what* the tool was called with without dumping the whole payload.
+        指令（CommandLine/Command）**完整顯示不截斷**，只把換行/多重空白壓成
+        單一空白，讓每筆呼叫維持一行。非指令類工具取前兩個純量參數（如檔案路徑），
+        同樣不截斷。
         """
         if not self.parameters:
             return self.name
@@ -42,8 +57,9 @@ class ToolCall:
                 .replace('export PYTHONIOENCODING="utf-8" && ', "")
                 .replace("export PYTHONIOENCODING='utf-8' && ", "")
             ).strip()
-            if len(clean_cmd) > 50:
-                clean_cmd = clean_cmd[:47] + "..."
+            # 完整顯示（不截斷）；多行指令（python -c "..."）壓成單行，
+            # 讓每筆呼叫各佔一行、清單仍好讀。
+            clean_cmd = " ".join(clean_cmd.split())
             return f"{self.name}({clean_cmd})"
 
         # 其他工具走一般純量值挑選，優先跳過 metadata 欄位（如 toolAction, toolSummary）
@@ -52,20 +68,14 @@ class ToolCall:
             if k in ("toolAction", "toolSummary"):
                 continue
             if isinstance(v, (str, int, float, bool)):
-                s = str(v)
-                if len(s) > 40:
-                    s = s[:37] + "..."
-                parts.append(s)
+                parts.append(" ".join(str(v).split()))
             if len(parts) >= 2:
                 break
 
         if not parts:
             for k, v in self.parameters.items():
                 if isinstance(v, (str, int, float, bool)):
-                    s = str(v)
-                    if len(s) > 40:
-                        s = s[:37] + "..."
-                    parts.append(s)
+                    parts.append(" ".join(str(v).split()))
                 if len(parts) >= 2:
                     break
 
@@ -88,10 +98,159 @@ class AgentResult:
     usage: dict = field(default_factory=dict)
 
     def tools_line(self) -> str:
-        """`🔧 本次用了：run_command(...), view_file(...)` or empty string."""
+        """完整工具呼叫清單（不截斷），一筆一行並編號。
+
+        例：
+            🔧 本次用了（3 次呼叫）：
+            1. run_command(.venv/bin/python tools/analysis/get_stock_price.py 2330)
+            2. view_file(/path/to/file.py)
+            3. ...
+
+        呼叫次數多時整段會很長，text 模式由 handlers 依 Telegram 上限自動分段送出。
+        """
         if not self.tools:
             return ""
-        return "🔧 本次用了：" + "、".join(t.summary() for t in self.tools)
+        lines = [f"{i}. {t.summary()}" for i, t in enumerate(self.tools, 1)]
+        return f"🔧 本次用了（{len(self.tools)} 次呼叫）：\n" + "\n".join(lines)
+
+    def usage_line(self) -> str:
+        """Token 用量一行（數量 + 佔比），無 usage 資料時回空字串。
+
+        例：
+            📊 Token：442,814（輸入 417,499・94.3%／輸出 25,315・5.7%／思考 13,661・3.1%）
+            ｜快取讀 3,638,703（命中 89.7%）
+
+        佔比為各項對 total_tokens 的比例；快取命中率 =
+        cache_read /（cache_read + input），可看出重複 context 被快取省下多少。
+        agy 未回 usage（或欄位缺）時只顯示拿得到的部分。
+        """
+        u = self.usage or {}
+        total = u.get("total_tokens") or 0
+        inp = u.get("input_tokens") or 0
+        out = u.get("output_tokens") or 0
+        think = u.get("thinking_tokens") or 0
+        cache = u.get("cache_read_tokens") or 0
+        if not any((total, inp, out, think, cache)):
+            return ""
+
+        def pct(n: int) -> str:
+            return f"・{n / total * 100:.1f}%" if total else ""
+
+        parts = []
+        if inp:
+            parts.append(f"輸入 {inp:,}{pct(inp)}")
+        if out:
+            parts.append(f"輸出 {out:,}{pct(out)}")
+        if think:
+            parts.append(f"思考 {think:,}{pct(think)}")
+
+        line = f"📊 Token：{total:,}" if total else "📊 Token"
+        if parts:
+            line += "（" + "／".join(parts) + "）"
+        if cache:
+            hit = cache / (cache + inp) * 100 if (cache + inp) else 0
+            line += f"｜快取讀 {cache:,}（命中 {hit:.1f}%）"
+        return line
+
+
+def _parse_usage_tsv(raw: str) -> list[dict]:
+    """解析 `/usage` 的 TSV → [{group, window, remaining_pct, reset_at}]。
+
+    只收「群組＋視窗＋百分比」都在的行；群組/視窗名做中文化對應，
+    對不到就保留原文（agy 改字樣時仍可用，只是顯示英文）。
+    """
+    items = []
+    for line in raw.strip().splitlines():
+        cols = [c.strip() for c in line.split("\t")]
+        if len(cols) < 3 or not cols[2].endswith("%"):
+            continue
+        try:
+            remaining = int(cols[2].rstrip("%"))
+        except ValueError:
+            continue
+        items.append({
+            "group": _QUOTA_GROUPS.get(cols[0], cols[0]),
+            "window": _QUOTA_WINDOWS.get(cols[1], cols[1]),
+            "remaining_pct": remaining,
+            "reset_at": cols[3] if len(cols) > 3 else "",
+        })
+    return items
+
+
+def diff_quota(before: list[dict], after: list[dict]) -> list[dict]:
+    """在 `after` 上標記本次消耗（`delta_pct` = before 剩餘 − after 剩餘）。
+
+    `/usage` 只給**整數百分比**，所以單次 /ask 的差值通常是 0（額度沒掉到
+    下一個整數）。故只在差值 > 0 時才標記，讓顯示端可以「有才寫」。
+    配不到對應項（群組/視窗對不上）就原樣保留。
+    """
+    if not before or not after:
+        return after
+    prev = {(b.get("group"), b.get("window")): b.get("remaining_pct") for b in before}
+    out = []
+    for item in after:
+        merged = dict(item)
+        old = prev.get((item.get("group"), item.get("window")))
+        new = item.get("remaining_pct")
+        if isinstance(old, int) and isinstance(new, int) and old - new > 0:
+            merged["delta_pct"] = old - new
+        out.append(merged)
+    return out
+
+
+def format_quota_line(limits: list[dict]) -> str:
+    """把額度資料排成可讀區塊；空資料回空字串。
+
+    例：
+        🎟️ 額度（已用／剩餘）
+        Gemini：週 2%／98%・5 小時 3%／97%（重置 04:52）
+        Claude·GPT：週 19%／81%・5 小時 0%／100%（重置 05:25）
+
+    `limits` 為 `AgentBridge.fetch_usage_limits()` 的回傳（group/window/
+    remaining_pct/reset_at）。群組與視窗名稱不寫死，照來源給的順序呈現。
+    """
+    if not limits:
+        return ""
+
+    grouped: dict[str, list[dict]] = {}
+    for item in limits:
+        grouped.setdefault(item.get("group", "?"), []).append(item)
+
+    lines = ["🎟️ 額度（已用／剩餘）"]
+    for group, items in grouped.items():
+        segs = []
+        for it in items:
+            remaining = it.get("remaining_pct")
+            if remaining is None:
+                continue
+            window = it.get("window", "")
+            seg = f"{window} {100 - remaining}%／{remaining}%"
+            # 本次消耗與重置時間合併成一組括號（避免「（本次 -2%）（重置 04:52）」相連）
+            notes = []
+            delta = it.get("delta_pct")
+            if delta:
+                notes.append(f"本次 -{delta}%")
+            reset = _format_reset(it.get("reset_at", ""))
+            if reset:
+                notes.append(f"重置 {reset}")
+            if notes:
+                seg += "（" + "・".join(notes) + "）"
+            segs.append(seg)
+        if segs:
+            lines.append(f"{group}：" + "・".join(segs))
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
+def _format_reset(reset_at: str) -> str:
+    """ISO8601（UTC）→ 本地時間短字串（跨月顯示日期）；無法解析回空字串。"""
+    if not reset_at:
+        return ""
+    try:
+        dt = datetime.fromisoformat(reset_at.replace("Z", "+00:00")).astimezone()
+    except ValueError:
+        return ""
+    now = datetime.now().astimezone()
+    return dt.strftime("%H:%M") if dt.date() == now.date() else dt.strftime("%m/%d %H:%M")
 
 
 class AgentBridge(ABC):
@@ -111,6 +270,13 @@ class AgentBridge(ABC):
     async def is_available(self) -> bool:
         """Check if the agent is reachable."""
         ...
+
+    async def fetch_usage_limits(self) -> list[dict]:
+        """剩餘額度（best-effort）。不支援的 bridge 回空 list。
+
+        回傳 [{"group","window","remaining_pct","reset_at"}, ...]。
+        """
+        return []
 
 
 class AntigravityCLIBridge(AgentBridge):
@@ -319,3 +485,33 @@ class AntigravityCLIBridge(AgentBridge):
             return proc.returncode == 0
         except (FileNotFoundError, asyncio.TimeoutError):
             return False
+
+    async def fetch_usage_limits(self) -> list[dict]:
+        """跑 `agy -p "/usage"` 取剩餘額度（best-effort，失敗回空 list）。
+
+        agy 沒有 quota 子指令，額度只能靠內建 slash command `/usage`，它回 TSV：
+            Gemini Models\\tWeekly Limit Remaining\\t98%\\t2026-09-18T14:17:59Z
+        欄位＝群組、視窗、剩餘百分比、重置時間（UTC ISO8601）。
+
+        約需數秒，故呼叫端應與主要 agent 呼叫**並行**執行、別串在後面。
+        任何失敗（agy 不存在／逾時／格式變動）都只記 debug log 並回 []，
+        不影響 /ask 回覆。
+        """
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "agy", "-p", "/usage",
+                "--print-timeout", f"{QUOTA_TIMEOUT}s",
+                cwd=REPO_ROOT,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(
+                proc.communicate(), timeout=QUOTA_TIMEOUT + 5
+            )
+        except (FileNotFoundError, asyncio.TimeoutError, OSError) as e:
+            logger.debug("fetch_usage_limits failed: %s", e)
+            return []
+
+        if proc.returncode != 0:
+            return []
+        return _parse_usage_tsv(stdout.decode("utf-8", errors="replace"))

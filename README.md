@@ -45,6 +45,8 @@ UANALYZE_PASSWORD=        # UAnalyze 密碼
 }
 ```
 
+> 可選：`broker_sync_interval_min`（券商報告索引同步間隔，未設時預設 60 分）。
+
 ## 啟動
 
 ```bash
@@ -73,7 +75,7 @@ docker compose up -d
 > 排程推播（新聞、UAnalyze 新報告）只發給訂閱者且會去重。
 
 > 📌 **v2 起互動選單指令 `/ua` `/data` `/news` 已移除**，功能改以 `/ask` 為統一入口
-> （底層工具 `tools/uanalyze.py`、`tools/fetch_news.py` 都還在，Agent 照常呼叫）。**推播訂閱不受影響**。
+> （底層工具 `tools/raw/`、`tools/analysis/` 都還在，Agent 照常呼叫）。**推播訂閱不受影響**。
 
 ## Agent（`/ask`）
 
@@ -110,8 +112,34 @@ docker compose up -d
 bridge 以 `--output-format stream-json` 呼叫 `agy`，解析 NDJSON 事件流，取得
 Agent 這一輪**實際呼叫的工具序列**（`run_command`/`find_by_name`/`view_file`…）與最終回覆。
 
-- **回覆附工具清單**：`/ask` 回覆末尾會加一行 `🔧 本次用了：run_command(python tools/get_stock_price.py 2330)、…`。
-  預設開啟（開發友善）；上線後設環境變數 `SHOW_AGENT_TOOLS=0` 即可關閉，不需改碼。
+- **回覆附工具清單 + token 用量**：`/ask` 回覆末尾附上這一輪**完整**的工具呼叫紀錄
+  （一筆一行、編號、附總次數，指令**不截斷**；多行指令壓成單行），後面再接一行 token 用量：
+  ```
+  🔧 本次用了（2 次呼叫）：
+  1. run_command(.venv/bin/python tools/analysis/get_stock_price.py 2330)
+  2. run_command(.venv/bin/python tools/raw/broker_reports.py --sector 記憶體 --limit 20)
+
+  📊 Token：442,814（輸入 417,499・94.3%／輸出 25,315・5.7%／思考 13,661・3.1%）｜快取讀 3,638,703（命中 89.7%）
+
+  🎟️ 額度（已用／剩餘）
+  Gemini：週 2%／98%（重置 09/18 22:17）・5 小時 3%／97%（重置 04:52）
+  Claude·GPT：週 19%／81%（重置 09/15 22:33）・5 小時 0%／100%（重置 05:27）
+  ```
+  百分比為各項對總 token 的佔比；快取命中率 = 快取讀 /（快取讀 + 輸入），看出重複 context 省下多少。
+  **額度**（Antigravity 訂閱方案的用量上限）另跑 `agy -p "/usage"` 取得（agy 無 quota 子指令，
+  只能靠這個內建 slash command）。呼叫**前**查一次（與 Agent 呼叫並行，不加長等待）、**後**再查
+  一次，兩者相減得「本次用掉多少」，差值 > 0 時顯示為 `（本次 -N%）`。
+  ⚠️ `/usage` 只回**整數百分比**，單次 `/ask` 通常掉不到 1 個百分點，所以多數情況看不到「本次」
+  （不是沒統計，是解析度不夠）。為了補上這個解析度，每次 `/ask` 會把（本次 token、當下各視窗
+  剩餘 %）記到 `data/logs/quota_ledger.jsonl`；當某視窗掉 1 點時，即可反推「1% ≈ 幾 tokens」，
+  之後就能估算本次佔額度的百分比與還能跑幾次：
+  ```
+  📐 本次 ≈ Gemini 週額度 0.35%（校準 1% ≈ 126k tokens・樣本 7）；剩 98% 約可再跑 280 次
+  ```
+  校準資料不足時顯示「額度校準中（已記錄 N 次）」，不給假精度。帳本同時記次數，
+  因為額度也可能是按請求數計費而非 token——累積資料後可比對哪種關係穩定。
+  查詢失敗只是不顯示、不影響回覆。預設開啟（開發友善）；上線後設環境變數 `SHOW_AGENT_TOOLS=0`
+  即可關閉（工具清單、token 用量、額度一起關），不需改碼。
 - **保存所有對話**：每次 `/ask` 交換（時間、user/chat id、問題、回覆、工具清單、
   usage、conversation_id）會 append 一行 JSON 到 `data/logs/agent_conversations.jsonl`
   （已被 `.gitignore` 排除；寫入為 best-effort，失敗只記 log 不影響回覆）。
@@ -141,18 +169,18 @@ AI 呼叫失敗時不推進游標，下一輪會重試同一區間。讀 `bot.lo
 **每個工具能取得哪些資料 / 功能，見 [`tools/README.md`](tools/README.md)。**
 詳細用法（參數、回傳格式）寫在各 `.py` 檔案最上方的 docstring。
 
-大致分成幾類：
+大致分成幾類（**raw 純取數層 / analysis 功能層 兩層架構**，詳見 [`tools/README.md`](tools/README.md)）：
 
-- **快捷 / 即時**：`get_stock_price.py`（即時股價）、`draw_kchart.py`（K 線圖）、`draw_intraday_chart.py`（盤中分時圖）
-- **新聞 / 文件**：`fetch_news.py`（15 來源新聞 + 單篇全文）、`summarize_document.py`（URL/PDF 擷取）、`broker_reports.py`（券商研究報告）
-- **UAnalyze**：`uanalyze.py`（AI 分析 + AI 知識庫問答 + 批次雷達 + 20 餘種純數據：基本面/法人共識/每股指標/供應鏈/訂單/DCF/PE-PB/三大法人/三率/現金流/股利/同業比較/融資融券/籌碼結構/法人前瞻預估/預估路徑/法說會逐字稿…）、`dcf_to_csv.py`（DCF 批次輸出 CSV）
-- **原始資料源**：`cnyes.py`、`finmind.py`、`fugle.py`、`yfinance_data.py`（各家 API 各做成獨立 function，供 Agent 按需呼叫 / 被 `valuation.py` import）
-- **估值計算**：`valuation.py`（樂活五線譜 / PE-PB 河流圖 / EPS 動能 / 目標價彙整，不打 API、import 上面 raw-data 工具算）
-- **資料工具**：`lookup_stock_name.py`（代號 ↔ 公司名對照表）
+- **`tools/analysis/`（功能層，import raw 做計算/組合/繪圖/判讀）**：`get_stock_price.py`（即時股價，`/p` 用）、`draw_kchart.py`/`draw_intraday_chart.py`（K 線/分時圖）、`news.py`（15 來源新聞聚合 + 個股過濾 + 單篇全文）、`summarize_document.py`（URL/PDF 擷取 + AI 摘要）、`valuation.py`（樂活五線譜 / PE-PB 河流圖 / EPS 動能 / 目標價 / DCF / PE-PB Band，含 DCF 批次 CSV）、`fundamentals.py`（即時基本面，`/p` 用）、`forecast.py`（法人前瞻預估/預估路徑）、`reports.py`（研究報告清單，推播用）
+- **`tools/raw/`（純取數層，只抓不組合）**：`uanalyze.py`（UAnalyze 28 端點各一 raw fetcher）、`cnyes.py`、`finmind.py`、`fugle.py`、`yfinance_data.py`（各家 API 各端點一 function）、`news_sources.py`（15 新聞來源各一 fetcher + 單篇全文）、`broker_reports.py`（券商研究報告，單一 Drive 來源）
+- **資料工具**（根目錄）：`lookup_stock_name.py`（代號 ↔ 公司名對照表，純本地）
+
+> 「法人共識」「同業比較」這類純並排組合**不預先做成 function**，改由 Agent 自己 call 多個
+> raw fetcher 組合（見 `tools/README.md`「組合分析」）。
 
 ### 個股新聞如何過濾
 
-台股新聞標題寫公司中文名（「台積電」）而非代號（2330）。`fetch_news.py <代號>` 會：
+台股新聞標題寫公司中文名（「台積電」）而非代號（2330）。個股新聞過濾（`analysis/news.py <代號>`）會：
 1. 查 `lookup_stock_name.py` 的代號↔名稱對照表，補上公司名當關鍵字；
 2. 從已抓取的 15 來源新聞池，本地過濾出標題/摘要含關鍵字的文章。
 
@@ -180,6 +208,7 @@ CNYES、MoneyDJ、Yahoo股市、UDN財經、UAnalyze、UAnalyze專欄、Fugle、
 - `stock_names.json` — 代號↔公司名對照表（UAnalyze StockPool 全表 ~12,361 檔，每週刷新，`--set` 手動後援）
 - `stock_names_meta.json` — 對照表刷新時間戳（判斷是否過期需重抓）
 - `logs/agent_conversations.jsonl` — 每次 `/ask` 對話記錄（問題/回覆/工具清單/usage，append-only）
+- `logs/quota_ledger.jsonl` — 額度帳本（每次 `/ask` 的 token 與各視窗剩餘 %，用來校準「1% ≈ 幾 tokens」）
 - `logs/audit_state.json` — Log 稽核游標（已稽核到的 bot.log offset 與對話行數，避免重複稽核）
 - `logs/bot.log` — WARNING 以上日誌（rotation，5MB × 5）
 
@@ -190,7 +219,7 @@ source .venv/bin/activate
 python -m pytest tests/ -q
 ```
 
-目前 **505 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
+目前 **460 個測試全數通過**，皆為單元測試（外部相依以 mock 隔離）。
 
 ### 端到端驗證現況
 
@@ -223,8 +252,9 @@ bot/
 agent/
 ├── bridge.py           # AgentBridge ABC + AntigravityCLIBridge
 ├── prompts.py          # Agent prompt templates
+├── quota_ledger.py     # 額度帳本 + token→額度% 校準
 └── conversation_log.py # /ask 對話記錄
-tools/                  # 15 個工具 script（CLI + import 雙入口，能力清單見 tools/README.md）
+tools/                  # 工具 script（analysis 9 + raw 7 模組 + 根目錄 lookup，共 17 檔；CLI + import 雙入口，能力清單見 tools/README.md）
 data/                   # 執行期 JSON + 日誌
-tests/                  # 505 個測試
+tests/                  # 460 個測試
 ```

@@ -1,9 +1,9 @@
-"""Tests for tools/finmind.py."""
+"""Tests for tools/raw/finmind.py."""
 
 from unittest.mock import MagicMock, patch
 
-from tools import finmind
-from tools.finmind import _get_tokens, fetch_dataset, fetch_info, fetch_per_pbr
+from tools.raw import finmind
+from tools.raw.finmind import _get_tokens, fetch_dataset, fetch_info, fetch_per_pbr, fetch_tick_snapshot
 
 
 def _mock_client(json_data, status=200):
@@ -88,3 +88,45 @@ def test_fetch_info_no_start_date():
         res = fetch_info("2330")
     assert res["dataset"] == "TaiwanStockInfo"
     assert "start_date" not in captured["params"]  # info 不帶 start_date
+
+
+# --- tick_snapshot（另一端點 taiwan_stock_tick_snapshot）---
+
+
+def test_fetch_tick_snapshot_success(monkeypatch):
+    """回原始 payload（含 data）。"""
+    monkeypatch.setenv("FINMIND_TOKENS", '["tok1"]')
+    payload = {"data": [{"close": 580.0, "stock_name": "台積電", "volume": 100}]}
+    with patch("httpx.Client", return_value=_mock_client(payload)):
+        res = fetch_tick_snapshot("2330")
+    assert res["data"][0]["close"] == 580.0
+
+
+def test_fetch_tick_snapshot_retries_on_402(monkeypatch):
+    """402 額度用盡 → 換下一個 token 重試一次。"""
+    monkeypatch.setenv("FINMIND_TOKENS", '["tok1","tok2"]')
+    ok_payload = {"data": [{"close": 100.0}]}
+
+    resp_402 = MagicMock()
+    resp_402.status_code = 402
+    resp_ok = MagicMock()
+    resp_ok.status_code = 200
+    resp_ok.json.return_value = ok_payload
+
+    client = MagicMock()
+    client.get.side_effect = [resp_402, resp_ok]
+    client.__enter__ = MagicMock(return_value=client)
+    client.__exit__ = MagicMock(return_value=False)
+
+    with patch("httpx.Client", return_value=client):
+        res = fetch_tick_snapshot("2330")
+    assert res["data"][0]["close"] == 100.0
+    assert client.get.call_count == 2
+
+
+def test_fetch_tick_snapshot_http_error(monkeypatch):
+    """非 200/402 → 回 error。"""
+    monkeypatch.setenv("FINMIND_TOKENS", '["tok1"]')
+    with patch("httpx.Client", return_value=_mock_client({}, status=500)):
+        res = fetch_tick_snapshot("2330")
+    assert "error" in res

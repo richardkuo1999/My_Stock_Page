@@ -11,10 +11,10 @@
   查詢走本地索引很快；需要讀某篇全文時才即時去 Drive 抓那一份 .md。
 
 CLI（詳細見各子命令 --help；離線可測的在前，需憑證的在後）:
-  python tools/broker_reports.py --stock 2330            # 查個股相關報告（列表+摘要）
-  python tools/broker_reports.py --sector 記憶體          # 依主題/產業關鍵字查 sector 報告
-  python tools/broker_reports.py --detail <file_id>       # 抓單篇 .md 全文（需 Drive 憑證）
-  python tools/broker_reports.py --sync                   # 重建/更新本地 metadata 索引（需憑證）
+  python tools/raw/broker_reports.py --stock 2330            # 查個股相關報告（列表+摘要）
+  python tools/raw/broker_reports.py --sector 記憶體          # 依主題/產業關鍵字查 sector 報告
+  python tools/raw/broker_reports.py --detail <file_id>       # 抓單篇 .md 全文（需 Drive 憑證）
+  python tools/raw/broker_reports.py --sync                   # 重建/更新本地 metadata 索引（需憑證）
 
 回傳：一律 JSON。查詢類回 {"reports": [...]}；--detail 回 {"file_id","text",...}；
       失敗回 {"error": str}。
@@ -727,7 +727,7 @@ def _reports_json(reports: list[ReportMeta]) -> dict:
 
 def _main(argv: list[str]) -> int:
     if not argv:
-        print(_json.dumps({"error": "用法見檔案開頭 docstring（--stock/--sector/--detail/--sync）"}, ensure_ascii=False))
+        print(_json.dumps({"error": "用法見檔案開頭 docstring（--stock/--sector/--detail/--stats/--sync）"}, ensure_ascii=False))
         return 1
 
     cmd = argv[0]

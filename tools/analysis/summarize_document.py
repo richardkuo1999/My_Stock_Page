@@ -1,16 +1,23 @@
 """summarize_document — URL/PDF 文件摘要
-用法: python tools/summarize_document.py URL
+用法: python tools/analysis/summarize_document.py URL
 回傳: JSON {"title": str, "summary": str, "source_url": str}
 """
 
 import asyncio
 import json
 import logging
+import os
 import sys
 from urllib.parse import urlparse
 
 import httpx
 from dotenv import load_dotenv
+
+# 直接跑 python tools/analysis/summarize_document.py 時，repo 根不在 sys.path，
+# 補上以便 import agent.bridge（AI 摘要）。
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -174,7 +181,7 @@ async def summarize(url: str) -> dict:
 if __name__ == "__main__":
     args = sys.argv[1:]
     if not args:
-        print(json.dumps({"error": "用法: python tools/summarize_document.py URL"}, ensure_ascii=False))
+        print(json.dumps({"error": "用法: python tools/analysis/summarize_document.py URL"}, ensure_ascii=False))
         sys.exit(1)
 
     url = args[0]

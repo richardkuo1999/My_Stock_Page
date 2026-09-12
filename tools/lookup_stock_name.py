@@ -146,17 +146,17 @@ async def fetch_stock_pool() -> dict[str, str]:
     """Fetch the full Taiwan stock code→name map from UAnalyze gidp StockPool.
 
     純資料拉取，不呼叫 AI。用 async httpx（不用 requests）。失敗回 {}。
-    局部 import tools.uanalyze 以避免頂層 import 循環 / 副作用。
+    局部 import raw/uanalyze 以避免頂層依賴（防循環 / 副作用）。
     """
     try:
         import httpx
 
         # 局部 import：避免 lookup_stock_name 頂層依賴 uanalyze（防循環 / 副作用）。
-        # 支援兩種執行情境：套件 import（tools.uanalyze）與直接跑 script（uanalyze）。
+        # 借用 raw/uanalyze 的認證基礎打 StockPool（gidp）。
         try:
-            from tools.uanalyze import _auth, GIDP_BASE_URL, DEFAULT_TIMEOUT
+            from tools.raw.uanalyze import _auth, GIDP_BASE_URL, DEFAULT_TIMEOUT
         except ImportError:
-            from uanalyze import _auth, GIDP_BASE_URL, DEFAULT_TIMEOUT
+            from raw.uanalyze import _auth, GIDP_BASE_URL, DEFAULT_TIMEOUT
 
         headers = _auth.gidp_headers()
         url = f"{GIDP_BASE_URL}/data_fetch/api/StockPool"

@@ -1,4 +1,4 @@
-"""Tests for tools/fetch_news.py."""
+"""Tests for tools/raw/news_sources.py + tools/analysis/news.py（新聞拆分後）。"""
 
 import json
 from datetime import datetime
@@ -6,19 +6,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tools.fetch_news import (
+from tools.raw.news_sources import (
     SOURCES,
-    _cached_stock_name,
     _deduplicate,
     _diversify_by_source,
     _dispatch_source,
     _fetch_cnyes,
     _fetch_forecastock,
-    _filter_by_keywords,
     _fetch_rss,
     _make_article,
-    _read_news_cache,
     _sort_by_date,
+)
+from tools.analysis.news import (
+    _cached_stock_name,
+    _filter_by_keywords,
+    _read_news_cache,
     _write_news_cache,
     fetch,
     latest,
@@ -29,7 +31,7 @@ from tools.fetch_news import (
 def _isolate_news_cache(tmp_path, monkeypatch):
     """Redirect the news cache to a temp file so tests never touch real data/
     and don't leak cached results into each other."""
-    import tools.fetch_news as fn
+    import tools.analysis.news as fn
 
     monkeypatch.setattr(fn, "NEWS_CACHE_FILE", tmp_path / "news_cache.json")
 
@@ -197,7 +199,7 @@ async def test_latest_parallel():
     mock_rss_response = _make_httpx_response(200, text=SAMPLE_RSS_XML)
     mock_json_response = _make_httpx_response(200, json_data=SAMPLE_CNYES_RESPONSE)
 
-    with patch("tools.fetch_news.httpx.AsyncClient") as MockClient:
+    with patch("tools.raw.news_sources.httpx.AsyncClient") as MockClient:
         mock_client = AsyncMock()
         # Return RSS for text requests, JSON for json requests
         mock_client.get = AsyncMock(return_value=mock_rss_response)
@@ -233,9 +235,9 @@ async def test_fetch_with_keyword():
             {"title": "某報告提到台積電供應鏈", "source": "Fugle", "date": "2026-01-01", "url": "https://x/3", "summary": ""},
         ]
     }
-    with patch("tools.fetch_news.latest", new=AsyncMock(return_value=pool)), patch(
-        "tools.fetch_news._fetch_cnyes", new=AsyncMock(return_value=[])
-    ), patch("tools.fetch_news._cached_stock_name", return_value="台積電"):
+    with patch("tools.analysis.news.latest", new=AsyncMock(return_value=pool)), patch(
+        "tools.analysis.news._fetch_cnyes", new=AsyncMock(return_value=[])
+    ), patch("tools.analysis.news._cached_stock_name", return_value="台積電"):
         result = await fetch("台積電", limit=5)
 
     titles = [a["title"] for a in result["articles"]]
@@ -253,9 +255,9 @@ async def test_fetch_keyword_matches_bare_code():
             {"title": "無關新聞", "source": "CNYES", "date": "2026-01-01", "url": "https://x/2", "summary": ""},
         ]
     }
-    with patch("tools.fetch_news.latest", new=AsyncMock(return_value=pool)), patch(
-        "tools.fetch_news._fetch_cnyes", new=AsyncMock(return_value=[])
-    ), patch("tools.fetch_news._cached_stock_name", return_value=None):
+    with patch("tools.analysis.news.latest", new=AsyncMock(return_value=pool)), patch(
+        "tools.analysis.news._fetch_cnyes", new=AsyncMock(return_value=[])
+    ), patch("tools.analysis.news._cached_stock_name", return_value=None):
         result = await fetch("2330", limit=5)
 
     titles = [a["title"] for a in result["articles"]]
@@ -265,7 +267,7 @@ async def test_fetch_keyword_matches_bare_code():
 @pytest.mark.asyncio
 async def test_fetch_without_symbol_returns_latest():
     """fetch(None) returns latest from all sources."""
-    with patch("tools.fetch_news.httpx.AsyncClient") as MockClient:
+    with patch("tools.raw.news_sources.httpx.AsyncClient") as MockClient:
         mock_client = AsyncMock()
         response = _make_httpx_response(200, text=SAMPLE_RSS_XML)
         mock_client.get = AsyncMock(return_value=response)
@@ -295,7 +297,7 @@ async def test_fetch_handles_failures():
             raise Exception("Simulated network failure")
         return _make_httpx_response(200, text=SAMPLE_RSS_XML)
 
-    with patch("tools.fetch_news.httpx.AsyncClient") as MockClient:
+    with patch("tools.raw.news_sources.httpx.AsyncClient") as MockClient:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(side_effect=mock_get)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -403,7 +405,7 @@ def test_cli_with_symbol(monkeypatch):
     import subprocess
 
     # We test the import interface instead to avoid network calls
-    from tools.fetch_news import fetch, latest
+    from tools.analysis.news import fetch, latest
 
     assert callable(fetch)
     assert callable(latest)
@@ -451,7 +453,7 @@ async def test_fetch_forecastock_parses_articles():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("tools.fetch_news.httpx.AsyncClient", return_value=mock_client):
+    with patch("tools.raw.news_sources.httpx.AsyncClient", return_value=mock_client):
         articles = await _fetch_forecastock(AsyncMock())
 
     assert len(articles) == 2
@@ -469,7 +471,7 @@ async def test_fetch_forecastock_http_error():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("tools.fetch_news.httpx.AsyncClient", return_value=mock_client):
+    with patch("tools.raw.news_sources.httpx.AsyncClient", return_value=mock_client):
         articles = await _fetch_forecastock(AsyncMock())
 
     assert articles == []
@@ -481,7 +483,7 @@ async def test_fetch_forecastock_http_error():
 @pytest.mark.asyncio
 async def test_fetch_fintastic_parses_wp_api():
     """Fintastic parses WordPress REST API posts."""
-    from tools.fetch_news import _fetch_fintastic
+    from tools.raw.news_sources import _fetch_fintastic
 
     wp_posts = [
         {
@@ -503,7 +505,7 @@ async def test_fetch_fintastic_parses_wp_api():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("tools.fetch_news.httpx.AsyncClient", return_value=mock_client):
+    with patch("tools.raw.news_sources.httpx.AsyncClient", return_value=mock_client):
         articles = await _fetch_fintastic(AsyncMock())
 
     assert len(articles) == 2
@@ -515,7 +517,7 @@ async def test_fetch_fintastic_parses_wp_api():
 @pytest.mark.asyncio
 async def test_fetch_fintastic_blocked():
     """Fintastic returns empty on non-200."""
-    from tools.fetch_news import _fetch_fintastic
+    from tools.raw.news_sources import _fetch_fintastic
 
     resp = _make_httpx_response(403, text="")
     mock_client = AsyncMock()
@@ -523,7 +525,7 @@ async def test_fetch_fintastic_blocked():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("tools.fetch_news.httpx.AsyncClient", return_value=mock_client):
+    with patch("tools.raw.news_sources.httpx.AsyncClient", return_value=mock_client):
         articles = await _fetch_fintastic(AsyncMock())
 
     assert articles == []
@@ -581,7 +583,7 @@ def test_diversify_respects_limit_and_exhaustion():
 
 def test_news_cache_write_then_read_fresh(tmp_path, monkeypatch):
     """A freshly written cache is read back."""
-    import tools.fetch_news as fn
+    import tools.analysis.news as fn
 
     monkeypatch.setattr(fn, "NEWS_CACHE_FILE", tmp_path / "news_cache.json")
     arts = [{"title": "a", "source": "S", "url": "u"}]
@@ -594,7 +596,7 @@ def test_news_cache_expired_returns_none(tmp_path, monkeypatch):
     import json as _json
     import time as _time
 
-    import tools.fetch_news as fn
+    import tools.analysis.news as fn
 
     f = tmp_path / "news_cache.json"
     monkeypatch.setattr(fn, "NEWS_CACHE_FILE", f)
@@ -607,7 +609,7 @@ def test_news_cache_expired_returns_none(tmp_path, monkeypatch):
 
 
 def test_news_cache_missing_returns_none(tmp_path, monkeypatch):
-    import tools.fetch_news as fn
+    import tools.analysis.news as fn
 
     monkeypatch.setattr(fn, "NEWS_CACHE_FILE", tmp_path / "nope.json")
     assert fn._read_news_cache() is None
@@ -616,7 +618,7 @@ def test_news_cache_missing_returns_none(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_latest_uses_cache(tmp_path, monkeypatch):
     """latest() serves the cache when fresh and only fetches once."""
-    import tools.fetch_news as fn
+    import tools.analysis.news as fn
 
     monkeypatch.setattr(fn, "NEWS_CACHE_FILE", tmp_path / "news_cache.json")
     fetch_calls = {"n": 0}
@@ -679,13 +681,13 @@ def _patch_ua_auth(token="tok-123"):
             "Referer": "https://pro.uanalyze.com.tw/",
         }
     )
-    return patch("tools.uanalyze._auth", auth)
+    return patch("tools.raw.uanalyze._auth", auth)
 
 
 @pytest.mark.asyncio
 async def test_fetch_ua_column_parses_columns():
     """UAnalyze專欄 parses data.columns → articles with HTML-stripped summary."""
-    from tools.fetch_news import _fetch_ua_column
+    from tools.raw.news_sources import _fetch_ua_column
 
     response = _make_httpx_response(200, json_data=SAMPLE_UA_COLUMN_RESPONSE)
     mock_client = _mock_async_client(response)
@@ -712,14 +714,14 @@ async def test_fetch_ua_column_parses_columns():
 @pytest.mark.asyncio
 async def test_fetch_ua_column_no_token_returns_empty():
     """No token → returns [] without hitting the API."""
-    from tools.fetch_news import _fetch_ua_column
+    from tools.raw.news_sources import _fetch_ua_column
 
     auth = MagicMock()
     auth.ensure_token = AsyncMock(return_value=None)
     mock_client = AsyncMock()
     mock_client.get = AsyncMock()
 
-    with patch("tools.uanalyze._auth", auth):
+    with patch("tools.raw.uanalyze._auth", auth):
         articles = await _fetch_ua_column(mock_client)
 
     assert articles == []
@@ -729,7 +731,7 @@ async def test_fetch_ua_column_no_token_returns_empty():
 @pytest.mark.asyncio
 async def test_fetch_ua_column_http_error_returns_empty():
     """Non-200 → returns [] (does not break other sources)."""
-    from tools.fetch_news import _fetch_ua_column
+    from tools.raw.news_sources import _fetch_ua_column
 
     response = _make_httpx_response(500, json_data={})
     mock_client = _mock_async_client(response)
@@ -772,7 +774,7 @@ _ARTICLE_HTML = """
 
 @pytest.fixture
 def fulltext_cache_tmp(tmp_path, monkeypatch):
-    import tools.fetch_news as fn
+    import tools.raw.news_sources as fn
 
     cache = tmp_path / "news_fulltext_cache.json"
     monkeypatch.setattr(fn, "FULLTEXT_CACHE_FILE", cache)
@@ -794,7 +796,7 @@ def _mock_client(html_text):
 
 @pytest.mark.asyncio
 async def test_fulltext_extracts_body(fulltext_cache_tmp):
-    from tools.fetch_news import fetch_fulltext
+    from tools.raw.news_sources import fetch_fulltext
 
     with patch("httpx.AsyncClient", return_value=_mock_client(_ARTICLE_HTML)):
         r = await fetch_fulltext("https://news.example.com/a")
@@ -811,7 +813,7 @@ async def test_fulltext_extracts_body(fulltext_cache_tmp):
 
 @pytest.mark.asyncio
 async def test_fulltext_cache_hit_skips_fetch(fulltext_cache_tmp):
-    from tools.fetch_news import fetch_fulltext
+    from tools.raw.news_sources import fetch_fulltext
 
     url = "https://news.example.com/a"
     with patch("httpx.AsyncClient", return_value=_mock_client(_ARTICLE_HTML)) as m:
@@ -825,7 +827,7 @@ async def test_fulltext_cache_hit_skips_fetch(fulltext_cache_tmp):
 
 @pytest.mark.asyncio
 async def test_fulltext_short_body_returns_error(fulltext_cache_tmp):
-    from tools.fetch_news import fetch_fulltext
+    from tools.raw.news_sources import fetch_fulltext
 
     thin = "<html><body><p>太短</p></body></html>"
     with patch("httpx.AsyncClient", return_value=_mock_client(thin)):
@@ -836,7 +838,7 @@ async def test_fulltext_short_body_returns_error(fulltext_cache_tmp):
 
 @pytest.mark.asyncio
 async def test_fulltext_invalid_url():
-    from tools.fetch_news import fetch_fulltext
+    from tools.raw.news_sources import fetch_fulltext
 
     r = await fetch_fulltext("not-a-url")
     assert "error" in r
@@ -844,7 +846,7 @@ async def test_fulltext_invalid_url():
 
 @pytest.mark.asyncio
 async def test_fulltext_truncates_long_body(fulltext_cache_tmp):
-    from tools.fetch_news import FULLTEXT_MAX_CHARS, fetch_fulltext
+    from tools.raw.news_sources import FULLTEXT_MAX_CHARS, fetch_fulltext
 
     para = "這是一段夠長的新聞內文段落用來測試截斷行為。" * 20  # >100 chars
     body = "".join(f"<p>{para}{i}</p>" for i in range(200))

@@ -1,6 +1,6 @@
 """draw_kchart — 繪製 K 線圖並回傳圖片路徑
-用法: python tools/draw_kchart.py SYMBOL [--period N]
-回傳: JSON {"image_path": "/tmp/kchart_SYMBOL.png"}
+用法: python tools/analysis/draw_kchart.py SYMBOL [--period N]
+回傳: JSON {"image_path": "<系統暫存目錄>/kchart_SYMBOL_*.png"}
 """
 
 import asyncio
@@ -9,73 +9,53 @@ import logging
 import os
 import sys
 import tempfile
-from datetime import datetime, timedelta
 
-import httpx
 import matplotlib
 matplotlib.use("Agg")  # Non-interactive backend
 import mplfinance as mpf
 import pandas as pd
 from dotenv import load_dotenv
 
+# 直接跑時補 repo 根到 sys.path，以便 import tools.raw.fugle。
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from tools.raw import fugle as raw_fugle
+from tools.analysis._chart_font import setup_cjk_font
+
+# 選中的跨平台中文字型（同時設全域 rcParams）；mplfinance 會用自己的 style rcParams
+# 覆蓋全域，故 _render_chart 需再把此字型透過 make_mpf_style(rc=...) 傳進去。
+_CJK_FONT = setup_cjk_font()
+
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-FUGLE_BASE = "https://api.fugle.tw/marketdata/v1.0/stock"
 DEFAULT_PERIOD = 60
-DEFAULT_TIMEOUT = 15.0
 MA_PERIODS = [5, 20, 60]
 
 
-def _get_fugle_api_key() -> str | None:
-    key = os.getenv("FUGLE_API_KEY", "").strip().strip('"').strip("'")
-    return key if key else None
-
-
 async def _fetch_historical(symbol: str, period: int) -> pd.DataFrame | None:
-    """Fetch historical daily candles from Fugle API."""
-    key = _get_fugle_api_key()
-    if not key:
+    """歷史日K（委派 raw/fugle），整成 mplfinance 要的 OHLCV frame（analysis 加工）。"""
+    # 多取 MA60 + 假日緩衝，讓 MA 從第一天就畫得出來。
+    extra_days = max(MA_PERIODS) + 30
+    res = await raw_fugle.fetch_historical_candles(symbol, days=period + extra_days)
+    if not isinstance(res, dict) or "error" in res:
+        return None
+    candles = res.get("data", [])
+    if not candles:
         return None
 
-    # Request extra days for MA calculation (need MA60 to display from day 1)
-    extra_days = max(MA_PERIODS) + 30  # buffer for weekends/holidays
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=period + extra_days)
-
-    url = f"{FUGLE_BASE}/historical/candles/{symbol}"
-    params = {
-        "from": start_date.strftime("%Y-%m-%d"),
-        "to": end_date.strftime("%Y-%m-%d"),
-        "timeframe": "D",
-        "fields": "open,high,low,close,volume",
-        "sort": "asc",
-    }
-    headers = {"X-API-KEY": key, "Accept": "application/json"}
-
-    try:
-        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-            r = await client.get(url, headers=headers, params=params)
-            if r.status_code != 200:
-                logger.debug("Fugle candles %s: HTTP %d", symbol, r.status_code)
-                return None
-            data = r.json()
-            candles = data.get("data", [])
-            if not candles:
-                return None
-
-            df = pd.DataFrame(candles)
-            df["date"] = pd.to_datetime(df["date"])
-            df.set_index("date", inplace=True)
-            df = df.rename(columns={
-                "open": "Open", "high": "High", "low": "Low",
-                "close": "Close", "volume": "Volume",
-            })
-            df = df[["Open", "High", "Low", "Close", "Volume"]].astype(float)
-            return df
-    except Exception as e:
-        logger.debug("Fugle candles error for %s: %s", symbol, e)
-        return None
+    df = pd.DataFrame(candles)
+    df["date"] = pd.to_datetime(df["date"])
+    df.set_index("date", inplace=True)
+    df = df.rename(columns={
+        "open": "Open", "high": "High", "low": "Low",
+        "close": "Close", "volume": "Volume",
+    })
+    df = df[["Open", "High", "Low", "Close", "Volume"]].astype(float)
+    df.sort_index(inplace=True)
+    return df
 
 
 def _render_chart(df: pd.DataFrame, symbol: str, period: int) -> str:
@@ -93,7 +73,14 @@ def _render_chart(df: pd.DataFrame, symbol: str, period: int) -> str:
         wick={"up": "#e74c3c", "down": "#2ecc71"},
         volume={"up": "#e74c3c", "down": "#2ecc71"},
     )
-    style = mpf.make_mpf_style(marketcolors=mc, gridstyle="-", gridcolor="#f0f0f0")
+    # mplfinance 會用 style 內的 rcParams 覆蓋全域，故把中文字型透過 rc 傳進去，
+    # 否則標題/軸的中文（如「日K」）會變方框。
+    rc = {}
+    if _CJK_FONT:
+        rc = {"font.sans-serif": [_CJK_FONT], "axes.unicode_minus": False}
+    style = mpf.make_mpf_style(
+        marketcolors=mc, gridstyle="-", gridcolor="#f0f0f0", rc=rc
+    )
 
     # Create temp file
     fd, path = tempfile.mkstemp(prefix=f"kchart_{symbol}_", suffix=".png")
@@ -146,7 +133,7 @@ async def draw(symbol: str, period: int = DEFAULT_PERIOD) -> dict:
 if __name__ == "__main__":
     args = sys.argv[1:]
     if not args:
-        print(json.dumps({"error": "用法: python tools/draw_kchart.py SYMBOL [--period N]"}, ensure_ascii=False))
+        print(json.dumps({"error": "用法: python tools/analysis/draw_kchart.py SYMBOL [--period N]"}, ensure_ascii=False))
         sys.exit(1)
 
     symbol = args[0]

@@ -6,18 +6,19 @@ macOS 常見 SSL 憑證問題，httpx 用 verify=False（沿用專案既有做�
 每個 dataset 一個 function，回原始 rows（list[dict]）；CLI 用子命令對應。
 
 用法:
-  python tools/finmind.py --per 2330 [--start 2023-01-01]      # 本益比/淨值比/殖利率
-  python tools/finmind.py --price 2330 [--start ...]           # 日收盤價量
-  python tools/finmind.py --revenue 2330                       # 月營收
-  python tools/finmind.py --income 2330                        # 綜合損益表
-  python tools/finmind.py --balance 2330                       # 資產負債表
-  python tools/finmind.py --cashflow 2330                      # 現金流量表
-  python tools/finmind.py --dividend 2330                      # 股利政策
-  python tools/finmind.py --institution 2330                   # 法人買賣超
-  python tools/finmind.py --margin 2330                        # 融資融券
-  python tools/finmind.py --shareholding 2330                  # 外資持股
-  python tools/finmind.py --info 2330                          # 基本資料
-  python tools/finmind.py --news 2330                          # 相關新聞
+  python tools/raw/finmind.py --per 2330 [--start 2023-01-01]      # 本益比/淨值比/殖利率
+  python tools/raw/finmind.py --price 2330 [--start ...]           # 日收盤價量
+  python tools/raw/finmind.py --revenue 2330                       # 月營收
+  python tools/raw/finmind.py --income 2330                        # 綜合損益表
+  python tools/raw/finmind.py --balance 2330                       # 資產負債表
+  python tools/raw/finmind.py --cashflow 2330                      # 現金流量表
+  python tools/raw/finmind.py --dividend 2330                      # 股利政策
+  python tools/raw/finmind.py --institution 2330                   # 法人買賣超
+  python tools/raw/finmind.py --margin 2330                        # 融資融券
+  python tools/raw/finmind.py --shareholding 2330                  # 外資持股
+  python tools/raw/finmind.py --info 2330                          # 基本資料
+  python tools/raw/finmind.py --news 2330                          # 相關新聞
+  python tools/raw/finmind.py --snapshot 2330                      # 即時 tick 快照（另一端點）
 
 回傳: JSON {"dataset", "data_id", "data": [...]} 或 {"error"}。
 """
@@ -35,6 +36,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
+FINMIND_TICK_SNAPSHOT_URL = "https://api.finmindtrade.com/api/v4/taiwan_stock_tick_snapshot"
 DEFAULT_TIMEOUT = 25.0
 
 # CLI flag → (dataset, 是否需要 start_date)
@@ -173,6 +175,38 @@ def fetch_news(data_id: str, start_date: str | None = None) -> dict:
     return fetch_dataset("TaiwanStockNews", data_id, start_date or _default_start(30))
 
 
+def fetch_tick_snapshot(data_id: str) -> dict:
+    """即時 tick 快照（收盤/漲跌/量，單一端點 taiwan_stock_tick_snapshot）。
+
+    與各 dataset 走不同端點（/taiwan_stock_tick_snapshot），回原始 payload。
+    402/403 額度用盡時換下一個 token 重試一次。回 {"data":[...]} 或 {"error"}。
+    """
+    headers = {"Authorization": f"Bearer {_next_token()}"}
+    params = {"data_id": data_id}
+    try:
+        with httpx.Client(timeout=DEFAULT_TIMEOUT, verify=False) as client:
+            r = client.get(FINMIND_TICK_SNAPSHOT_URL, headers=headers, params=params)
+            if r.status_code in (402, 403):
+                headers = {"Authorization": f"Bearer {_next_token()}"}
+                r = client.get(FINMIND_TICK_SNAPSHOT_URL, headers=headers, params=params)
+            if r.status_code != 200:
+                # 400 + "level is free" = 此端點需 FinMind 付費方案，非程式錯誤。
+                detail = ""
+                try:
+                    msg = r.json().get("msg", "")
+                    if "level is free" in msg:
+                        detail = "（此端點需 FinMind 付費方案；免費 token 無權限）"
+                    elif msg:
+                        detail = f"（{msg[:80]}）"
+                except Exception:
+                    pass
+                return {"error": f"FinMind tick_snapshot HTTP {r.status_code}: {data_id}{detail}"}
+            return r.json()
+    except Exception as e:
+        logger.debug("FinMind tick_snapshot error: %s", e)
+        return {"error": f"FinMind tick_snapshot 請求失敗: {e}"}
+
+
 def _parse_args(argv: list[str]) -> tuple[str, str, str | None]:
     mode = None
     symbol = None
@@ -209,10 +243,21 @@ def _run(mode: str, symbol: str, start: str | None) -> dict:
 
 if __name__ == "__main__":
     args = sys.argv[1:]
+    # snapshot 走不同端點（非 /data dataset），特判。
+    if "--snapshot" in args:
+        idx = args.index("--snapshot")
+        sym = args[idx + 1] if idx + 1 < len(args) else None
+        if not sym:
+            print(json.dumps({"error": "用法: python tools/raw/finmind.py --snapshot SYMBOL"}, ensure_ascii=False))
+            sys.exit(1)
+        result = fetch_tick_snapshot(sym)
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if isinstance(result, dict) and "error" in result else 0)
+
     mode, symbol, start = _parse_args(args)
     if not mode or not symbol:
         flags = "|".join(f"--{m}" for m in _MODE_DATASET)
-        print(json.dumps({"error": f"用法: python tools/finmind.py [{flags}] SYMBOL [--start YYYY-MM-DD]"},
+        print(json.dumps({"error": f"用法: python tools/raw/finmind.py [{flags}|--snapshot] SYMBOL [--start YYYY-MM-DD]"},
                          ensure_ascii=False))
         sys.exit(1)
 

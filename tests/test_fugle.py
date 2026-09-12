@@ -1,10 +1,10 @@
-"""Tests for tools/fugle.py."""
+"""Tests for tools/raw/fugle.py."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tools.fugle import fetch_historical_candles, fetch_quote, fetch_stats, fetch_ticker
+from tools.raw.fugle import fetch_historical_candles, fetch_quote, fetch_stats, fetch_ticker
 
 
 def _mock_client(json_data, status=200):
@@ -22,7 +22,7 @@ def _mock_client(json_data, status=200):
 async def test_fetch_quote_success():
     payload = {"symbol": "2330", "name": "台積電", "closePrice": 2410}
     with (
-        patch("tools.fugle._get_key", return_value="k"),
+        patch("tools.raw.fugle._get_key", return_value="k"),
         patch("httpx.AsyncClient", return_value=_mock_client(payload)),
     ):
         res = await fetch_quote("2330")
@@ -32,7 +32,7 @@ async def test_fetch_quote_success():
 
 @pytest.mark.asyncio
 async def test_fetch_no_key():
-    with patch("tools.fugle._get_key", return_value=None):
+    with patch("tools.raw.fugle._get_key", return_value=None):
         res = await fetch_quote("2330")
     assert "error" in res
     assert "FUGLE_API_KEY" in res["error"]
@@ -41,7 +41,7 @@ async def test_fetch_no_key():
 @pytest.mark.asyncio
 async def test_fetch_http_error():
     with (
-        patch("tools.fugle._get_key", return_value="k"),
+        patch("tools.raw.fugle._get_key", return_value="k"),
         patch("httpx.AsyncClient", return_value=_mock_client({}, status=403)),
     ):
         res = await fetch_ticker("2330")
@@ -53,7 +53,7 @@ async def test_fetch_http_error():
 async def test_fetch_stats_success():
     payload = {"symbol": "2330", "week52High": 2500, "week52Low": 800}
     with (
-        patch("tools.fugle._get_key", return_value="k"),
+        patch("tools.raw.fugle._get_key", return_value="k"),
         patch("httpx.AsyncClient", return_value=_mock_client(payload)),
     ):
         res = await fetch_stats("2330")
@@ -79,7 +79,7 @@ async def test_fetch_historical_candles_params():
     client.__aexit__ = AsyncMock(return_value=False)
 
     with (
-        patch("tools.fugle._get_key", return_value="k"),
+        patch("tools.raw.fugle._get_key", return_value="k"),
         patch("httpx.AsyncClient", return_value=client),
     ):
         res = await fetch_historical_candles("2330", days=30)
@@ -111,7 +111,7 @@ async def test_fetch_historical_candles_multi_segment():
     client.__aexit__ = AsyncMock(return_value=False)
 
     with (
-        patch("tools.fugle._get_key", return_value="k"),
+        patch("tools.raw.fugle._get_key", return_value="k"),
         patch("httpx.AsyncClient", return_value=client),
     ):
         res = await fetch_historical_candles("2330", days=1277)  # ~3.5 年

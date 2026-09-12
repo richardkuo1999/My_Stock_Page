@@ -4,10 +4,9 @@
 內部自動轉成 CNYES 格式 TWS:2330:STOCK（上櫃 5 碼以 OTC 前綴，見 _to_sym）。
 
 用法:
-  python tools/cnyes.py --eps 2330        # FactSet 各年度預估 EPS
-  python tools/cnyes.py --target 2330     # 分析師目標價共識
-  python tools/cnyes.py --quote 2330      # 即時報價（數字代碼欄位已解碼）
-  python tools/cnyes.py --candles 2330 [--days N]   # 歷史日K線
+  python tools/raw/cnyes.py --eps 2330        # FactSet 各年度預估 EPS
+  python tools/raw/cnyes.py --target 2330     # 分析師目標價共識
+  python tools/raw/cnyes.py --quote 2330      # 即時報價（數字代碼欄位已解碼）
 
 回傳: JSON。失敗時 {"error": "..."}。
 """
@@ -16,7 +15,6 @@ import asyncio
 import json
 import logging
 import sys
-from datetime import datetime, timedelta
 
 import httpx
 
@@ -177,86 +175,40 @@ async def fetch_quote(symbol: str) -> dict:
     return decoded
 
 
-async def fetch_history(symbol: str, days: int = 365) -> dict:
-    """歷史日K線。回 {"symbol", "candles": [{date, open, high, low, close, volume}...]}。"""
-    sym = _to_sym(symbol)
-    now = datetime.now()
-    frm = now - timedelta(days=days)
-    url = f"{WS_BASE}/charting/history"
-    params = {
-        "symbol": sym,
-        "resolution": "D",
-        "from": int(frm.timestamp()),
-        "to": int(now.timestamp()),
-    }
-    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-        payload = await _get_json(client, url, params=params)
-    if not payload or payload.get("statusCode") != 200:
-        return {"error": f"CNYES 歷史K線查無資料: {symbol}"}
-    data = payload.get("data", {})
-    t = data.get("t", []) or []
-    o = data.get("o", []) or []
-    h = data.get("h", []) or []
-    low = data.get("l", []) or []
-    c = data.get("c", []) or []
-    v = data.get("v", []) or []
-    candles = []
-    for i in range(len(t)):
-        candles.append({
-            "date": datetime.fromtimestamp(t[i]).strftime("%Y-%m-%d"),
-            "open": o[i] if i < len(o) else None,
-            "high": h[i] if i < len(h) else None,
-            "low": low[i] if i < len(low) else None,
-            "close": c[i] if i < len(c) else None,
-            "volume": v[i] if i < len(v) else None,
-        })
-    if not candles:
-        return {"error": f"CNYES 歷史K線查無資料: {symbol}"}
-    return {"symbol": symbol, "candles": candles}
-
-
-def _parse_args(argv: list[str]) -> tuple[str, str, int]:
-    """回 (mode, symbol, days)。mode 為 eps/target/quote/candles。"""
+def _parse_args(argv: list[str]) -> tuple[str, str]:
+    """回 (mode, symbol)。mode 為 eps/target/quote。"""
     mode = None
     symbol = None
-    days = 365
-    for flag in ("--eps", "--target", "--quote", "--candles"):
+    for flag in ("--eps", "--target", "--quote"):
         if flag in argv:
             mode = flag[2:]
             idx = argv.index(flag)
             if idx + 1 < len(argv):
                 symbol = argv[idx + 1]
             break
-    if "--days" in argv:
-        try:
-            days = int(argv[argv.index("--days") + 1])
-        except (IndexError, ValueError):
-            pass
-    return mode, symbol, days
+    return mode, symbol
 
 
-async def _run(mode: str, symbol: str, days: int) -> dict:
+async def _run(mode: str, symbol: str) -> dict:
     if mode == "eps":
         return await fetch_estimate_eps(symbol)
     if mode == "target":
         return await fetch_target_price(symbol)
     if mode == "quote":
         return await fetch_quote(symbol)
-    if mode == "candles":
-        return await fetch_history(symbol, days)
     return {"error": "未知模式"}
 
 
 if __name__ == "__main__":
     args = sys.argv[1:]
-    mode, symbol, days = _parse_args(args)
+    mode, symbol = _parse_args(args)
     if not mode or not symbol:
         print(json.dumps({
-            "error": "用法: python tools/cnyes.py [--eps|--target|--quote|--candles] SYMBOL [--days N]"
+            "error": "用法: python tools/raw/cnyes.py [--eps|--target|--quote] SYMBOL"
         }, ensure_ascii=False))
         sys.exit(1)
 
-    result = asyncio.run(_run(mode, symbol, days))
+    result = asyncio.run(_run(mode, symbol))
     print(json.dumps(result, ensure_ascii=False))
     if isinstance(result, dict) and "error" in result:
         sys.exit(1)

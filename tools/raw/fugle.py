@@ -4,13 +4,13 @@
 snapshot（全市場）需更高權限，本工具不含。
 
 用法:
-  python tools/fugle.py --quote 2330          # 即時報價（含五檔 bids/asks）
-  python tools/fugle.py --ticker 2330         # 交易屬性（漲跌停/產業/可否當沖）
-  python tools/fugle.py --intraday-candles 2330   # 當日分鐘K
-  python tools/fugle.py --trades 2330         # 當日成交明細
-  python tools/fugle.py --volumes 2330        # 當日分價量
-  python tools/fugle.py --candles 2330 [--days N]  # 歷史日K
-  python tools/fugle.py --stats 2330          # 52週高低/成交統計
+  python tools/raw/fugle.py --quote 2330          # 即時報價（含五檔 bids/asks）
+  python tools/raw/fugle.py --ticker 2330         # 交易屬性（漲跌停/產業/可否當沖）
+  python tools/raw/fugle.py --intraday-candles 2330   # 當日分鐘K
+  python tools/raw/fugle.py --trades 2330         # 當日成交明細
+  python tools/raw/fugle.py --volumes 2330        # 當日分價量
+  python tools/raw/fugle.py --candles 2330 [--days N]  # 歷史日K
+  python tools/raw/fugle.py --stats 2330          # 52週高低/成交統計
 
 回傳: JSON（Fugle 原始 payload）或 {"error"}。
 """
@@ -172,7 +172,7 @@ if __name__ == "__main__":
     mode, symbol, days = _parse_args(args)
     if not mode or not symbol:
         flags = "|".join(f"--{m}" for m in _MODES)
-        print(json.dumps({"error": f"用法: python tools/fugle.py [{flags}] SYMBOL [--days N]"},
+        print(json.dumps({"error": f"用法: python tools/raw/fugle.py [{flags}] SYMBOL [--days N]"},
                          ensure_ascii=False))
         sys.exit(1)
 

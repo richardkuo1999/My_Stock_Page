@@ -1,10 +1,10 @@
-"""Tests for tools/yfinance_data.py."""
+"""Tests for tools/raw/yfinance_data.py."""
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from tools.yfinance_data import fetch_info, fetch_target
+from tools.raw.yfinance_data import fetch_info, fetch_target
 
 
 def _mock_yf_ticker(info):

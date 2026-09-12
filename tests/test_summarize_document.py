@@ -1,4 +1,4 @@
-"""Tests for tools/summarize_document.py."""
+"""Tests for tools/analysis/summarize_document.py."""
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from tools.summarize_document import (
+from tools.analysis.summarize_document import (
     _extract_text_from_html,
     _fetch_url,
     _summarize_with_agent,
@@ -122,8 +122,8 @@ async def test_summarize_html_success():
     mock_resp = _make_httpx_response(200, SAMPLE_HTML, "text/html; charset=utf-8")
     mock_client = _mock_async_client(mock_resp)
 
-    with patch("tools.summarize_document.httpx.AsyncClient", return_value=mock_client):
-        with patch("tools.summarize_document._summarize_with_agent", new_callable=AsyncMock) as mock_agent:
+    with patch("tools.analysis.summarize_document.httpx.AsyncClient", return_value=mock_client):
+        with patch("tools.analysis.summarize_document._summarize_with_agent", new_callable=AsyncMock) as mock_agent:
             mock_agent.return_value = "這是一篇關於測試的文章摘要。"
 
             result = await summarize("https://example.com/article")
@@ -141,10 +141,10 @@ async def test_summarize_pdf_success():
     mock_resp = _make_httpx_response(200, b"fake-pdf-bytes", "application/pdf")
     mock_client = _mock_async_client(mock_resp)
 
-    with patch("tools.summarize_document.httpx.AsyncClient", return_value=mock_client):
-        with patch("tools.summarize_document._extract_text_from_pdf") as mock_pdf:
+    with patch("tools.analysis.summarize_document.httpx.AsyncClient", return_value=mock_client):
+        with patch("tools.analysis.summarize_document._extract_text_from_pdf") as mock_pdf:
             mock_pdf.return_value = ("PDF Report Title", fake_pdf_text)
-            with patch("tools.summarize_document._summarize_with_agent", new_callable=AsyncMock) as mock_agent:
+            with patch("tools.analysis.summarize_document._summarize_with_agent", new_callable=AsyncMock) as mock_agent:
                 mock_agent.return_value = "PDF 摘要內容。"
 
                 result = await summarize("https://example.com/report.pdf")
@@ -160,7 +160,7 @@ async def test_summarize_url_not_found():
     mock_resp = _make_httpx_response(404, b"Not Found")
     mock_client = _mock_async_client(mock_resp)
 
-    with patch("tools.summarize_document.httpx.AsyncClient", return_value=mock_client):
+    with patch("tools.analysis.summarize_document.httpx.AsyncClient", return_value=mock_client):
         result = await summarize("https://example.com/missing")
 
     assert "error" in result
@@ -175,7 +175,7 @@ async def test_summarize_url_unreachable():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("tools.summarize_document.httpx.AsyncClient", return_value=mock_client):
+    with patch("tools.analysis.summarize_document.httpx.AsyncClient", return_value=mock_client):
         result = await summarize("https://unreachable.invalid/page")
 
     assert "error" in result
@@ -204,7 +204,7 @@ async def test_summarize_insufficient_text():
     mock_resp = _make_httpx_response(200, SAMPLE_HTML_SHORT, "text/html")
     mock_client = _mock_async_client(mock_resp)
 
-    with patch("tools.summarize_document.httpx.AsyncClient", return_value=mock_client):
+    with patch("tools.analysis.summarize_document.httpx.AsyncClient", return_value=mock_client):
         result = await summarize("https://example.com/short")
 
     assert "error" in result
@@ -217,7 +217,7 @@ async def test_summarize_agent_fallback():
     mock_resp = _make_httpx_response(200, SAMPLE_HTML, "text/html; charset=utf-8")
     mock_client = _mock_async_client(mock_resp)
 
-    with patch("tools.summarize_document.httpx.AsyncClient", return_value=mock_client):
+    with patch("tools.analysis.summarize_document.httpx.AsyncClient", return_value=mock_client):
         with patch("agent.bridge.AntigravityCLIBridge.send", new_callable=AsyncMock) as mock_send:
             mock_send.side_effect = RuntimeError("Agent unavailable")
 
@@ -237,10 +237,10 @@ async def test_summarize_pdf_by_content_type():
     mock_resp = _make_httpx_response(200, b"pdf-bytes", "application/pdf; charset=binary")
     mock_client = _mock_async_client(mock_resp)
 
-    with patch("tools.summarize_document.httpx.AsyncClient", return_value=mock_client):
-        with patch("tools.summarize_document._extract_text_from_pdf") as mock_pdf:
+    with patch("tools.analysis.summarize_document.httpx.AsyncClient", return_value=mock_client):
+        with patch("tools.analysis.summarize_document._extract_text_from_pdf") as mock_pdf:
             mock_pdf.return_value = ("Financial Report", fake_pdf_text)
-            with patch("tools.summarize_document._summarize_with_agent", new_callable=AsyncMock) as mock_agent:
+            with patch("tools.analysis.summarize_document._summarize_with_agent", new_callable=AsyncMock) as mock_agent:
                 mock_agent.return_value = "Financial summary."
 
                 # URL does NOT end in .pdf but content-type is application/pdf
@@ -256,8 +256,8 @@ async def test_summarize_whitespace_url():
     mock_resp = _make_httpx_response(200, SAMPLE_HTML, "text/html")
     mock_client = _mock_async_client(mock_resp)
 
-    with patch("tools.summarize_document.httpx.AsyncClient", return_value=mock_client):
-        with patch("tools.summarize_document._summarize_with_agent", new_callable=AsyncMock) as mock_agent:
+    with patch("tools.analysis.summarize_document.httpx.AsyncClient", return_value=mock_client):
+        with patch("tools.analysis.summarize_document._summarize_with_agent", new_callable=AsyncMock) as mock_agent:
             mock_agent.return_value = "Summary."
 
             result = await summarize("  https://example.com/article  ")

@@ -1,7 +1,7 @@
 """draw_intraday_chart — 繪製盤中分時走勢折線圖並回傳圖片路徑
 
-用法: python tools/draw_intraday_chart.py SYMBOL
-回傳: JSON {"image_path": "/tmp/intraday_SYMBOL.png"}
+用法: python tools/analysis/draw_intraday_chart.py SYMBOL
+回傳: JSON {"image_path": "<系統暫存目錄>/intraday_SYMBOL_*.png"}
 
 資料來源：Fugle intraday/candles（每分鐘 OHLCV）+ intraday/quote（前收）。
 純繪圖工具，本身不呼叫任何 AI。
@@ -14,7 +14,6 @@ import os
 import sys
 import tempfile
 
-import httpx
 import matplotlib
 
 matplotlib.use("Agg")  # Non-interactive backend
@@ -23,18 +22,20 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from dotenv import load_dotenv
 
+# 直接跑時補 repo 根到 sys.path，以便 import tools.raw.fugle。
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from tools.raw import fugle as raw_fugle
+from tools.analysis._chart_font import setup_cjk_font
+
+setup_cjk_font()  # 跨平台中文字型（避免圖上中文變方框）
+
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-FUGLE_BASE = "https://api.fugle.tw/marketdata/v1.0/stock"
-DEFAULT_TIMEFRAME = "1"  # 1-minute candles
-DEFAULT_TIMEOUT = 15.0
 _TZ = "Asia/Taipei"
-
-
-def _get_fugle_api_key() -> str | None:
-    key = os.getenv("FUGLE_API_KEY", "").strip().strip('"').strip("'")
-    return key if key else None
 
 
 def _parse_candles(candles: list[dict]) -> pd.DataFrame:
@@ -66,39 +67,25 @@ def _parse_candles(candles: list[dict]) -> pd.DataFrame:
 
 
 async def _fetch_intraday(symbol: str) -> tuple[list[dict], float | None, str]:
-    """Fetch per-minute candles + previous close + name from Fugle.
+    """分鐘K + 前收 + 名稱（委派 raw/fugle 兩支 fetcher）。
 
     Returns (candles, prev_close, name). candles is [] on failure.
     """
-    key = _get_fugle_api_key()
-    if not key:
-        return [], None, ""
-
-    headers = {"X-API-KEY": key, "Accept": "application/json"}
     candles: list[dict] = []
     prev_close: float | None = None
     name = ""
 
-    try:
-        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-            c_url = f"{FUGLE_BASE}/intraday/candles/{symbol}"
-            r = await client.get(
-                c_url, headers=headers, params={"timeframe": DEFAULT_TIMEFRAME}
-            )
-            if r.status_code == 200:
-                candles = r.json().get("data", []) or []
+    c_res = await raw_fugle.fetch_intraday_candles(symbol)
+    if isinstance(c_res, dict) and "error" not in c_res:
+        candles = c_res.get("data", []) or []
 
-            # Previous close + name come from the quote endpoint.
-            q_url = f"{FUGLE_BASE}/intraday/quote/{symbol}"
-            rq = await client.get(q_url, headers=headers)
-            if rq.status_code == 200:
-                q = rq.json()
-                prev = q.get("previousClose") or q.get("referencePrice")
-                if prev is not None:
-                    prev_close = float(prev)
-                name = q.get("name", "") or ""
-    except Exception as e:
-        logger.debug("Fugle intraday fetch error for %s: %s", symbol, e)
+    # 前收與名稱來自 quote endpoint。
+    q_res = await raw_fugle.fetch_quote(symbol)
+    if isinstance(q_res, dict) and "error" not in q_res:
+        prev = q_res.get("previousClose") or q_res.get("referencePrice")
+        if prev is not None:
+            prev_close = float(prev)
+        name = q_res.get("name", "") or ""
 
     return candles, prev_close, name
 
@@ -190,7 +177,7 @@ if __name__ == "__main__":
     if not args:
         print(
             json.dumps(
-                {"error": "用法: python tools/draw_intraday_chart.py SYMBOL"},
+                {"error": "用法: python tools/analysis/draw_intraday_chart.py SYMBOL"},
                 ensure_ascii=False,
             )
         )

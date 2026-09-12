@@ -110,7 +110,7 @@ def _is_duplicate_title(title: str, existing_titles: list[str]) -> bool:
 
 async def news_push_job(bot, subscription_manager, agent_bridge) -> None:
     """Scheduled job: fetch news, filter duplicates, summarize, push to subscribers."""
-    from tools.fetch_news import latest
+    from tools.analysis.news import latest
 
     logger.info("News push job started")
 
@@ -274,7 +274,7 @@ async def uanalyze_push_job(bot, subscription_manager) -> None:
     """Scheduled job: poll UAnalyze for newly published reports and push them to
     subscribers. Dedup by report id (persisted). No AI, no keyword filtering —
     every new report is pushed with a normal notification."""
-    from tools.uanalyze import list_latest_reports
+    from tools.analysis.reports import list_latest_reports
 
     logger.info("UAnalyze report push job started")
 
@@ -390,7 +390,7 @@ async def broker_reports_sync_job() -> None:
     drive_sync() 是同步、會阻塞（實測約 18s，並行列 Drive 檔）；用 asyncio.to_thread
     丟到執行緒跑，避免卡住事件迴圈。缺憑證/套件時 drive_sync 回 {'error':...}（不丟例外），
     這裡記 warning 略過即可——排程照樣下小時再試。"""
-    from tools.broker_reports import drive_sync
+    from tools.raw.broker_reports import drive_sync
 
     logger.info("Broker reports sync job started")
     try:

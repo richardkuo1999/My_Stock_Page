@@ -1,21 +1,20 @@
-"""fetch_news — 取得指定股票的最新新聞，或抓取單篇新聞全文
-用法:
-  python tools/fetch_news.py [SYMBOL] [--limit N] [--all]
-      列出最新新聞（全部來源或指定個股）。每篇回傳 {title, source, date, url, summary}，
-      summary 只是「摘要/前導段」，**不是全文**。
-  python tools/fetch_news.py --fulltext <URL>
-      抓「某一篇」新聞的完整內文（on-demand）。傳入上面某篇文章的 url 即可。
-      要深入分析某篇新聞時，先用上面列出新聞拿到 url，再對該 url 呼叫 --fulltext 讀全文。
-回傳:
-  列表模式: {"articles": [{title, source, date, url, summary}]}
-  --fulltext: {"url", "text", "chars", "truncated"}，失敗或抓不到正文時回 {"url", "error"}
-              （付費牆 / JS 動態頁 / 版型不支援時會回 error，此時改用 summary + 原文連結）。
+"""raw.news_sources — 15 個新聞來源的純取數層（一來源一 fetcher）+ 單篇全文抓取。
+
+只負責「抓」：各來源 fetcher、來源分派、全部來源並行抓取（_fetch_all_sources）、
+單篇全文（fetch_fulltext）。**不做個股過濾/關鍵字比對**（那是 analysis/news.py 的事）。
+
+CLI（Agent 直接跑）:
+  python tools/raw/news_sources.py --all              # 抓全部來源最新（原始池，未過濾）
+  python tools/raw/news_sources.py --fulltext <URL>   # 抓單篇全文
+
+回傳: {"articles":[{title,source,date,url,summary}]} 或 --fulltext {"url","text","chars","truncated"}。
 """
 
 import asyncio
 import html
 import json
 import logging
+import os
 import re
 import sys
 import time
@@ -28,18 +27,18 @@ import httpx
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
+# 直接跑（CLI）時補 repo 根到 sys.path，否則 UAnalyze 專欄來源 import
+# tools.raw.uanalyze._auth 會失敗（JWT 拿不到 → 該來源整個抓不到）。
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 load_dotenv()
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 20.0
 DEFAULT_LIMIT = 10
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) StockBot/1.0"
-
-# News content cache: latest() writes here and reuses it within CACHE_TTL to
-# avoid re-hitting 15 sources on every /news, @mention, or scheduled run.
-NEWS_CACHE_FILE = Path(__file__).resolve().parent.parent / "data" / "news_cache.json"
-CACHE_TTL_SECONDS = 600  # 10 minutes
-
 
 # --- Source Definitions ---
 # Each source has a `name` and a `type` used for dispatch. Verified URLs live
@@ -108,6 +107,7 @@ STATIC_ARTICLES = [
         "summary": "Howard Marks investment memos archive",
     },
 ]
+
 
 
 def _make_article(title: str, source: str, date: str, url: str, summary: str = "") -> dict:
@@ -593,12 +593,12 @@ async def _fetch_ua_column(client: httpx.AsyncClient) -> list[dict]:
     `url` points at the pro homepage. Pure data — no AI. Returns [] on any
     failure so it never breaks the other sources.
     """
-    # Local import with tools.* / bare fallback (works as module or script).
+    # Local import with tools.raw.* / bare fallback (works as module or script).
     try:
-        from tools.uanalyze import _auth
+        from tools.raw.uanalyze import _auth
     except ImportError:  # pragma: no cover - when run as a script from tools/
         try:
-            from uanalyze import _auth
+            from raw.uanalyze import _auth
         except ImportError:
             logger.warning("UAnalyze專欄: cannot import _auth")
             return []
@@ -728,56 +728,9 @@ def _sort_by_date(articles: list[dict]) -> list[dict]:
     return sorted(articles, key=sort_key, reverse=True)
 
 
-# --- Public API ---
 
 
-async def latest(force_refresh: bool = False) -> dict:
-    """Fetch the latest news from all 15 sources, with a short-lived disk cache.
-
-    Within CACHE_TTL_SECONDS, repeated calls return the cached result instead of
-    re-hitting every source. Pass force_refresh=True to bypass the cache.
-
-    Returns:
-        dict with "articles" key containing list of article dicts.
-    """
-    if not force_refresh:
-        cached = _read_news_cache()
-        if cached is not None:
-            logger.info("news: serving %d articles from cache", len(cached))
-            return {"articles": cached}
-
-    result = await _fetch_all_sources()
-    _write_news_cache(result["articles"])
-    return result
-
-
-def _read_news_cache() -> list[dict] | None:
-    """Return cached articles if the cache exists and is fresh, else None."""
-    try:
-        if not NEWS_CACHE_FILE.exists():
-            return None
-        data = json.loads(NEWS_CACHE_FILE.read_text(encoding="utf-8"))
-        fetched_at = data.get("fetched_at", 0)
-        if time.time() - fetched_at > CACHE_TTL_SECONDS:
-            return None  # stale
-        articles = data.get("articles")
-        return articles if isinstance(articles, list) else None
-    except (json.JSONDecodeError, OSError) as e:
-        logger.warning("Failed to read news cache: %s", e)
-        return None
-
-
-def _write_news_cache(articles: list[dict]) -> None:
-    """Persist articles with a fetch timestamp."""
-    try:
-        NEWS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        NEWS_CACHE_FILE.write_text(
-            json.dumps({"fetched_at": time.time(), "articles": articles}, ensure_ascii=False),
-            encoding="utf-8",
-        )
-    except OSError as e:
-        logger.warning("Failed to write news cache: %s", e)
-
+# --- 全部來源並行抓取（原始池）---
 
 async def _fetch_all_sources() -> dict:
     """Fetch from all 15 sources in parallel (no cache)."""
@@ -806,94 +759,6 @@ async def _fetch_all_sources() -> dict:
     return {"articles": all_articles}
 
 
-async def fetch(symbol: str | None = None, limit: int = 10) -> dict:
-    """Fetch news, optionally filtered by a stock keyword.
-
-    Args:
-        symbol: A stock code (e.g. '2330') or company name (e.g. '台積電'). If a
-            code is found in the local name cache, the company name is added as
-            an extra search keyword (Taiwanese headlines use the name, not the
-            code). Resolving an *unknown* code is the Agent's job — it calls
-            tools/lookup_stock_name.py, which writes the answer back to the
-            cache. This tool itself never calls the AI. If None, returns the
-            latest news from all sources.
-        limit: Maximum number of articles to return.
-
-    Returns:
-        dict with "articles" key containing list of article dicts.
-    """
-    if symbol is None:
-        result = await latest()
-        result["articles"] = result["articles"][:limit]
-        return result
-
-    # `symbol` is a stock code (e.g. 2330) or company name. Build search keywords:
-    # the raw symbol plus, if the code is already in the local name cache, the
-    # company name. The tool NEVER calls the AI itself — resolving an unknown
-    # code → name is the Agent's job (it reads/writes the cache via the
-    # lookup_stock_name.py tool). This keeps the pipeline:
-    #   chat_bot → AI → tool → AI → tool   (AI orchestrates; tools stay pure)
-    keywords = [symbol]
-    name = _cached_stock_name(symbol)
-    if name and name != symbol:
-        keywords.append(name)
-
-    # 1) "Database": the latest news already fetched from all 15 sources.
-    # 2) Supplement with CNYES keyword search (low precision, but occasional
-    #    exclusives). Merge, then filter locally by keyword relevance.
-    latest_result = await latest()
-    pool = list(latest_result.get("articles", []))
-
-    headers = {"User-Agent": USER_AGENT}
-    try:
-        async with httpx.AsyncClient(
-            timeout=DEFAULT_TIMEOUT, headers=headers, follow_redirects=True
-        ) as client:
-            pool.extend(await _fetch_cnyes(client, symbol=symbol, limit=limit))
-    except Exception as e:
-        logger.warning("CNYES supplement search failed for %s: %s", symbol, e)
-
-    pool = _deduplicate(pool)
-    matched = _filter_by_keywords(pool, keywords)
-    matched = _sort_by_date(matched)
-    return {"articles": matched[:limit]}
-
-
-def _filter_by_keywords(articles: list[dict], keywords: list[str]) -> list[dict]:
-    """Keep only articles whose title or summary contains any keyword."""
-    if not keywords:
-        return articles
-    lowered = [k.lower() for k in keywords if k]
-    result = []
-    for a in articles:
-        haystack = f"{a.get('title', '')} {a.get('summary', '')}".lower()
-        if any(k in haystack for k in lowered):
-            result.append(a)
-    return result
-
-
-def _cached_stock_name(symbol: str) -> str | None:
-    """Return the company name for a stock code from the local cache, or None.
-
-    Pure data lookup — no AI. Delegates to the shared lookup_stock_name tool so
-    both tools share one JSON file + seed. Resolving an *unknown* code is the
-    Agent's job (it calls tools/lookup_stock_name.py --set to write it back).
-    """
-    if not symbol.isdigit():
-        return None
-    return _lookup_get_name(symbol)
-
-
-def _lookup_get_name(symbol: str) -> str | None:
-    """Import-tolerant accessor to the shared name cache."""
-    try:
-        from tools.lookup_stock_name import get_name
-    except ImportError:  # pragma: no cover - when run as a script from tools/
-        try:
-            from lookup_stock_name import get_name
-        except ImportError:
-            return None
-    return get_name(symbol)
 
 
 # --- Single-article full-text (on-demand) ---
@@ -1025,39 +890,13 @@ async def fetch_fulltext(url: str) -> dict:
     return {"url": url, "text": text, "chars": len(text), "truncated": truncated}
 
 
-# --- CLI Entry Point ---
 
 
+# --- CLI ---
 if __name__ == "__main__":
     args = sys.argv[1:]
-
-    if "--fulltext" in args:
-        # On-demand single-article full text: python tools/fetch_news.py --fulltext <URL>
-        try:
-            url = args[args.index("--fulltext") + 1]
-        except IndexError:
-            result = {"error": "用法: python tools/fetch_news.py --fulltext <URL>"}
-        else:
-            result = asyncio.run(fetch_fulltext(url))
-    elif "--all" in args:
-        # CLI --all always hits live sources (bypasses cache) for debugging.
-        result = asyncio.run(latest(force_refresh=True))
-    elif args and not args[0].startswith("--"):
-        symbol = args[0]
-        limit = DEFAULT_LIMIT
-        if "--limit" in args:
-            try:
-                limit = int(args[args.index("--limit") + 1])
-            except (IndexError, ValueError):
-                pass
-        result = asyncio.run(fetch(symbol, limit))
+    if args and args[0] == "--fulltext" and len(args) > 1:
+        result = asyncio.run(fetch_fulltext(args[1]))
     else:
-        limit = DEFAULT_LIMIT
-        if "--limit" in args:
-            try:
-                limit = int(args[args.index("--limit") + 1])
-            except (IndexError, ValueError):
-                pass
-        result = asyncio.run(fetch(None, limit))
-
+        result = asyncio.run(_fetch_all_sources())
     print(json.dumps(result, ensure_ascii=False))

@@ -1,14 +1,13 @@
-"""Tests for tools/cnyes.py."""
+"""Tests for tools/raw/cnyes.py."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tools.cnyes import (
+from tools.raw.cnyes import (
     _decode_quote,
     _to_sym,
     fetch_estimate_eps,
-    fetch_history,
     fetch_quote,
     fetch_target_price,
 )
@@ -88,23 +87,3 @@ async def test_fetch_quote_decodes():
     assert res["name"] == "台積電"
     assert res["symbol_input"] == "2330"
 
-
-@pytest.mark.asyncio
-async def test_fetch_history_builds_candles():
-    payload = {"statusCode": 200, "data": {
-        "t": [1700000000, 1700086400], "o": [100, 101], "h": [105, 106],
-        "l": [99, 100], "c": [104, 105], "v": [1000, 1100]}}
-    with patch("httpx.AsyncClient", return_value=_mock_client(payload)):
-        res = await fetch_history("2330", days=10)
-    assert res["symbol"] == "2330"
-    assert len(res["candles"]) == 2
-    assert res["candles"][0]["close"] == 104
-    assert res["candles"][1]["volume"] == 1100
-
-
-@pytest.mark.asyncio
-async def test_fetch_history_empty():
-    payload = {"statusCode": 200, "data": {"t": [], "o": [], "h": [], "l": [], "c": [], "v": []}}
-    with patch("httpx.AsyncClient", return_value=_mock_client(payload)):
-        res = await fetch_history("9999")
-    assert "error" in res

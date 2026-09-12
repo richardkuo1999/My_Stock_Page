@@ -7,10 +7,10 @@
 import sys
 from pathlib import Path
 
-# 讓測試能 import tools/broker_reports.py（repo 根為 cwd 時 tools 是 package）。
+# 讓測試能 import tools/raw/broker_reports.py（repo 根為 cwd 時 tools 是 package）。
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.broker_reports import (
+from tools.raw.broker_reports import (
     ReportMeta,
     ext_of,
     parse_sector_filename,

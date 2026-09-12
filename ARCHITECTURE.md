@@ -77,14 +77,22 @@ import asyncio, json
 
 class AntigravityCLIBridge(AgentBridge):
     async def send(self, prompt: str) -> str:
+        # 實際實作：prompt 走 stdin（--input-format stream-json，一行 NDJSON），
+        # 輸出也是 stream-json（NDJSON 事件流），逐行解析取工具序列與最終回覆。
         proc = await asyncio.create_subprocess_exec(
-            "agy", "-p", prompt, "--output-format", "json",
+            "agy", "-p", "",                      # prompt 走 stdin，故 -p 帶空字串
+            "--input-format", "stream-json",
+            "--output-format", "stream-json",
+            "--print-timeout", f"{timeout}s",     # 與外層 wait 對齊，避免過早逾時
+            "--sandbox", "--add-dir", REPO_ROOT,
+            "--dangerously-skip-permissions",
+            cwd=REPO_ROOT,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, _ = await proc.communicate()
-        result = json.loads(stdout)
-        return result["response"]
+        stdout, _ = await proc.communicate(_encode_prompt(prompt))
+        return _parse_ndjson_final_text(stdout)   # 解析事件流，取最終回覆
 
     async def is_available(self) -> bool:
         proc = await asyncio.create_subprocess_exec("agy", "--version", ...)
@@ -135,18 +143,23 @@ Google AI Pro 方案不提供 `GEMINI_API_KEY`，SDK 需要此 key 才能執行�
 
 | Script | 功能 | 範例用法 |
 |--------|------|----------|
-| `tools/fetch_news.py` | 抓指定股票/全部最新新聞（個股走本地過濾） | `python tools/fetch_news.py 2330 --limit 5` |
-| `tools/uanalyze.py` | AI 估值分析＋AI 知識庫問答＋批次雷達＋純數據（法人共識/財務指標/供應鏈/訂單/DCF/PE-PB/三大法人/三率/現金流/股利/同業/融資券/籌碼/法說會逐字稿） | `python tools/uanalyze.py 2330`、`--ask 2330 "近況" knowledge`、`--transcript 2330` |
-| `tools/get_stock_price.py` | 即時股價（best-effort 附 UAnalyze 基本面） | `python tools/get_stock_price.py 2330` |
-| `tools/draw_kchart.py` | K 線圖（mplfinance 繪製，回傳圖片路徑） | `python tools/draw_kchart.py 2330 --period 60` |
-| `tools/summarize_document.py` | URL/PDF 文件摘要 | `python tools/summarize_document.py https://...` |
+| `tools/analysis/news.py` | 15 來源新聞聚合 + 個股過濾（import raw/news_sources） | `python tools/analysis/news.py 2330 --limit 5` |
+| `tools/raw/uanalyze.py` | UAnalyze 28 端點 raw fetcher（一端點一 function，只抓不組合） | `python tools/raw/uanalyze.py historical_per 2330` |
+| `tools/analysis/get_stock_price.py` | 即時股價（best-effort 附基本面，走 analysis/fundamentals） | `python tools/analysis/get_stock_price.py 2330` |
+| `tools/analysis/draw_kchart.py` | K 線圖（mplfinance 繪製，回傳圖片路徑） | `python tools/analysis/draw_kchart.py 2330 --period 60` |
+| `tools/analysis/summarize_document.py` | URL/PDF 文件擷取 + AI 摘要（唯一呼叫 AI 的 analysis） | `python tools/analysis/summarize_document.py https://...` |
 | `tools/lookup_stock_name.py` | 代號↔公司名對照表（純資料讀/寫；主資料為 UAnalyze StockPool 全表） | `python tools/lookup_stock_name.py 2330` |
-| `tools/draw_intraday_chart.py` | 盤中分時走勢折線圖（回傳圖片路徑） | `python tools/draw_intraday_chart.py 2330` |
-| `tools/cnyes.py` | 鉅亨網 raw-data：FactSet 預估EPS / 分析師目標價 / 即時報價 / 歷史K線 | `python tools/cnyes.py --target 2330` |
-| `tools/finmind.py` | FinMind raw-data：PER/PBR、價量、月營收、三大財報、股利、法人、融資券、外資持股、基本資料、新聞 | `python tools/finmind.py --per 2330` |
-| `tools/fugle.py` | 富果 raw-data：報價/交易屬性/盤中K・成交・分價量/歷史日K/52週統計 | `python tools/fugle.py --quote 2330` |
-| `tools/yfinance_data.py` | Yahoo Finance raw-data：基本面 info / 分析師目標價+評等 / 歷史價 / 年度財報 | `python tools/yfinance_data.py --target 2330` |
-| `tools/valuation.py` | 估值計算（import 上述 raw-data）：樂活五線譜 / PE・PB 河流圖 / EPS 動能 / 目標價彙整 | `python tools/valuation.py --lohas 2330` |
+| `tools/analysis/draw_intraday_chart.py` | 盤中分時走勢折線圖（回傳圖片路徑） | `python tools/analysis/draw_intraday_chart.py 2330` |
+| `tools/raw/news_sources.py` | 15 新聞來源各一 fetcher + 全部並行抓取 + 單篇全文（只抓不過濾） | `python tools/raw/news_sources.py` |
+| `tools/raw/broker_reports.py` | 券商研究報告（單一 Drive 來源）：查索引/抓單篇全文/重建索引 | `python tools/raw/broker_reports.py --stock 2330` |
+| `tools/raw/cnyes.py` | 鉅亨網 raw：FactSet 預估EPS / 分析師目標價 / 即時報價 | `python tools/raw/cnyes.py --target 2330` |
+| `tools/raw/finmind.py` | FinMind raw：PER/PBR、價量、月營收、三大財報、股利、法人、融資券、外資持股、基本資料、新聞 | `python tools/raw/finmind.py --per 2330` |
+| `tools/raw/fugle.py` | 富果 raw：報價/交易屬性/盤中K・成交・分價量/歷史日K/52週統計 | `python tools/raw/fugle.py --quote 2330` |
+| `tools/raw/yfinance_data.py` | Yahoo Finance raw：基本面 info / 分析師目標價+評等 / 歷史價 / 年度財報 | `python tools/raw/yfinance_data.py --target 2330` |
+| `tools/analysis/valuation.py` | 估值計算（import raw）：樂活五線譜 / PE・PB 河流圖 / EPS 動能 / 目標價 / DCF / PE-PB Band（--dcf --csv 可多檔） | `python tools/analysis/valuation.py --dcf 2330` |
+| `tools/analysis/fundamentals.py` | 即時基本面（/p 用，best-effort，import raw/uanalyze） | `python tools/analysis/fundamentals.py 2330` |
+| `tools/analysis/forecast.py` | 法人前瞻預估整理（SmartEstimate / 未來五季路徑+評等） | `python tools/analysis/forecast.py --smart-estimate 2330` |
+| `tools/analysis/reports.py` | UAnalyze 研究報告清單（推播/Agent 用，import raw/uanalyze） | `python tools/analysis/reports.py 2330` |
 
 > **工具不呼叫 AI**：所有工具皆為純粹確定性程式。對照表主資料由 `lookup_stock_name.py`
 > `--refresh` 從 UAnalyze StockPool 全表拉取灌入（純資料拉取，非 AI）；StockPool 仍未涵蓋
@@ -155,37 +168,37 @@ Google AI Pro 方案不提供 `GEMINI_API_KEY`，SDK 需要此 key 才能執行�
 
 ### 個股新聞過濾
 
-台股標題寫公司中文名而非代號。`fetch_news.py <代號>` 從 15 來源新聞池本地過濾出含
+台股標題寫公司中文名而非代號。`analysis/news.py <代號>` 從 15 來源新聞池本地過濾出含
 關鍵字（代號 + 對照表補上的公司名）的文章。對照表 `data/stock_names.json` 主資料為
 UAnalyze StockPool 全台股名對照（~12,361 檔，每週刷新），未命中時 Agent 才 `--set` 補後援。
 
 ### Script 結構範例
 
 ```python
-"""fetch_news — 取得指定股票的最新新聞
-用法: python tools/fetch_news.py [SYMBOL] [--limit N] [--all]
+"""news — 15 來源新聞聚合 + 個股過濾（analysis 層，import raw/news_sources）
+用法: python tools/analysis/news.py [SYMBOL|公司名] [--limit N] | --fulltext <URL>
 回傳: JSON {"articles": [{title, source, date, url, summary}]}
 """
 
 import asyncio, json, sys
 
 async def fetch(symbol: str = None, limit: int = 10) -> dict:
-    """核心邏輯 — Bot 排程也直接 import 這個"""
+    """核心邏輯 — Bot 排程也直接 import 這個（symbol 省略＝全來源最新）"""
     ...
 
-async def latest() -> list[dict]:
+async def latest() -> dict:
     """抓全部來源最新新聞 — 排程推播用"""
     ...
 
 if __name__ == "__main__":
     # CLI 入口 — Agent 透過 shell 執行
     args = sys.argv[1:]
-    if "--all" in args:
-        result = asyncio.run(latest())
+    if args and args[0] == "--fulltext" and len(args) > 1:
+        result = asyncio.run(fetch_fulltext(args[1]))   # 單篇全文（轉呼 raw）
     else:
-        symbol = args[0] if args else None
+        symbol = next((a for a in args if not a.startswith("--")), None)
         limit = int(args[args.index("--limit") + 1]) if "--limit" in args else 10
-        result = asyncio.run(fetch(symbol, limit))
+        result = asyncio.run(fetch(symbol, limit))      # symbol=None → 全來源最新
     print(json.dumps(result, ensure_ascii=False))
 ```
 
@@ -206,18 +219,21 @@ if __name__ == "__main__":
 
 ### 排程器：APScheduler（同 process）
 
-| Job | 頻率 | 流程 |
+| Job | 頻率（config 預設） | 流程 |
 |-----|------|------|
-| 新聞推播 | 每小時 | `fetch_news.latest()` → Agent 摘要 → 推 Telegram |
-| UAnalyze 報告監控 | 每 30 分鐘 | `uanalyze.list_latest_reports()` → 依 report id 去重 → 直接推 Telegram（無 AI、無關鍵字過濾，每則新報告一律正常通知；首次執行只建立去重狀態不洗版） |
+| 新聞推播 `news_push` | 每小時 | `analysis/news.latest()` → URL + 標題模糊去重 → **直接送「標題＋URL 清單」**（無 AI 摘要、省 token）→ 推 Telegram |
+| UAnalyze 報告監控 `uanalyze_push` | 每 30 分鐘 | `reports.list_latest_reports()` → 依 report id 去重 → 直接推 Telegram（無 AI、無關鍵字過濾，每則新報告一律正常通知；首次執行只建立去重狀態不洗版） |
+| AI Log 稽核 `log_audit` | 每天（1440 分） | 讀 bot.log + 對話記錄增量 → Agent 判讀 → 只有 `ISSUES` 才通知管理者（游標存 audit_state.json） |
+| 股名對照刷新 `stock_pool_refresh` | 每週 + 開機一次 | `lookup_stock_name.refresh_pool()`（表未過期則 no-op） |
+| 券商報告索引同步 `broker_reports_sync` | 每小時 + 開機一次（`broker_sync_interval_min`） | `broker_reports.drive_sync()`（缺憑證則略過，不丟例外） |
 
 ### 推播流程
 
 ```
 新聞：
-  排程觸發 → fetch_news.latest() → 拿到新文章
-  → 過濾已推 URL → AgentBridge.send("摘要以下新聞：{json}")
-  → 推給訂閱者
+  排程觸發 → news.latest() → 拿到新文章
+  → 過濾已推 URL + 標題模糊去重 → 組「• [來源] 標題 └ URL」清單（不經 Agent）
+  → 推給訂閱者（任一送達才標記 pushed，全逾時則下輪重送）
 ```
 
 ### 失敗處理
@@ -321,20 +337,29 @@ stock-bot/
 ├── agent/
 │   ├── bridge.py           # AgentBridge ABC + AntigravityCLIBridge
 │   ├── prompts.py          # Agent prompt templates
+│   ├── quota_ledger.py     # 額度帳本 + token→額度% 校準
 │   └── conversation_log.py # /ask 對話記錄（append-only jsonl）
-├── tools/                  # 12 個工具 script（CLI + import 雙入口）
-│   ├── fetch_news.py
-│   ├── uanalyze.py
-│   ├── get_stock_price.py
-│   ├── draw_kchart.py
-│   ├── draw_intraday_chart.py
-│   ├── summarize_document.py
-│   ├── lookup_stock_name.py
-│   ├── cnyes.py            # 鉅亨網 raw-data
-│   ├── finmind.py          # FinMind raw-data
-│   ├── fugle.py            # 富果 raw-data
-│   ├── yfinance_data.py    # Yahoo Finance raw-data
-│   └── valuation.py        # 估值計算（import 上述 raw-data）
+├── tools/                  # 工具 script（CLI + import 雙入口）；raw 取數層 / analysis 功能層
+│   ├── lookup_stock_name.py  # 代號↔公司名對照表（純本地，不歸兩層）
+│   ├── raw/                # 純取數層（一端點/一資料源一 function，只抓不組合）
+│   │   ├── uanalyze.py     #   UAnalyze 28 端點 raw fetcher
+│   │   ├── cnyes.py
+│   │   ├── finmind.py
+│   │   ├── fugle.py
+│   │   ├── yfinance_data.py
+│   │   ├── news_sources.py #   15 新聞來源各一 fetcher + 單篇全文
+│   │   └── broker_reports.py  # 券商報告（單一 Drive 來源）
+│   └── analysis/           # 功能層（import raw 做計算/組合/繪圖/判讀）
+│       ├── get_stock_price.py  # 即時股價（/p 用）
+│       ├── draw_kchart.py
+│       ├── draw_intraday_chart.py
+│       ├── _chart_font.py  #   跨平台中文字型 fallback（繪圖共用 helper）
+│       ├── news.py         #   新聞聚合 + 個股過濾
+│       ├── summarize_document.py  # URL/PDF + AI 摘要
+│       ├── valuation.py    #   估值 + DCF + PE-PB Band（含 DCF 批次 CSV）
+│       ├── fundamentals.py #   即時基本面（/p 用）
+│       ├── forecast.py     #   法人前瞻預估
+│       └── reports.py      #   研究報告清單（推播用）
 ├── data/
 │   ├── subscriptions.json
 │   ├── pushed_news.json
@@ -366,11 +391,14 @@ UANALYZE_PASSWORD=xxx
 {
   "vocus_users": ["@ieobserve", "@miula", "65ab564cfd897800018a88cc"],
   "uanalyze_keywords": ["AI", "半導體", "ETF"],
-  "enable_udn_news": true,
-  "enable_yahoo_news": true,
-  "news_schedule_interval_min": 60
+  "news_schedule_interval_min": 60,
+  "uanalyze_schedule_interval_min": 30,
+  "log_audit_interval_min": 1440,
+  "broker_sync_interval_min": 60
 }
 ```
+
+> `broker_sync_interval_min` 為可選鍵（未設時程式預設 60）。`vocus_users` 供 Vocus 新聞來源指定作者、`uanalyze_keywords` 為關鍵字設定。
 
 ## 10. 監控 / Logging
 

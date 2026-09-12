@@ -4,10 +4,10 @@
 包成 async 供其他 async 工具 import。
 
 用法:
-  python tools/yfinance_data.py --info 2330        # 精選基本面欄位
-  python tools/yfinance_data.py --target 2330      # 分析師目標價 + 評等
-  python tools/yfinance_data.py --history 2330 [--period 1y]  # 歷史價
-  python tools/yfinance_data.py --financials 2330  # 年度損益表
+  python tools/raw/yfinance_data.py --info 2330        # 精選基本面欄位
+  python tools/raw/yfinance_data.py --target 2330      # 分析師目標價 + 評等
+  python tools/raw/yfinance_data.py --history 2330 [--period 1y]  # 歷史價
+  python tools/raw/yfinance_data.py --financials 2330  # 年度損益表
 
 回傳: JSON 或 {"error"}。
 """
@@ -181,7 +181,7 @@ if __name__ == "__main__":
     mode, symbol, period = _parse_args(args)
     if not mode or not symbol:
         flags = "|".join(f"--{m}" for m in _MODES)
-        print(json.dumps({"error": f"用法: python tools/yfinance_data.py [{flags}] SYMBOL [--period 1y]"},
+        print(json.dumps({"error": f"用法: python tools/raw/yfinance_data.py [{flags}] SYMBOL [--period 1y]"},
                          ensure_ascii=False))
         sys.exit(1)
 

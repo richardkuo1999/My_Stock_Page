@@ -1,5 +1,6 @@
 """Telegram message handlers."""
 
+import asyncio
 import logging
 import os
 
@@ -72,7 +73,7 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("用法：/p <股票代號>，例 /p 2330")
         return
 
-    from tools.get_stock_price import fetch_price
+    from tools.analysis.get_stock_price import fetch_price
 
     try:
         r = await fetch_price(symbol)
@@ -114,7 +115,7 @@ async def _send_intraday_chart(update: Update, symbol: str) -> None:
     確保價量文字回覆已送出、使用者體驗不受影響。
     """
     try:
-        from tools.draw_intraday_chart import draw as draw_intraday
+        from tools.analysis.draw_intraday_chart import draw as draw_intraday
 
         r = await draw_intraday(symbol)
         if "error" in r:
@@ -145,7 +146,7 @@ async def kchart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     await update.message.reply_text(f"📈 正在繪製 {symbol} 的 K 線圖…")
 
-    from tools.draw_kchart import draw
+    from tools.analysis.draw_kchart import draw
 
     try:
         r = await draw(symbol, period)
@@ -284,9 +285,24 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     try:
         from agent.conversation_log import log_conversation
         from agent.prompts import build_mention_prompt
+        from agent.bridge import diff_quota, format_quota_line
+        from agent import quota_ledger
 
         prompt = build_mention_prompt(text_after)
-        result = await bridge.send_detailed(prompt)
+
+        # 額度查詢要另跑一次 agy（數秒），與主要呼叫**並行**，不加長等待時間。
+        # 只在要顯示時才查；失敗不影響回覆（fetch_usage_limits 自己吞例外回 []）。
+        if _show_agent_tools():
+            quota_task = asyncio.create_task(bridge.fetch_usage_limits())
+        else:
+            quota_task = None
+
+        try:
+            result = await bridge.send_detailed(prompt)
+        except BaseException:
+            if quota_task:
+                quota_task.cancel()
+            raise
 
         # Persist the full exchange (question + answer + tools used).
         log_conversation(
@@ -301,7 +317,30 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
 
         reply = result.response
-        tools_line = result.tools_line() if _show_agent_tools() else ""
+        tools_line = ""
+        if _show_agent_tools():
+            quota_line = ""
+            try:
+                # 呼叫前的額度（並行取，已跑完）＋呼叫後再取一次：
+                # 後者才含這一輪的消耗，兩者相減得「本次用掉多少」。
+                before = await quota_task if quota_task else []
+                after = await bridge.fetch_usage_limits()
+                quota_line = format_quota_line(diff_quota(before, after) or before)
+                # 記帳並用歷史校準估「本次佔額度幾 %」（整數百分比看不出來的部分）。
+                # 連 before 一起記，本輪造成的下降才能立刻成為校準樣本。
+                tokens = (result.usage or {}).get("total_tokens") or 0
+                quota_ledger.record(tokens, after, before=before)
+                estimate = quota_ledger.estimate_line(tokens, after)
+                if estimate:
+                    quota_line = f"{quota_line}\n{estimate}" if quota_line else estimate
+            except Exception as e:  # 額度只是附加資訊，壞了就不顯示
+                logger.debug("quota line failed: %s", e)
+            # 工具清單 + token 用量 + 額度（同一個開發用開關控制）
+            tools_line = "\n\n".join(
+                p
+                for p in (result.tools_line(), result.usage_line(), quota_line)
+                if p
+            )
         await _send_agent_reply(update, reply, tools_line)
     except TimeoutError:
         await update.message.reply_text("⚠️ Agent 暫時無法回應，請稍後再試")

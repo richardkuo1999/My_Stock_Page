@@ -81,7 +81,7 @@ async def test_ask_appends_tools_line(context, mock_bridge):
             tools=[
                 ToolCall(
                     name="run_command",
-                    parameters={"Command": "python tools/get_stock_price.py 2330"},
+                    parameters={"Command": "python tools/analysis/get_stock_price.py 2330"},
                 )
             ],
         )
@@ -96,8 +96,115 @@ async def test_ask_appends_tools_line(context, mock_bridge):
 
     reply = update.message.reply_text.call_args[0][0]
     assert "台積電 2410" in reply
-    assert "🔧 本次用了：" in reply
+    assert "🔧 本次用了（" in reply
     assert "run_command" in reply
+
+
+@pytest.mark.asyncio
+async def test_ask_appends_quota_line(context, mock_bridge):
+    """回覆附上剩餘額度（bridge.fetch_usage_limits 的結果）。"""
+    from agent.bridge import AgentResult
+
+    mock_bridge.send_detailed = AsyncMock(
+        return_value=AgentResult(response="台積電 2410", usage={"total_tokens": 500})
+    )
+    mock_bridge.fetch_usage_limits = AsyncMock(
+        return_value=[
+            {"group": "Gemini", "window": "週", "remaining_pct": 98, "reset_at": ""},
+        ]
+    )
+    context.bot_data["agent_bridge"] = mock_bridge
+    update = _make_ask_update("/ask 台積電股價")
+
+    with patch("agent.conversation_log.log_conversation"), patch.dict(
+        "os.environ", {"SHOW_AGENT_TOOLS": "1"}
+    ):
+        await ask_command(update, context)
+
+    reply = update.message.reply_text.call_args[0][0]
+    assert "🎟️ 額度（已用／剩餘）" in reply
+    assert "Gemini：週 2%／98%" in reply
+    assert "📊 Token：500" in reply
+
+
+@pytest.mark.asyncio
+async def test_ask_shows_quota_consumed_this_turn(context, mock_bridge):
+    """呼叫前後各查一次額度，差值顯示為「本次 -N%」。"""
+    from agent.bridge import AgentResult
+
+    mock_bridge.send_detailed = AsyncMock(
+        return_value=AgentResult(response="台積電 2410")
+    )
+    # 第一次（呼叫前）98%，第二次（呼叫後）96% → 本次用掉 2%
+    mock_bridge.fetch_usage_limits = AsyncMock(
+        side_effect=[
+            [{"group": "Gemini", "window": "週", "remaining_pct": 98, "reset_at": ""}],
+            [{"group": "Gemini", "window": "週", "remaining_pct": 96, "reset_at": ""}],
+        ]
+    )
+    context.bot_data["agent_bridge"] = mock_bridge
+    update = _make_ask_update("/ask 台積電股價")
+
+    with patch("agent.conversation_log.log_conversation"), patch.dict(
+        "os.environ", {"SHOW_AGENT_TOOLS": "1"}
+    ):
+        await ask_command(update, context)
+
+    reply = update.message.reply_text.call_args[0][0]
+    assert "Gemini：週 4%／96%（本次 -2%）" in reply
+    assert mock_bridge.fetch_usage_limits.await_count == 2   # 前 + 後
+
+
+@pytest.mark.asyncio
+async def test_ask_appends_quota_estimate_from_ledger(context, mock_bridge, tmp_path):
+    """有校準資料時，回覆附上「本次 ≈ 額度幾 %」估算。"""
+    from agent import quota_ledger
+    from agent.bridge import AgentResult
+
+    ledger = tmp_path / "ledger.jsonl"
+    # 先造出校準資料：200k tokens 對應 1 個百分點
+    quota_ledger.record(100_000, [{"group": "Gemini", "window": "週", "remaining_pct": 98}], path=ledger)
+    quota_ledger.record(100_000, [{"group": "Gemini", "window": "週", "remaining_pct": 97}], path=ledger)
+
+    mock_bridge.send_detailed = AsyncMock(
+        return_value=AgentResult(response="台積電 2410", usage={"total_tokens": 100_000})
+    )
+    mock_bridge.fetch_usage_limits = AsyncMock(
+        return_value=[{"group": "Gemini", "window": "週", "remaining_pct": 97, "reset_at": ""}]
+    )
+    context.bot_data["agent_bridge"] = mock_bridge
+    update = _make_ask_update("/ask 台積電股價")
+
+    with patch("agent.conversation_log.log_conversation"), patch.object(
+        quota_ledger, "DEFAULT_PATH", ledger
+    ), patch.dict("os.environ", {"SHOW_AGENT_TOOLS": "1"}):
+        await ask_command(update, context)
+
+    reply = update.message.reply_text.call_args[0][0]
+    assert "本次 ≈ Gemini 週額度 0.50%" in reply    # 100k / 200k
+    assert "約可再跑 194 次" in reply               # 97 / 0.5
+
+
+@pytest.mark.asyncio
+async def test_ask_survives_quota_lookup_failure(context, mock_bridge):
+    """額度查詢失敗時照常回覆，只是不顯示額度。"""
+    from agent.bridge import AgentResult
+
+    mock_bridge.send_detailed = AsyncMock(
+        return_value=AgentResult(response="台積電 2410")
+    )
+    mock_bridge.fetch_usage_limits = AsyncMock(side_effect=RuntimeError("boom"))
+    context.bot_data["agent_bridge"] = mock_bridge
+    update = _make_ask_update("/ask 台積電股價")
+
+    with patch("agent.conversation_log.log_conversation"), patch.dict(
+        "os.environ", {"SHOW_AGENT_TOOLS": "1"}
+    ):
+        await ask_command(update, context)
+
+    reply = update.message.reply_text.call_args[0][0]
+    assert "台積電 2410" in reply
+    assert "🎟️" not in reply
 
 
 @pytest.mark.asyncio
@@ -239,7 +346,7 @@ async def test_price_command_no_arg(context):
 async def test_price_command_success(context):
     update = _make_command_update("/p 2330")
     fake = {"symbol": "2330", "name": "台積電", "price": 2410.0, "change": 35.0, "change_pct": 1.47, "volume": 0, "source": "fugle"}
-    with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)), \
+    with patch("tools.analysis.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)), \
          patch("bot.handlers._send_intraday_chart", new=AsyncMock()):
         await price_command(update, context)
     # last reply carries the price info
@@ -256,7 +363,7 @@ async def test_price_command_with_fundamentals(context):
         "change_pct": 1.47, "volume": 0, "source": "fugle",
         "fundamentals": {"本益比": 27.9, "最新財報": "2026年Q2"},
     }
-    with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)), \
+    with patch("tools.analysis.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)), \
          patch("bot.handlers._send_intraday_chart", new=AsyncMock()):
         await price_command(update, context)
     text = update.message.reply_text.call_args[0][0]
@@ -274,7 +381,7 @@ async def test_price_command_no_fundamentals_plain(context):
         "symbol": "2330", "name": "台積電", "price": 2410.0, "change": 35.0,
         "change_pct": 1.47, "volume": 0, "source": "fugle",
     }
-    with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)), \
+    with patch("tools.analysis.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)), \
          patch("bot.handlers._send_intraday_chart", new=AsyncMock()):
         await price_command(update, context)
     text = update.message.reply_text.call_args[0][0]
@@ -291,8 +398,8 @@ async def test_price_command_sends_intraday_chart(context, tmp_path):
     update = _make_command_update("/p 2330")
     fake = {"symbol": "2330", "name": "台積電", "price": 2410.0, "change": 35.0,
             "change_pct": 1.47, "volume": 0, "source": "fugle"}
-    with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)), \
-         patch("tools.draw_intraday_chart.draw",
+    with patch("tools.analysis.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)), \
+         patch("tools.analysis.draw_intraday_chart.draw",
                new=AsyncMock(return_value={"image_path": str(img)})):
         await price_command(update, context)
     # price text still sent, and the intraday chart photo is attached.
@@ -306,8 +413,8 @@ async def test_price_command_chart_failure_is_silent(context):
     update = _make_command_update("/p 2330")
     fake = {"symbol": "2330", "name": "台積電", "price": 2410.0, "change": 35.0,
             "change_pct": 1.47, "volume": 0, "source": "fugle"}
-    with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)), \
-         patch("tools.draw_intraday_chart.draw",
+    with patch("tools.analysis.get_stock_price.fetch_price", new=AsyncMock(return_value=fake)), \
+         patch("tools.analysis.draw_intraday_chart.draw",
                new=AsyncMock(return_value={"error": "找不到股票代號 2330 的盤中資料"})):
         await price_command(update, context)
     # price text sent; no photo; the chart error is swallowed (not surfaced).
@@ -319,7 +426,7 @@ async def test_price_command_chart_failure_is_silent(context):
 @pytest.mark.asyncio
 async def test_price_command_error(context):
     update = _make_command_update("/p 9999")
-    with patch("tools.get_stock_price.fetch_price", new=AsyncMock(return_value={"error": "找不到股票代號 9999"})):
+    with patch("tools.analysis.get_stock_price.fetch_price", new=AsyncMock(return_value={"error": "找不到股票代號 9999"})):
         await price_command(update, context)
     assert "找不到" in update.message.reply_text.call_args[0][0]
 
@@ -329,7 +436,7 @@ async def test_kchart_command_sends_photo(context, tmp_path):
     img = tmp_path / "chart.png"
     img.write_bytes(b"\x89PNG\r\n")
     update = _make_command_update("/k 2330 60")
-    with patch("tools.draw_kchart.draw", new=AsyncMock(return_value={"image_path": str(img)})):
+    with patch("tools.analysis.draw_kchart.draw", new=AsyncMock(return_value={"image_path": str(img)})):
         await kchart_command(update, context)
     update.message.reply_photo.assert_awaited_once()
 
@@ -337,7 +444,7 @@ async def test_kchart_command_sends_photo(context, tmp_path):
 @pytest.mark.asyncio
 async def test_kchart_command_error(context):
     update = _make_command_update("/k 9999")
-    with patch("tools.draw_kchart.draw", new=AsyncMock(return_value={"error": "找不到股票代號 9999 的歷史資料"})):
+    with patch("tools.analysis.draw_kchart.draw", new=AsyncMock(return_value={"error": "找不到股票代號 9999 的歷史資料"})):
         await kchart_command(update, context)
     # reply_text called with error (after the "正在繪製" message)
     assert any("找不到" in c.args[0] for c in update.message.reply_text.call_args_list)

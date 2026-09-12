@@ -1,4 +1,4 @@
-"""Tests for tools/draw_intraday_chart.py"""
+"""Tests for tools/analysis/draw_intraday_chart.py"""
 
 import os
 from unittest.mock import AsyncMock, patch
@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pandas as pd
 import pytest
 
-from tools.draw_intraday_chart import (
+from tools.analysis.draw_intraday_chart import (
     _parse_candles,
     _render_chart,
     draw,
@@ -80,7 +80,7 @@ async def test_draw_success():
     """draw() returns image_path when candles are available."""
     candles = _sample_candles()
     with patch(
-        "tools.draw_intraday_chart._fetch_intraday",
+        "tools.analysis.draw_intraday_chart._fetch_intraday",
         new_callable=AsyncMock,
         return_value=(candles, 99.0, "台積電"),
     ):
@@ -94,7 +94,7 @@ async def test_draw_success():
 async def test_draw_no_data():
     """draw() returns error when no candles."""
     with patch(
-        "tools.draw_intraday_chart._fetch_intraday",
+        "tools.analysis.draw_intraday_chart._fetch_intraday",
         new_callable=AsyncMock,
         return_value=([], None, ""),
     ):
