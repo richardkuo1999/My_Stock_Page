@@ -137,7 +137,7 @@ Google AI Pro 方案不提供 `GEMINI_API_KEY`，SDK 需要此 key 才能執行�
 | Script | 功能 | 範例用法 |
 |--------|------|----------|
 | `tools/fetch_news.py` | 抓指定股票/全部最新新聞（個股走本地過濾） | `python tools/fetch_news.py 2330 --limit 5` |
-| `tools/uanalyze.py` | AI 估值分析＋純數據（法人共識/財務指標/供應鏈/訂單/DCF/法說會逐字稿清單與摘要） | `python tools/uanalyze.py 2330`、`--transcript 2330` |
+| `tools/uanalyze.py` | AI 估值分析＋AI 知識庫問答＋批次雷達＋純數據（法人共識/財務指標/供應鏈/訂單/DCF/PE-PB/三大法人/三率/現金流/股利/同業/融資券/籌碼/法說會逐字稿） | `python tools/uanalyze.py 2330`、`--ask 2330 "近況" knowledge`、`--transcript 2330` |
 | `tools/get_stock_price.py` | 即時股價（best-effort 附 UAnalyze 基本面） | `python tools/get_stock_price.py 2330` |
 | `tools/draw_kchart.py` | K 線圖（mplfinance 繪製，回傳圖片路徑） | `python tools/draw_kchart.py 2330 --period 60` |
 | `tools/summarize_document.py` | URL/PDF 文件摘要 | `python tools/summarize_document.py https://...` |

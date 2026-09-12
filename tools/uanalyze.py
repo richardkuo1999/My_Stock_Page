@@ -19,6 +19,8 @@
      python tools/uanalyze.py --margin SYMBOL                # 信用交易（融資餘額/使用率 + 融券餘額/使用率，近10日）
      python tools/uanalyze.py --holders SYMBOL               # 籌碼結構（外資/董監持股比率 + 股東人數/大戶比率，近6期）
      python tools/uanalyze.py --transcript SYMBOL [id 或 date]  # 法說會逐字稿（無 selector 列清單，有則回全文）
+     python tools/uanalyze.py --ask SYMBOL "問題" [general|knowledge|teacher]  # AI 知識庫問答（串流收集成完整答案）
+     python tools/uanalyze.py --radar 關鍵字 [types]         # 批次雷達（多類全站資料，落地成檔回路徑+摘要；可數十MB）
 回傳: 一律 JSON。
    預設:         {"analysis": str, "prompt", "symbol"}
    --multi:      {"symbol","requested","ok","failed","results":{面向: {analysis|error}}}
@@ -37,6 +39,8 @@
    --margin:     {"symbol","recent_days":[{date,融資餘額,融資使用率(%),融券餘額,融券使用率(%)}],"latest":{…}}
    --holders:    {"symbol","holdings":[{period,外資持股比率,董監持股比率,…}],"shareholders":[{period,總股東人數(人),…}],"latest":{…}}
    --transcript: 清單 {"symbol","transcripts":[{date,id}]} 或全文 {id,title,date,stock,字數,transcript}
+   --ask:        {"symbol","question","knowledge_base","answer"}
+   --radar:      {"keyword","types","file","bytes","summary":{類別: 筆數}}（內容寫檔，不整包回傳）
    查無資料/失敗一律回 {"error": str}（--fundamentals 例外，best-effort 回 {}）。
 
 面向清單（--prompt / --multi 用）見 UA_PROMPTS（DEFAULT_PROMPT 之後）。--multi 由
@@ -54,7 +58,9 @@ import json
 import logging
 import math
 import os
+import re
 import sys
+from collections.abc import AsyncIterator
 from datetime import datetime
 
 import httpx
@@ -65,6 +71,8 @@ logger = logging.getLogger(__name__)
 
 AUTH_BASE_URL = os.getenv("UANALYZE_AUTH_URL", "https://api.uanalyze.com.tw")
 BASE_URL = "https://data.uanalyze.twobitto.com"
+# data.uanalyze.com.tw：AI 問答串流（chat）、報告摘要等 JWT 端點（與 twobitto 網域並存）。
+DATA_API_BASE = "https://data.uanalyze.com.tw/api"
 # cronjob domain（cookie 認證，不吃 Bearer；供後續 ticket 用）。
 CRONJOB_BASE_URL = "https://cronjob.uanalyze.com.tw"
 # gidp domain（GIDP 固定 token 認證；供後續 ticket 用）。
@@ -73,6 +81,17 @@ GIDP_BASE_URL = "https://gidp.uanalyze.com.tw"
 GIDP_TOKEN = "tquEQGIZfck2lYDdBst9LBF5p6jfQepV"
 DEFAULT_TIMEOUT = 120.0  # 2 分鐘 — /ua 分析/逐字稿可能較慢，放寬上限
 DEFAULT_PROMPT = "近況發展"
+
+# AI 問答知識庫（chat 端點）。短別名 → 完整 api_name；供 CLI/Agent 選擇。
+UA_KNOWLEDGE_BASES: dict[str, str] = {
+    "general": "ua_ai_insight_general",      # 一般問答（預設）
+    "knowledge": "ua_ai_insight_knowledge",  # 個股深度分析
+    "teacher": "ua_ai_insight_teacher",      # 投資教學
+}
+DEFAULT_KB = "general"
+
+# company_keywords 批次雷達預設抓的資料類別。
+DEFAULT_RADAR_TYPES = "company_info,ai_chat,transcript"
 
 # UAnalyze 分析面向清單。每項為 (按鈕標籤, 實際送出的完整 prompt)。
 # 標籤短、供 inline 按鈕；送出時用完整 prompt。取自 old_file 的 PROMPT_LIST（全保留）。
@@ -1985,6 +2004,167 @@ async def fetch_transcript_detail(transcript_id: str) -> dict:
     }
 
 
+# ── A18 AI 知識庫問答（data.uanalyze.com.tw/api/chat，JWT，SSE 串流）──────────
+# 移植自 extra_scripts/ua.sh 的 chat 指令。可選知識庫（一般/個股深度/投資教學），
+# 串流回傳逐塊組成完整回答。與 analyze()（走 twobitto completions）互補：這支能選知識庫。
+
+# chat 回傳含模型思考標記 <think>…</think>，回給使用者/Agent 前濾掉。
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+_TAG_RE = re.compile(r"</?(?:think|step)>")
+
+
+def _strip_think(text: str) -> str:
+    """移除 chat 串流的 <think>/<step> 思考標記，回乾淨正文。"""
+    text = _THINK_RE.sub("", text)
+    text = _TAG_RE.sub("", text)
+    return text.strip()
+
+
+async def fetch_ai_chat(symbol: str, question: str, kb: str = DEFAULT_KB) -> dict:
+    """A18 AI 知識庫問答（純資料 CLI，串流收集後回完整答案）。
+
+    Args:
+        symbol: 股票代號（如 '2330'）。
+        question: 自然語言問題。
+        kb: 知識庫別名 general / knowledge / teacher（見 UA_KNOWLEDGE_BASES）。
+
+    Returns:
+        {"symbol","question","knowledge_base","answer"} 或 {"error": ...}。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {"error": "請輸入股票代號"}
+    if not (question or "").strip():
+        return {"error": "請輸入問題"}
+    api_name = UA_KNOWLEDGE_BASES.get(kb, kb if kb.startswith("ua_ai_insight_") else UA_KNOWLEDGE_BASES[DEFAULT_KB])
+
+    token = await _auth.ensure_token()
+    if not token:
+        return {"error": "UAnalyze 登入失敗（請確認 UANALYZE_EMAIL / UANALYZE_PASSWORD）"}
+
+    url = f"{DATA_API_BASE}/chat/{api_name}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "text/event-stream",
+        "Origin": "https://pro.uanalyze.com.tw",
+        "Referer": "https://pro.uanalyze.com.tw/",
+        "User-Agent": "Mozilla/5.0",
+    }
+    params = {"q": question, "stock": symbol, "stream": "true"}
+
+    chunks: list[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            async with client.stream("GET", url, headers=headers, params=params) as resp:
+                if resp.status_code == 401 and await _auth.refresh():
+                    headers["Authorization"] = f"Bearer {_auth.access_token}"
+                    async with client.stream("GET", url, headers=headers, params=params) as resp2:
+                        resp = resp2
+                        async for chunk in _collect_chat(resp):
+                            chunks.append(chunk)
+                elif resp.status_code == 200:
+                    async for chunk in _collect_chat(resp):
+                        chunks.append(chunk)
+                else:
+                    return {"error": f"UAnalyze 問答失敗（HTTP {resp.status_code}）"}
+    except Exception as e:
+        logger.warning("fetch_ai_chat failed for %s: %s", symbol, e)
+        return {"error": f"UAnalyze 問答發生錯誤：{e}"}
+
+    answer = _strip_think("".join(chunks))
+    if not answer:
+        return {"error": f"UAnalyze 未回傳 {symbol} 的問答內容"}
+    return {"symbol": symbol, "question": question, "knowledge_base": api_name, "answer": answer}
+
+
+async def _collect_chat(resp) -> "AsyncIterator[str]":
+    """從 SSE 回應逐行取出 type==content 的 chunk。"""
+    async for line in resp.aiter_lines():
+        if not line.startswith("data: "):
+            continue
+        try:
+            obj = json.loads(line[6:])
+        except Exception:
+            continue
+        if obj.get("type") == "content":
+            chunk = obj.get("data", {}).get("chunk", "")
+            if chunk:
+                yield chunk
+
+
+# ── A19 批次雷達（cronjob company_keywords，multipart，可數十 MB）─────────────
+# 移植自 extra_scripts/uanalyze_radar.py。一次抓多類資料；因回傳可能巨大（transcript
+# 可達 30MB+），落地成檔案、只回「檔案路徑 + 每類筆數摘要」，不整包塞回 Agent。
+
+RADAR_OUTPUT_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "uanalyze_radar"
+)
+
+
+async def fetch_company_keywords(keyword: str, types: str = DEFAULT_RADAR_TYPES) -> dict:
+    """A19 批次雷達：一次抓多類資料，落地成 JSON 檔，回檔案路徑 + 摘要。
+
+    Args:
+        keyword: 查詢關鍵字（公司名或代號，如 '台積電' / '2330'）。
+        types: 逗號分隔的資料類別（預設 company_info,ai_chat,transcript）。
+
+    Returns:
+        {"keyword","types","file","bytes","summary":{類別: 筆數/大小}} 或 {"error": ...}。
+        因回傳可能數十 MB，內容寫檔不直接回傳，避免灌爆呼叫端 context。
+    """
+    keyword = (keyword or "").strip()
+    if not keyword:
+        return {"error": "請輸入查詢關鍵字"}
+    if not await _auth.ensure_token():
+        return {"error": "UAnalyze 登入失敗（請確認 UANALYZE_EMAIL / UANALYZE_PASSWORD）"}
+
+    url = f"{CRONJOB_BASE_URL}/data_fetch/api/company_keywords/{types}"
+    headers = {
+        "Accept": "application/json",
+        "Origin": "https://pro.uanalyze.com.tw",
+        "Referer": "https://pro.uanalyze.com.tw/",
+        "User-Agent": "Mozilla/5.0",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.post(url, headers=headers, files={"data": (None, keyword)})
+    except Exception as e:
+        logger.warning("fetch_company_keywords failed for %s: %s", keyword, e)
+        return {"error": f"UAnalyze 批次雷達發生錯誤：{e}"}
+
+    if r.status_code != 200:
+        return {"error": f"UAnalyze 批次雷達失敗（HTTP {r.status_code}）"}
+
+    try:
+        payload = r.json()
+    except Exception:
+        return {"error": "UAnalyze 批次雷達回傳非 JSON"}
+
+    os.makedirs(RADAR_OUTPUT_DIR, exist_ok=True)
+    safe_kw = re.sub(r"[^\w\u4e00-\u9fff]+", "_", keyword).strip("_") or "radar"
+    out_path = os.path.join(RADAR_OUTPUT_DIR, f"{safe_kw}.json")
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+
+    # 摘要：每個資料類別的筆數（data 通常是 dict of 類別 → list/dict）。
+    summary: dict = {}
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if isinstance(data, dict):
+        for cat, val in data.items():
+            if isinstance(val, (list, dict)):
+                summary[cat] = len(val)
+            else:
+                summary[cat] = 1 if val else 0
+
+    return {
+        "keyword": keyword,
+        "types": types,
+        "file": out_path,
+        "bytes": len(r.content),
+        "summary": summary,
+    }
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     if not args:
@@ -2254,6 +2434,31 @@ if __name__ == "__main__":
         }
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(0)
+
+    if args[0] == "--ask":
+        # A18 AI 知識庫問答：--ask <代號> "<問題>" [知識庫 general|knowledge|teacher]
+        try:
+            sym = args[1]
+            question = args[2]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --ask <代號> \"<問題>\" [general|knowledge|teacher]"}, ensure_ascii=False))
+            sys.exit(1)
+        kb = args[3] if len(args) > 3 else DEFAULT_KB
+        result = asyncio.run(fetch_ai_chat(sym, question, kb))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
+
+    if args[0] == "--radar":
+        # A19 批次雷達：--radar <關鍵字> [types逗號分隔]。落地成檔，回路徑+摘要。
+        try:
+            kw = args[1]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --radar <關鍵字> [types]"}, ensure_ascii=False))
+            sys.exit(1)
+        types = args[2] if len(args) > 2 else DEFAULT_RADAR_TYPES
+        result = asyncio.run(fetch_company_keywords(kw, types))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
 
     result = asyncio.run(analyze(symbol, prompt))
     print(json.dumps(result, ensure_ascii=False))

@@ -45,6 +45,8 @@
 | `--margin` | 信用交易：融資餘額 / 使用率、融券餘額 / 使用率（近 10 日） |
 | `--holders` | 籌碼結構：外資 / 董監持股比率、股東人數、400 張・1000 張大戶持股比率（近 6 期） |
 | `--transcript` | 法說會逐字稿：歷次清單，或指定某場的全文 |
+| `--ask` | AI 知識庫問答：對某股問自然語言問題，可選知識庫（general 一般 / knowledge 個股深度 / teacher 投資教學），串流收集成完整答案 |
+| `--radar` | 批次雷達：依關鍵字一次抓多類全站資料（company_info/ai_chat/transcript…）。**回傳可達數十 MB**，故落地成 JSON 檔、只回檔案路徑 + 每類筆數摘要（非即時問答用，適合離線大批撈取） |
 | [`dcf_to_csv.py`](dcf_to_csv.py) | 把 DCF 估值結果輸出成 CSV（單檔或多檔並行；失敗檔只填代號 + error 欄） |
 
 > UAnalyze 認證：一次帳密登入後，依 domain 取三種認證材料（JWT / cookie / 固定 GIDP token），細節見 `uanalyze.py` 檔頭。

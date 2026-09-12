@@ -21,7 +21,9 @@ from tools.uanalyze import (
     fetch_dcf_valuation,
     fetch_eps_consensus,
     fetch_cash_flow_trend,
+    fetch_company_keywords,
     fetch_dividend_policy,
+    fetch_ai_chat,
     fetch_holder_structure,
     fetch_institutional_chips,
     fetch_margin_trading,
@@ -2304,4 +2306,149 @@ async def test_fetch_holder_structure_no_token():
     """登入失敗 → error dict。"""
     with patch.dict("os.environ", {"UANALYZE_EMAIL": "", "UANALYZE_PASSWORD": ""}):
         result = await fetch_holder_structure("2330")
+    assert "error" in result
+
+
+# --- fetch_ai_chat() tests (A18 AI 知識庫問答, SSE) ---
+
+
+def _sse_lines():
+    """模擬 chat SSE：含 <think> 思考塊 + 正文 chunk。"""
+    return [
+        'data: {"type":"content","data":{"chunk":"<think>"}}',
+        'data: {"type":"content","data":{"chunk":"內部推理"}}',
+        'data: {"type":"content","data":{"chunk":"</think>"}}',
+        'data: {"type":"content","data":{"chunk":"台積電近況"}}',
+        'data: {"type":"content","data":{"chunk":"營收創高。"}}',
+        'data: {"type":"other","data":{"chunk":"忽略"}}',
+        "",
+        "event: done",
+    ]
+
+
+def _mock_stream_client(lines, status_code=200):
+    """Build a mock AsyncClient whose .stream() yields an SSE response."""
+    class _Resp:
+        def __init__(self):
+            self.status_code = status_code
+
+        async def aiter_lines(self):
+            for ln in lines:
+                yield ln
+
+    class _StreamCtx:
+        async def __aenter__(self):
+            return _Resp()
+
+        async def __aexit__(self, *a):
+            return False
+
+    def _factory(**kwargs):
+        client = MagicMock()
+        client.stream = MagicMock(return_value=_StreamCtx())
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        return client
+
+    return _factory
+
+
+@pytest.mark.asyncio
+async def test_fetch_ai_chat_success():
+    """SSE 逐塊組成完整答案，<think> 思考塊被濾除。"""
+    _auth.access_token = "tok"
+    _auth.refresh_token = "ref"
+
+    factory = _mock_stream_client(_sse_lines())
+    with patch("httpx.AsyncClient", side_effect=factory):
+        result = await fetch_ai_chat("2330", "近況如何", "general")
+
+    assert result["symbol"] == "2330"
+    assert result["knowledge_base"] == "ua_ai_insight_general"
+    assert result["answer"] == "台積電近況營收創高。"
+    assert "<think>" not in result["answer"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_ai_chat_kb_alias():
+    """知識庫別名 teacher → 完整 api_name。"""
+    _auth.access_token = "tok"
+    factory = _mock_stream_client(_sse_lines())
+    with patch("httpx.AsyncClient", side_effect=factory):
+        result = await fetch_ai_chat("2330", "怎麼估值", "teacher")
+    assert result["knowledge_base"] == "ua_ai_insight_teacher"
+
+
+@pytest.mark.asyncio
+async def test_fetch_ai_chat_empty_question():
+    """空問題 → error（不需登入）。"""
+    result = await fetch_ai_chat("2330", "  ")
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_ai_chat_http_error():
+    """非 200 → error dict。"""
+    _auth.access_token = "tok"
+    _auth.refresh_token = None
+    factory = _mock_stream_client([], status_code=500)
+    with patch("httpx.AsyncClient", side_effect=factory):
+        result = await fetch_ai_chat("2330", "近況")
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_ai_chat_no_token():
+    """登入失敗 → error dict。"""
+    with patch.dict("os.environ", {"UANALYZE_EMAIL": "", "UANALYZE_PASSWORD": ""}):
+        result = await fetch_ai_chat("2330", "近況")
+    assert "error" in result
+
+
+# --- fetch_company_keywords() tests (A19 批次雷達) ---
+
+
+@pytest.mark.asyncio
+async def test_fetch_company_keywords_success(tmp_path):
+    """回傳落地成檔、只回路徑 + 每類筆數摘要（不整包回傳）。"""
+    _auth.access_token = "tok"
+    payload = {"status": "OK", "data": {"transcript": [1, 2, 3], "company_info": {"a": 1}}}
+    resp = _make_httpx_response(200, payload)
+    resp.content = json.dumps(payload).encode()
+
+    with patch("httpx.AsyncClient", return_value=_mock_async_client(resp)), \
+         patch("tools.uanalyze.RADAR_OUTPUT_DIR", str(tmp_path)):
+        result = await fetch_company_keywords("台積電", "transcript,company_info")
+
+    assert result["keyword"] == "台積電"
+    assert result["summary"] == {"transcript": 3, "company_info": 1}
+    assert result["file"].endswith(".json")
+    import os as _os
+    assert _os.path.exists(result["file"])
+
+
+@pytest.mark.asyncio
+async def test_fetch_company_keywords_empty_keyword():
+    """空關鍵字 → error。"""
+    result = await fetch_company_keywords("")
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_company_keywords_http_error(tmp_path):
+    """非 200 → error dict。"""
+    _auth.access_token = "tok"
+    resp = _make_httpx_response(500, {})
+    resp.content = b""
+    with patch("httpx.AsyncClient", return_value=_mock_async_client(resp)), \
+         patch("tools.uanalyze.RADAR_OUTPUT_DIR", str(tmp_path)):
+        result = await fetch_company_keywords("台積電")
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_fetch_company_keywords_no_token():
+    """登入失敗 → error dict。"""
+    with patch.dict("os.environ", {"UANALYZE_EMAIL": "", "UANALYZE_PASSWORD": ""}):
+        result = await fetch_company_keywords("台積電")
     assert "error" in result
