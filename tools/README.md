@@ -38,11 +38,11 @@
 | `--dcf` | 時間加權動態 DCF 估值：內在價值、前瞻價值、信心度（純計算，非 AI） |
 | `--valuation` | 相對估值 PE / PB Band：長歷史序列、10 年均 ±SD 帶、同業本益比中位數、現值歷史百分位 |
 | `--chips` | 三大法人買賣超：外資 / 投信 / 自營商 / 合計（近 20 日明細，單位張） |
-| `--margins` | 三率趨勢：毛利率、營業利益率、稅後淨利率（近 8 季） |
+| `--profit-margins` | 三率趨勢：毛利率、營業利益率、稅後淨利率（近 8 季） |
 | `--cashflow` | 現金流趨勢：營業 / 投資 / 籌資 / 自由現金流（近 8 季） |
 | `--dividend` | 股利政策：現金股息、發放率（近 10 年） |
 | `--peers-compare` | 同業多維比較：本檔 + 同業的 PE / PB / 三率對照表 |
-| `--margin` | 信用交易：融資餘額 / 使用率、融券餘額 / 使用率（近 10 日） |
+| `--margin-trading` | 信用交易：融資餘額 / 使用率、融券餘額 / 使用率（近 10 日） |
 | `--holders` | 籌碼結構：外資 / 董監持股比率、股東人數、400 張・1000 張大戶持股比率（近 6 期） |
 | `--transcript` | 法說會逐字稿：歷次清單，或指定某場的全文 |
 | `--smart-estimate` | 前瞻共識：Reuters（Refinitiv）法人預估 EPS/營收/毛利率/EBIT/EBITDA/淨利/資本支出/股息（各含平均/最低/最高值，逐年含未來預估年） |
@@ -105,9 +105,9 @@
    不必每檔都套同一組）。比逐一 `--prompt` 快很多。
 2. **相對估值 / 貴不貴**：`uanalyze.py --valuation <代號>`（長歷史 PE/PB + 同業本益比中位數
    + 現值歷史位階）；或 `valuation.py --pe/--pb/--lohas`（自算河流圖 / 樂活五線譜）。
-3. **獲利品質與體質**：`uanalyze.py --margins`（三率趨勢）、`--cashflow`（現金流/FCF）、
+3. **獲利品質與體質**：`uanalyze.py --profit-margins`（三率趨勢）、`--cashflow`（現金流/FCF）、
    `--pershare`（每股 EPS/ROE/ROIC…）。
-4. **籌碼面**：`uanalyze.py --chips`（三大法人近日買賣超）、`--margin`（融資融券/軋空）、
+4. **籌碼面**：`uanalyze.py --chips`（三大法人近日買賣超）、`--margin-trading`（融資融券/軋空）、
    `--holders`（外資/董監/大戶持股集中度）。
 5. **配息 / 存股**：`uanalyze.py --dividend`（現金股息 + 發放率）。
 6. **前瞻共識（法人怎麼看未來）**：`uanalyze.py --smart-estimate`（法人預估 EPS/營收/毛利率
@@ -127,6 +127,27 @@
 
 `broker_reports.py --sector <關鍵字>`（記憶體、CPO、散熱、被動元件…）查產業/總經/策略報告，
 回清單 + 摘要，某篇特別相關時再 `--detail <file_id>` 抓全文。
+
+---
+
+## 同主題多來源時，該用哪個？
+
+有些資料多支工具都拿得到，但**來源特性不同**（即時性、額度、資料未必一致）。下表給首選與備援：
+
+| 主題 | 首選 | 備援 / 其他 | 說明 |
+|------|------|-------------|------|
+| 即時報價 | `get_stock_price.py`（Fugle→FinMind fallback，秒回） | `fugle.py --quote`（要五檔）、`cnyes.py --quote` | ⚠️ 別為報價單獨打 `finmind.py`（**FinMind 有額度上限**，留給非即時的財報/歷史類） |
+| 歷史日 K（數據） | `fugle.py --candles`（即時性佳、無明顯上限） | `yfinance_data.py --history`（含美股/長期）、`cnyes.py --candles` | `finmind.py --price` 列末位（**省 FinMind 額度**） |
+| 歷史 K（畫圖） | `draw_kchart.py`（唯一產圖） | — | 要圖用這，要數據用上面 |
+| 本益比 / PE | 依用途，**三者不等價、非重複** | — | 問「貴不貴」用 `uanalyze.py --valuation`（相對估值+同業中位數+百分位）；要自算河流圖用 `valuation.py --pe`（FinMind 歷史四分位+SD）；要 raw 序列用 `finmind.py --per`（注意額度） |
+| 目標價 | `valuation.py --target`（**已並列 CNYES + Yahoo 兩家**，不合併、保留分歧） | `cnyes.py --target`、`yfinance_data.py --target`（只要單一來源時） | ⚠️ **各家目標價不一定一樣**，首選工具刻意兩家並陳，別假設有單一「正確」目標價 |
+| 前瞻預估 | 依角度，**四支各有獨到、非重複** | — | 現況達成率 `--consensus`；多指標區間 `--smart-estimate`；逐季路徑+評等 `--forecast-route`；估值模型 `--dcf`。FactSet 年度預估 EPS 另有 `cnyes.py --eps` / `valuation.py --eps-momentum` |
+| 財報三表 | 看需求 | — | 原始表 `finmind.py --income/--balance/--cashflow`（額度）；整理版 `uanalyze.py --profit-margins`(三率)/`--cashflow`(近8季)/`--pershare`；Yahoo 年度 `yfinance_data.py --financials` |
+| 股利 | `uanalyze.py --dividend`（現金股息+發放率，已整理） | `finmind.py --dividend`（原始股利政策，額度） | 同名不同源 |
+| 法人 / 融資券 | `uanalyze.py --chips`(三大法人) / `--margin-trading`(信用交易) / `--holders`(持股結構) | `finmind.py --institution` / `--margin`（原始，額度） | uanalyze 版已整理成近期趨勢 |
+| 新聞 | `fetch_news.py`（15 來源聚合 + 個股過濾 + 單篇全文） | `finmind.py --news`（額度） | 兩套新聞源不同 |
+
+原則：**即時類優先用 Fugle/UAnalyze，FinMind 因有額度上限留給非即時的歷史/財報**；同主題多支不是重複，是「即時性 / 來源 / 加工程度」的取捨——依情境選，README 這張表就是依據。
 
 ---
 

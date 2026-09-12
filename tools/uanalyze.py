@@ -12,11 +12,11 @@
      python tools/uanalyze.py --dcf SYMBOL                    # 時間加權動態 DCF 估值（純計算）
      python tools/uanalyze.py --valuation SYMBOL             # 相對估值 PE/PB Band（長歷史+同業中位數+現值百分位）
      python tools/uanalyze.py --chips SYMBOL                 # 三大法人買賣超（近20日明細 + 合計，單位張）
-     python tools/uanalyze.py --margins SYMBOL               # 三率趨勢（毛利率/營業利益率/稅後淨利率，近8季）
+     python tools/uanalyze.py --profit-margins SYMBOL       # 三率趨勢（毛利率/營業利益率/稅後淨利率，近8季）
      python tools/uanalyze.py --cashflow SYMBOL              # 現金流趨勢（營業/投資/籌資/自由現金流，近8季）
      python tools/uanalyze.py --dividend SYMBOL              # 股利政策（現金股息 + 發放率，近10年）
      python tools/uanalyze.py --peers-compare SYMBOL         # 同業多維比較（本檔+同業 PE/PB/三率對照表）
-     python tools/uanalyze.py --margin SYMBOL                # 信用交易（融資餘額/使用率 + 融券餘額/使用率，近10日）
+     python tools/uanalyze.py --margin-trading SYMBOL        # 信用交易（融資餘額/使用率 + 融券餘額/使用率，近10日）
      python tools/uanalyze.py --holders SYMBOL               # 籌碼結構（外資/董監持股比率 + 股東人數/大戶比率，近6期）
      python tools/uanalyze.py --transcript SYMBOL [id 或 date]  # 法說會逐字稿（無 selector 列清單，有則回全文）
      python tools/uanalyze.py --ask SYMBOL "問題" [general|knowledge|teacher]  # AI 知識庫問答（串流收集成完整答案）
@@ -34,11 +34,11 @@
    --dcf:        {"symbol","每股合理內在價值","1年後前瞻合理價值","信心度",…}
    --valuation:  {"symbol","stock_name"?,"pe":{latest,avg_10y,std_bands,percentile_in_history,peer_median},"pb":{…}}
    --chips:      {"symbol","unit":"張","recent_days":[{date,外資,投信,自營商,合計}],"sum_recent":{…}}
-   --margins:    {"symbol","unit":"%","margins":{毛利率:[{period,value}],營業利益率:[…],稅後淨利率:[…]},"latest":{…}}
+   --profit-margins: {"symbol","unit":"%","margins":{毛利率:[{period,value}],營業利益率:[…],稅後淨利率:[…]},"latest":{…}}
    --cashflow:   {"symbol","unit":"千元","flows":{營業活動現金流:[{period,value}],投資…,籌資…,自由現金流:[…]},"latest":{…}}
    --dividend:   {"symbol","dividends":[{year,現金股息,發放率(%)}],"latest":{…}}
    --peers-compare: {"symbol","peers_compared":[代號…],"rows":[{stock,本益比,股價淨值比,毛利率,營業利益率,稅後淨利率}]}
-   --margin:     {"symbol","recent_days":[{date,融資餘額,融資使用率(%),融券餘額,融券使用率(%)}],"latest":{…}}
+   --margin-trading: {"symbol","recent_days":[{date,融資餘額,融資使用率(%),融券餘額,融券使用率(%)}],"latest":{…}}
    --holders:    {"symbol","holdings":[{period,外資持股比率,董監持股比率,…}],"shareholders":[{period,總股東人數(人),…}],"latest":{…}}
    --transcript: 清單 {"symbol","transcripts":[{date,id}]} 或全文 {id,title,date,stock,字數,transcript}
    --ask:        {"symbol","question","knowledge_base","answer"}
@@ -2520,12 +2520,12 @@ if __name__ == "__main__":
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(1 if "error" in result else 0)
 
-    if args[0] == "--margins":
+    if args[0] == "--profit-margins":
         # A12 三率趨勢（毛利率/營業利益率/稅後淨利率）摘要（Agent 用；純資料，不呼叫 AI）。
         try:
             sym = args[1]
         except IndexError:
-            print(json.dumps({"error": "用法: python tools/uanalyze.py --margins <代號>"}, ensure_ascii=False))
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --profit-margins <代號>"}, ensure_ascii=False))
             sys.exit(1)
         result = asyncio.run(fetch_profit_margins(sym))
         print(json.dumps(result, ensure_ascii=False))
@@ -2564,12 +2564,12 @@ if __name__ == "__main__":
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(1 if "error" in result else 0)
 
-    if args[0] == "--margin":
+    if args[0] == "--margin-trading":
         # A16 信用交易（融資融券）摘要（Agent 用；純資料，不呼叫 AI）。
         try:
             sym = args[1]
         except IndexError:
-            print(json.dumps({"error": "用法: python tools/uanalyze.py --margin <代號>"}, ensure_ascii=False))
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --margin-trading <代號>"}, ensure_ascii=False))
             sys.exit(1)
         result = asyncio.run(fetch_margin_trading(sym))
         print(json.dumps(result, ensure_ascii=False))
