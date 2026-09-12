@@ -481,7 +481,7 @@ async def test_data_command_no_arg(context):
 
 
 def test_data_menu_keyboard_options():
-    """Menu keyboard has all five data buttons with data: callbacks."""
+    """Menu keyboard has all thirteen data buttons with data: callbacks."""
     from bot.handlers import _data_menu_keyboard
 
     kb = _data_menu_keyboard("2330").inline_keyboard
@@ -492,7 +492,15 @@ def test_data_menu_keyboard_options():
     assert "data:2330:supply" in callbacks
     assert "data:2330:order" in callbacks
     assert "data:2330:dcf" in callbacks
-    assert len(flat) == 5
+    assert "data:2330:valuation" in callbacks
+    assert "data:2330:chips" in callbacks
+    assert "data:2330:margins" in callbacks
+    assert "data:2330:cashflow" in callbacks
+    assert "data:2330:dividend" in callbacks
+    assert "data:2330:peers" in callbacks
+    assert "data:2330:margin" in callbacks
+    assert "data:2330:holders" in callbacks
+    assert len(flat) == 13
 
 
 @pytest.mark.asyncio
@@ -666,6 +674,241 @@ async def test_data_callback_supply(context):
     mock_fn.assert_awaited_once_with("2330")
     assert any("供應鏈" in c.args[0] for c in update.callback_query.edit_message_text.call_args_list)
     assert any("2303" in c.args[0] for c in update.callback_query.edit_message_text.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_data_callback_valuation(context):
+    """Pressing PE/PB 估值 calls fetch_valuation_bands and renders PE/PB + peer median."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:2330:valuation"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    fake = {
+        "symbol": "2330",
+        "stock_name": "台積電",
+        "pe": {"latest_month": "202509", "latest": 30.0, "avg_10y": 17.8,
+               "percentile_in_history": 75.0, "std_bands": {"本益比(+1標準差)": 29.8},
+               "peer_median": 15.2},
+        "pb": {"latest_month": "202509", "latest": 1.2, "avg_10y": 1.2,
+               "percentile_in_history": 66.7},
+    }
+    with patch("tools.uanalyze.fetch_valuation_bands", new=AsyncMock(return_value=fake)) as mock_fn:
+        await data_callback(update, context)
+
+    mock_fn.assert_awaited_once_with("2330")
+    calls = update.callback_query.edit_message_text.call_args_list
+    assert any("PE/PB" in c.args[0] for c in calls)
+    assert any("15.2" in c.args[0] for c in calls)  # 同業中位數
+
+
+@pytest.mark.asyncio
+async def test_data_callback_chips(context):
+    """Pressing 三大法人 calls fetch_institutional_chips and renders buy/sell + sum."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:2330:chips"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    fake = {
+        "symbol": "2330",
+        "stock_name": "台積電",
+        "unit": "張",
+        "recent_days": [
+            {"date": 20260911, "外資": 1000.0, "投信": 200.0, "自營商": 50.0, "合計": 1250.0},
+        ],
+        "sum_recent": {"天數": 1, "外資": 1000.0, "投信": 200.0, "自營商": 50.0, "合計": 1250.0},
+    }
+    with patch("tools.uanalyze.fetch_institutional_chips", new=AsyncMock(return_value=fake)) as mock_fn:
+        await data_callback(update, context)
+
+    mock_fn.assert_awaited_once_with("2330")
+    calls = update.callback_query.edit_message_text.call_args_list
+    assert any("三大法人" in c.args[0] for c in calls)
+    assert any("1,000" in c.args[0] for c in calls)  # 外資買超千位分隔
+
+
+@pytest.mark.asyncio
+async def test_data_callback_margins(context):
+    """Pressing 三率趨勢 calls fetch_profit_margins and renders the 三率 table."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:2330:margins"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    fake = {
+        "symbol": "2330",
+        "stock_name": "台積電",
+        "unit": "%",
+        "margins": {
+            "毛利率": [{"period": "2026Q1", "value": 58.8}, {"period": "2026Q2", "value": 58.6}],
+            "營業利益率": [{"period": "2026Q1", "value": 48.5}, {"period": "2026Q2", "value": 49.6}],
+            "稅後淨利率": [{"period": "2026Q1", "value": 42.9}, {"period": "2026Q2", "value": 42.7}],
+        },
+        "latest": {"period": "2026Q2", "毛利率": 58.6, "營業利益率": 49.6, "稅後淨利率": 42.7},
+    }
+    with patch("tools.uanalyze.fetch_profit_margins", new=AsyncMock(return_value=fake)) as mock_fn:
+        await data_callback(update, context)
+
+    mock_fn.assert_awaited_once_with("2330")
+    calls = update.callback_query.edit_message_text.call_args_list
+    assert any("三率" in c.args[0] for c in calls)
+    assert any("毛利率" in c.args[0] for c in calls)
+    assert any("58.6" in c.args[0] for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_data_callback_cashflow(context):
+    """Pressing 現金流 calls fetch_cash_flow_trend and renders the flows table."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:2330:cashflow"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    fake = {
+        "symbol": "2330",
+        "stock_name": "台積電",
+        "unit": "千元",
+        "flows": {
+            "營業活動現金流": [{"period": "2026Q1", "value": 110.0}, {"period": "2026Q2", "value": 130.0}],
+            "自由現金流": [{"period": "2026Q1", "value": 40.0}, {"period": "2026Q2", "value": 45.0}],
+        },
+        "latest": {"period": "2026Q2", "營業活動現金流": 130.0, "自由現金流": 45.0},
+    }
+    with patch("tools.uanalyze.fetch_cash_flow_trend", new=AsyncMock(return_value=fake)) as mock_fn:
+        await data_callback(update, context)
+
+    mock_fn.assert_awaited_once_with("2330")
+    calls = update.callback_query.edit_message_text.call_args_list
+    assert any("現金流" in c.args[0] for c in calls)
+    assert any("自由" in c.args[0] for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_data_callback_dividend(context):
+    """Pressing 股利政策 calls fetch_dividend_policy and renders the dividend table."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:2330:dividend"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    fake = {
+        "symbol": "2330",
+        "stock_name": "台積電",
+        "dividends": [
+            {"year": "2024", "現金股息": 13.5, "發放率(%)": 29.8},
+            {"year": "2025", "現金股息": 16.0, "發放率(%)": 24.2},
+        ],
+        "latest": {"year": "2025", "現金股息": 16.0, "發放率(%)": 24.2},
+    }
+    with patch("tools.uanalyze.fetch_dividend_policy", new=AsyncMock(return_value=fake)) as mock_fn:
+        await data_callback(update, context)
+
+    mock_fn.assert_awaited_once_with("2330")
+    calls = update.callback_query.edit_message_text.call_args_list
+    assert any("股利" in c.args[0] for c in calls)
+    assert any("16.0" in c.args[0] for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_data_callback_peers(context):
+    """Pressing 同業比較 calls fetch_peers_comparison and renders the comparison table."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:2330:peers"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    fake = {
+        "symbol": "2330",
+        "peers_compared": ["2330", "2303"],
+        "rows": [
+            {"stock": "2330", "本益比": 20.0, "股價淨值比": 3.0, "毛利率": 50.0},
+            {"stock": "2303", "本益比": 12.0, "股價淨值比": 1.5, "毛利率": 25.0},
+        ],
+    }
+    with patch("tools.uanalyze.fetch_peers_comparison", new=AsyncMock(return_value=fake)) as mock_fn:
+        await data_callback(update, context)
+
+    mock_fn.assert_awaited_once_with("2330")
+    calls = update.callback_query.edit_message_text.call_args_list
+    assert any("同業" in c.args[0] for c in calls)
+    assert any("2303" in c.args[0] for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_data_callback_margin(context):
+    """Pressing 融資融券 calls fetch_margin_trading and renders the credit table."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:2330:margin"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    fake = {
+        "symbol": "2330",
+        "stock_name": "台積電",
+        "recent_days": [
+            {"date": "20260911", "融資餘額": 36728.0, "融資使用率(%)": 1.95,
+             "融券餘額": 50.0, "融券使用率(%)": 0.0},
+        ],
+        "latest": {"date": "20260911", "融資餘額": 36728.0},
+    }
+    with patch("tools.uanalyze.fetch_margin_trading", new=AsyncMock(return_value=fake)) as mock_fn:
+        await data_callback(update, context)
+
+    mock_fn.assert_awaited_once_with("2330")
+    calls = update.callback_query.edit_message_text.call_args_list
+    assert any("信用交易" in c.args[0] for c in calls)
+    assert any("36,728" in c.args[0] for c in calls)
+
+
+@pytest.mark.asyncio
+async def test_data_callback_holders(context):
+    """Pressing 籌碼結構 calls fetch_holder_structure and renders holdings + shareholders."""
+    from bot.handlers import data_callback
+
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = "data:2330:holders"
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+
+    fake = {
+        "symbol": "2330",
+        "stock_name": "台積電",
+        "holdings": [{"period": 202609, "外資持股比率": 13.22, "400張以上持股比率": 55.47}],
+        "shareholders": [{"period": 202609, "總股東人數(人)": 510517,
+                          "平均持有張數/人": 14.74, "400張以上持股比率(%)": 55.47,
+                          "1000張以上持股比率(%)": 51.55}],
+        "latest": {"holdings": {"外資持股比率": 13.22}, "shareholders": {"總股東人數(人)": 510517}},
+    }
+    with patch("tools.uanalyze.fetch_holder_structure", new=AsyncMock(return_value=fake)) as mock_fn:
+        await data_callback(update, context)
+
+    mock_fn.assert_awaited_once_with("2330")
+    calls = update.callback_query.edit_message_text.call_args_list
+    assert any("籌碼結構" in c.args[0] for c in calls)
+    assert any("13.22" in c.args[0] for c in calls)
 
 
 @pytest.mark.asyncio

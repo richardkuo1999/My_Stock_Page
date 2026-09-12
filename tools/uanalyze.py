@@ -7,10 +7,18 @@
      python tools/uanalyze.py --consensus SYMBOL              # 法人共識（單季 EPS + 月營收）
      python tools/uanalyze.py --pershare SYMBOL               # 每股財務指標（FCF/EPS/ROE/ROIC…）
      python tools/uanalyze.py --supply SYMBOL                 # 同業／供應鏈對照標的清單
-     python tools/uanalyze.py --order SYMBOL                  # 訂單能見度 + 合約負債（資料稀疏）
+     python tools/uanalyze.py --order SYMBOL                  # 訂單能見度 + 合約負債（市場排行表取數）
      python tools/uanalyze.py --fundamentals SYMBOL           # 即時基本面（收盤/漲跌/本益比…；無資料回 {}）
      python tools/uanalyze.py --dcf SYMBOL                    # 時間加權動態 DCF 估值（純計算）
-     python tools/uanalyze.py --transcript SYMBOL [id 或 date]  # 法說會逐字稿（無 selector 列清單，有則回摘要）
+     python tools/uanalyze.py --valuation SYMBOL             # 相對估值 PE/PB Band（長歷史+同業中位數+現值百分位）
+     python tools/uanalyze.py --chips SYMBOL                 # 三大法人買賣超（近20日明細 + 合計，單位張）
+     python tools/uanalyze.py --margins SYMBOL               # 三率趨勢（毛利率/營業利益率/稅後淨利率，近8季）
+     python tools/uanalyze.py --cashflow SYMBOL              # 現金流趨勢（營業/投資/籌資/自由現金流，近8季）
+     python tools/uanalyze.py --dividend SYMBOL              # 股利政策（現金股息 + 發放率，近10年）
+     python tools/uanalyze.py --peers-compare SYMBOL         # 同業多維比較（本檔+同業 PE/PB/三率對照表）
+     python tools/uanalyze.py --margin SYMBOL                # 信用交易（融資餘額/使用率 + 融券餘額/使用率，近10日）
+     python tools/uanalyze.py --holders SYMBOL               # 籌碼結構（外資/董監持股比率 + 股東人數/大戶比率，近6期）
+     python tools/uanalyze.py --transcript SYMBOL [id 或 date]  # 法說會逐字稿（無 selector 列清單，有則回全文）
 回傳: 一律 JSON。
    預設:         {"analysis": str, "prompt", "symbol"}
    --multi:      {"symbol","requested","ok","failed","results":{面向: {analysis|error}}}
@@ -18,9 +26,17 @@
    --consensus:  {"symbol","eps":{…},"revenue":{…},"annual":[…],"broker_eps":[…]}
    --pershare:   {"symbol","metrics":[{name, values:{年份: 值}}]}
    --supply:     {"symbol","peers":[代號…]}
-   --order:      {"symbol","order_visibility"?,"contract_liability"?}
+   --order:      {"symbol","stock_name"?,"order_visibility"?,"contract_liability"?}
    --dcf:        {"symbol","每股合理內在價值","1年後前瞻合理價值","信心度",…}
-   --transcript: 清單 {"symbol","transcripts":[{date,id}]} 或摘要 {id,title,date,字數,摘要}
+   --valuation:  {"symbol","stock_name"?,"pe":{latest,avg_10y,std_bands,percentile_in_history,peer_median},"pb":{…}}
+   --chips:      {"symbol","unit":"張","recent_days":[{date,外資,投信,自營商,合計}],"sum_recent":{…}}
+   --margins:    {"symbol","unit":"%","margins":{毛利率:[{period,value}],營業利益率:[…],稅後淨利率:[…]},"latest":{…}}
+   --cashflow:   {"symbol","unit":"千元","flows":{營業活動現金流:[{period,value}],投資…,籌資…,自由現金流:[…]},"latest":{…}}
+   --dividend:   {"symbol","dividends":[{year,現金股息,發放率(%)}],"latest":{…}}
+   --peers-compare: {"symbol","peers_compared":[代號…],"rows":[{stock,本益比,股價淨值比,毛利率,營業利益率,稅後淨利率}]}
+   --margin:     {"symbol","recent_days":[{date,融資餘額,融資使用率(%),融券餘額,融券使用率(%)}],"latest":{…}}
+   --holders:    {"symbol","holdings":[{period,外資持股比率,董監持股比率,…}],"shareholders":[{period,總股東人數(人),…}],"latest":{…}}
+   --transcript: 清單 {"symbol","transcripts":[{date,id}]} 或全文 {id,title,date,stock,字數,transcript}
    查無資料/失敗一律回 {"error": str}（--fundamentals 例外，best-effort 回 {}）。
 
 面向清單（--prompt / --multi 用）見 UA_PROMPTS（DEFAULT_PROMPT 之後）。--multi 由
@@ -752,10 +768,11 @@ async def fetch_supply_chain(symbol: str) -> dict:
 
 
 def _order_rows(payload: dict) -> dict:
-    """Extract the non-empty inner data of an order/contract module response.
+    """Deprecated shape helper kept for backward compat (unused by A8 now).
 
-    回應形狀為 {'data': {'data': <list|dict|None>, 'country':...}}。稀疏時
-    data.data 為 None/空。回非空的 data.data，否則回 {}。
+    早期 A8 曾打 per-stock 的 OrderVisibilityModule/ContractLiabilityModule，
+    回應形狀為 {'data': {'data': <list|dict|None>}}。那兩個端點現已被伺服器
+    清空（回 {'country':'TW'}），A8 改走市場排行表（見 fetch_order_visibility）。
     """
     data = payload.get("data") if isinstance(payload, dict) else None
     inner = data.get("data") if isinstance(data, dict) else None
@@ -764,12 +781,26 @@ def _order_rows(payload: dict) -> dict:
     return {}
 
 
-async def fetch_order_visibility(symbol: str) -> dict:
-    """A8 訂單能見度：訂單能見度 + 合約負債（cronjob，資料稀疏）。
+# A8 訂單能見度：欄位分組（把排行表的欄位拆成「訂單能見度」與「合約負債」兩段）。
+# 以 column_title 解碼後的「中文標籤」分組；未列到的欄位一律歸「訂單能見度」段。
+_CONTRACT_LIABILITY_LABELS = {"合約負債佔營收幾%", "季合約負債季增率"}
 
-    純資料函式（不呼叫 AI，用 async httpx）。兩個端點各 best-effort。實測多數
-    個股（含 2330）兩端皆回空 data.data（僅 {'country':'TW'}）→ 兩者都空時回
-    error dict，讓 bot 回清楚的「查無」提示；有任一端有資料才回摘要 dict。
+
+async def fetch_order_visibility(symbol: str) -> dict:
+    """A8 訂單能見度 + 合約負債（市場排行表 OrderVisibilitySingleRankings）。
+
+    純資料函式（不呼叫 AI，用 async httpx）。
+
+    來源改用 gidp `OrderVisibilitySingleRankings`（全市場排行表，~1900+ 檔），
+    回應含 `data.data`（每列一檔，欄位為 uaXXXXX_cp 代碼）與 `data.column_title`
+    （代碼→中文標籤對照，如 ua60255_cp→「合約負債佔營收幾%」）。本函式在表中以
+    stock_code 過濾出該檔，用 column_title 解碼欄位，再依標籤拆成兩段：
+      order_visibility  訂單能見度相關（季報公佈日/細產業/月營收年增率/存貨…）
+      contract_liability 合約負債相關（合約負債佔營收幾%/季合約負債季增率）
+    查無該檔回 error dict。
+
+    註：舊的 per-stock 端點 OrderVisibilityModule/ContractLiabilityModule 已被
+    伺服器清空（僅回 {'country':'TW'}），故改走這張排行表取數。
     """
     symbol = symbol.strip().upper()
     if not symbol:
@@ -777,33 +808,57 @@ async def fetch_order_visibility(symbol: str) -> dict:
     if not await _auth.ensure_token():
         return {"error": "UAnalyze 登入失敗（請確認 UANALYZE_EMAIL / UANALYZE_PASSWORD）"}
 
+    try:
+        headers = _auth.gidp_headers()
+        url = f"{GIDP_BASE_URL}/data_fetch/api/OrderVisibilitySingleRankings"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(url, headers=headers, params={"country": "TW"})
+    except Exception as e:
+        logger.warning("fetch_order_visibility failed for %s: %s", symbol, e)
+        return {"error": f"查無 {symbol} 的訂單能見度資料"}
+
+    if r.status_code != 200:
+        return {"error": f"查無 {symbol} 的訂單能見度資料"}
+
+    data = (r.json().get("data") or {}) if isinstance(r.json(), dict) else {}
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(rows, list) or not rows:
+        return {"error": f"查無 {symbol} 的訂單能見度資料"}
+
+    # column_title 是 [{code: 中文標籤}, ...]，攤平成 {code: 中文標籤}。
+    code_to_label: dict = {}
+    for item in data.get("column_title") or []:
+        if isinstance(item, dict):
+            code_to_label.update(item)
+
+    row = None
+    for item in rows:
+        if isinstance(item, dict) and str(item.get("stock_code")) == symbol:
+            row = item
+            break
+    if row is None:
+        return {"error": f"查無 {symbol} 的訂單能見度資料"}
+
+    # 依 column_title 解碼欄位（保序），再分兩段；名稱/代號欄不進表。
+    order_visibility: dict = {}
+    contract_liability: dict = {}
+    skip_codes = {"stock_title", "stock_code", "stock_name"}
+    for code, value in row.items():
+        if code in skip_codes:
+            continue
+        label = code_to_label.get(code, code)
+        if label in _CONTRACT_LIABILITY_LABELS:
+            contract_liability[label] = value
+        else:
+            order_visibility[label] = value
+
     result: dict = {"symbol": symbol}
-
-    # --- 訂單能見度 ---
-    try:
-        cookies, headers = _auth.cookie_context()
-        url = f"{CRONJOB_BASE_URL}/data_fetch/api/OrderVisibilityModule/{symbol}"
-        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-            r = await client.get(url, cookies=cookies, headers=headers)
-        if r.status_code == 200:
-            rows = _order_rows(r.json())
-            if rows:
-                result["order_visibility"] = rows["inner"]
-    except Exception as e:
-        logger.warning("fetch_order_visibility (order) failed for %s: %s", symbol, e)
-
-    # --- 合約負債 ---
-    try:
-        cookies, headers = _auth.cookie_context()
-        url = f"{CRONJOB_BASE_URL}/data_fetch/api/ContractLiabilityModule/{symbol}"
-        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-            r = await client.get(url, cookies=cookies, headers=headers)
-        if r.status_code == 200:
-            rows = _order_rows(r.json())
-            if rows:
-                result["contract_liability"] = rows["inner"]
-    except Exception as e:
-        logger.warning("fetch_order_visibility (contract) failed for %s: %s", symbol, e)
+    if row.get("stock_name"):
+        result["stock_name"] = row["stock_name"]
+    if order_visibility:
+        result["order_visibility"] = order_visibility
+    if contract_liability:
+        result["contract_liability"] = contract_liability
 
     if "order_visibility" not in result and "contract_liability" not in result:
         return {"error": f"查無 {symbol} 的訂單能見度資料"}
@@ -1106,9 +1161,730 @@ async def fetch_stock_fundamentals(symbol: str) -> dict:
     return summary
 
 
+# ── A10 相對估值 PE/PB Band（cronjob，cookie 認證；純資料不呼叫 AI）───────────
+# 補 finmind 版（日頻/近1年/自算SD）拿不到的三個維度：
+#   1. 長歷史月序列（~20 年）+ 平台預算好的 10 年平均 ±1/2 標準差帶（refline）
+#   2. 同產業本益比中位數（PE_Band 的 refdata，非主序列）
+#   3. 現值在自身歷史的百分位（本函式自算）
+# 端點（皆 cronjob，帶股票代碼）：
+#   HistoricalPer/{symbol}   本益比月序列 + refline(10年均/±1/2SD)
+#   HistoricalPbr/{symbol}   股價淨值比月序列 + refline
+#   PE_Band/{symbol}         refdata 內含「同產業本益比中位數」
+
+
+def _parse_ratio_series(payload: dict, label_kw: str) -> dict:
+    """從 data.data 取出 ChineseAccount 含 label_kw 那列的 {月份: 值}（濾空）。"""
+    rows = (payload.get("data") or {}).get("data") or {}
+    if not isinstance(rows, dict):
+        return {}
+    for row in rows.values():
+        if not isinstance(row, dict):
+            continue
+        if label_kw in row.get("ChineseAccount", ""):
+            data = row.get("Data", {})
+            if isinstance(data, dict):
+                return {k: v for k, v in data.items() if isinstance(v, (int, float))}
+    return {}
+
+
+def _parse_refline(payload: dict) -> dict:
+    """把 data.refline 攤平成 {中文標籤: 值}（10年平均 / ±標準差帶）。"""
+    ref = (payload.get("data") or {}).get("refline") or {}
+    out: dict = {}
+    if isinstance(ref, dict):
+        for row in ref.values():
+            if isinstance(row, dict) and isinstance(row.get("Data"), (int, float)):
+                out[row.get("ChineseAccount", "")] = row["Data"]
+    return out
+
+
+def _percentile_rank(series: dict, value: float | None) -> float | None:
+    """value 在歷史序列中的百分位（0-100）；無值回 None。"""
+    if value is None or not series:
+        return None
+    vals = [v for v in series.values() if isinstance(v, (int, float))]
+    if not vals:
+        return None
+    below = sum(1 for v in vals if v < value)
+    return round(below / len(vals) * 100, 1)
+
+
+def _latest_value(series: dict) -> tuple[str | None, float | None]:
+    """回 (最新月份, 值)；序列以 YYYYMM 字串為鍵，取最大者。"""
+    if not series:
+        return None, None
+    k = max(series.keys())
+    return k, series[k]
+
+
+async def fetch_valuation_bands(symbol: str) -> dict:
+    """A10 相對估值 PE/PB Band（純資料，不呼叫 AI，async httpx，cookie 認證）。
+
+    並行抓 HistoricalPer / HistoricalPbr / PE_Band 三個 cronjob 端點，回：
+      {
+        "symbol", "stock_name"?,
+        "pe": {"latest_month","latest": 本益比, "avg_10y","std_bands":{...},
+               "percentile_in_history": %, "peer_median": 同業中位數},
+        "pb": {"latest_month","latest": 股價淨值比, "avg_10y","std_bands":{...},
+               "percentile_in_history": %},
+      }
+    三段各自 best-effort；全空回 error dict。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {"error": "請輸入股票代號"}
+    if not await _auth.ensure_token():
+        return {"error": "UAnalyze 登入失敗（請確認 UANALYZE_EMAIL / UANALYZE_PASSWORD）"}
+
+    cookies, headers = _auth.cookie_context()
+
+    async def _get(endpoint: str) -> dict | None:
+        try:
+            url = f"{CRONJOB_BASE_URL}/data_fetch/api/{endpoint}/{symbol}"
+            async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+                r = await client.get(url, cookies=cookies, headers=headers)
+            if r.status_code == 200:
+                return r.json()
+        except Exception as e:
+            logger.warning("fetch_valuation_bands %s failed for %s: %s", endpoint, symbol, e)
+        return None
+
+    per_json, pbr_json, band_json = await asyncio.gather(
+        _get("HistoricalPer"), _get("HistoricalPbr"), _get("PE_Band")
+    )
+
+    result: dict = {"symbol": symbol}
+
+    # --- 本益比段 ---
+    if per_json:
+        series = _parse_ratio_series(per_json, "本益比")
+        month, latest = _latest_value(series)
+        refline = _parse_refline(per_json)
+        pe: dict = {}
+        if latest is not None:
+            pe["latest_month"] = month
+            pe["latest"] = latest
+            pct = _percentile_rank(series, latest)
+            if pct is not None:
+                pe["percentile_in_history"] = pct
+        # refline：10年平均 + ±標準差帶（平台預算）
+        std_bands = {}
+        for label, val in refline.items():
+            if "平均" in label:
+                pe["avg_10y"] = val
+            elif "標準差" in label:
+                std_bands[label] = val
+        if std_bands:
+            pe["std_bands"] = std_bands
+        # 同業中位數在 PE_Band 的 refdata（非 HistoricalPer）
+        if band_json:
+            refdata = (band_json.get("data") or {}).get("refdata") or {}
+            if isinstance(refdata, dict):
+                for row in refdata.values():
+                    if isinstance(row, dict) and "同產業" in row.get("ChineseAccount", ""):
+                        if isinstance(row.get("Data"), (int, float)):
+                            pe["peer_median"] = row["Data"]
+                        break
+        # 帶回公司名（best-effort）
+        name = (per_json.get("data") or {}).get("stock_name")
+        if name:
+            result["stock_name"] = name
+        if pe:
+            result["pe"] = pe
+
+    # --- 股價淨值比段 ---
+    if pbr_json:
+        series = _parse_ratio_series(pbr_json, "股價淨值比")
+        month, latest = _latest_value(series)
+        refline = _parse_refline(pbr_json)
+        pb: dict = {}
+        if latest is not None:
+            pb["latest_month"] = month
+            pb["latest"] = latest
+            pct = _percentile_rank(series, latest)
+            if pct is not None:
+                pb["percentile_in_history"] = pct
+        std_bands = {}
+        for label, val in refline.items():
+            if "平均" in label:
+                pb["avg_10y"] = val
+            elif "標準差" in label:
+                std_bands[label] = val
+        if std_bands:
+            pb["std_bands"] = std_bands
+        if pb:
+            result["pb"] = pb
+
+    if "pe" not in result and "pb" not in result:
+        return {"error": f"查無 {symbol} 的估值 PE/PB 資料"}
+    return result
+
+
+# ── A11 三大法人籌碼（cronjob，cookie 認證；純資料不呼叫 AI）──────────────────
+# bot 目前完全沒有籌碼面。InstitutionalInvestorsNet 回每日外資/投信/自營商/合計
+# 買賣超（張），list 最新在前。本函式取最近 recent 天 + 近 recent 天合計。
+# 欄位對照（column_title）：raw80050=外資 raw80053=投信 raw80062=自營商 raw80063=合計。
+
+
+async def fetch_institutional_chips(symbol: str, recent: int = 20) -> dict:
+    """A11 三大法人買賣超（純資料，不呼叫 AI，async httpx，cookie 認證）。
+
+    來源 cronjob `InstitutionalInvestorsNet/{symbol}`：list（最新在前），每筆
+    {row_title_center: 日期(YYYYMMDD), raw80050: 外資, raw80053: 投信,
+     raw80062: 自營商, raw80063: 三大法人合計}（單位：張）。
+
+    回：
+      {
+        "symbol", "stock_name"?, "unit": "張",
+        "recent_days": [{"date","外資","投信","自營商","合計"}, ...],  # 最新在前，最多 recent 筆
+        "sum_recent": {"天數","外資","投信","自營商","合計"},          # 近 recent 天加總
+      }
+    無資料回 error dict。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {"error": "請輸入股票代號"}
+    if not await _auth.ensure_token():
+        return {"error": "UAnalyze 登入失敗（請確認 UANALYZE_EMAIL / UANALYZE_PASSWORD）"}
+
+    try:
+        cookies, headers = _auth.cookie_context()
+        url = f"{CRONJOB_BASE_URL}/data_fetch/api/InstitutionalInvestorsNet/{symbol}"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(url, cookies=cookies, headers=headers)
+    except Exception as e:
+        logger.warning("fetch_institutional_chips failed for %s: %s", symbol, e)
+        return {"error": f"查無 {symbol} 的三大法人資料"}
+
+    if r.status_code != 200:
+        return {"error": f"查無 {symbol} 的三大法人資料"}
+
+    data = (r.json().get("data") or {})
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(rows, list) or not rows:
+        return {"error": f"查無 {symbol} 的三大法人資料"}
+
+    # 欄位代碼 → 中文（固定，亦可從 column_title 解，這裡直接寫死以求穩定）。
+    _F = {"raw80050": "外資", "raw80053": "投信", "raw80062": "自營商", "raw80063": "合計"}
+
+    def _num(v):
+        return v if isinstance(v, (int, float)) else 0.0
+
+    recent_days: list[dict] = []
+    totals = {"外資": 0.0, "投信": 0.0, "自營商": 0.0, "合計": 0.0}
+    for row in rows[:recent]:  # list 最新在前
+        if not isinstance(row, dict):
+            continue
+        entry = {"date": row.get("row_title_center")}
+        for code, name in _F.items():
+            val = _num(row.get(code))
+            entry[name] = val
+            totals[name] += val
+        recent_days.append(entry)
+
+    if not recent_days:
+        return {"error": f"查無 {symbol} 的三大法人資料"}
+
+    result: dict = {"symbol": symbol, "unit": "張", "recent_days": recent_days}
+    if data.get("stock_name"):
+        result["stock_name"] = data["stock_name"]
+    result["sum_recent"] = {
+        "天數": len(recent_days),
+        "外資": round(totals["外資"], 2),
+        "投信": round(totals["投信"], 2),
+        "自營商": round(totals["自營商"], 2),
+        "合計": round(totals["合計"], 2),
+    }
+    return result
+
+
+# ── A12 利潤率趨勢（cronjob，cookie 認證；純資料不呼叫 AI）─────────────────────
+# MajorProfitMargins 回毛利率/營業利益率/稅後淨利率的季度序列（key 如 2026Q2）。
+# 補現有只有 EPS/營收、缺獲利品質趨勢的缺口。
+
+
+async def fetch_profit_margins(symbol: str, recent: int = 8) -> dict:
+    """A12 三率趨勢：毛利率 / 營業利益率 / 稅後淨利率（純資料，不呼叫 AI）。
+
+    來源 cronjob `MajorProfitMargins/{symbol}`：data.data 為 dict，每列一個率
+    （ChineseAccount = 毛利率/營業利益率/稅後淨利率），Data 為 {季度: 值(%)}。
+    只取最近 recent 季。
+
+    回：
+      {
+        "symbol", "stock_name"?, "unit": "%",
+        "margins": {
+          "毛利率": [{"period","value"}, ...],       # 最舊→最新
+          "營業利益率": [...],
+          "稅後淨利率": [...],
+        },
+        "latest": {"period","毛利率","營業利益率","稅後淨利率"},  # 最新一季快照
+      }
+    無資料回 error dict。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {"error": "請輸入股票代號"}
+    if not await _auth.ensure_token():
+        return {"error": "UAnalyze 登入失敗（請確認 UANALYZE_EMAIL / UANALYZE_PASSWORD）"}
+
+    try:
+        cookies, headers = _auth.cookie_context()
+        url = f"{CRONJOB_BASE_URL}/data_fetch/api/MajorProfitMargins/{symbol}"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(url, cookies=cookies, headers=headers)
+    except Exception as e:
+        logger.warning("fetch_profit_margins failed for %s: %s", symbol, e)
+        return {"error": f"查無 {symbol} 的利潤率資料"}
+
+    if r.status_code != 200:
+        return {"error": f"查無 {symbol} 的利潤率資料"}
+
+    data = (r.json().get("data") or {})
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(rows, dict) or not rows:
+        return {"error": f"查無 {symbol} 的利潤率資料"}
+
+    wanted = ("毛利率", "營業利益率", "稅後淨利率")
+    margins: dict = {}
+    latest: dict = {}
+    for row in rows.values():
+        if not isinstance(row, dict):
+            continue
+        label = row.get("ChineseAccount", "")
+        if label not in wanted:
+            continue
+        series = row.get("Data", {})
+        pairs = _latest_periods(series, recent)  # [(period, value)]，最舊→最新
+        if not pairs:
+            continue
+        margins[label] = [{"period": p, "value": v} for p, v in pairs]
+        latest[label] = pairs[-1][1]
+        latest["period"] = pairs[-1][0]
+
+    if not margins:
+        return {"error": f"查無 {symbol} 的利潤率資料"}
+
+    result: dict = {"symbol": symbol, "unit": "%", "margins": margins}
+    if data.get("stock_name"):
+        result["stock_name"] = data["stock_name"]
+    if latest:
+        result["latest"] = latest
+    return result
+
+
+# ── A13 現金流趨勢（cronjob，cookie 認證；純資料不呼叫 AI）─────────────────────
+# CashFlowTrend 回營業/投資/籌資/自由現金流的季度序列。注意：資料在 PeriodData
+# 欄位（非 Data）。補現有 pershare 只有每股數字、缺總量現金流趨勢的缺口。
+
+
+def _period_series(row: dict) -> dict:
+    """取一列的時間序列：優先 PeriodData，退回 Data；只留數值。"""
+    series = row.get("PeriodData")
+    if not isinstance(series, dict) or not series:
+        series = row.get("Data")
+    if not isinstance(series, dict):
+        return {}
+    return {k: v for k, v in series.items() if isinstance(v, (int, float))}
+
+
+async def fetch_cash_flow_trend(symbol: str, recent: int = 8) -> dict:
+    """A13 現金流趨勢：營業/投資/籌資/自由現金流（純資料，不呼叫 AI）。
+
+    來源 cronjob `CashFlowTrend/{symbol}`：data.data 為 dict，每列一種現金流
+    （ChineseAccount = 營業活動現金流/投資活動現金流/籌資活動現金流/自由現金流），
+    序列在 PeriodData（{季度: 千元}）。只取最近 recent 季。
+
+    回：
+      {
+        "symbol", "stock_name"?, "unit": "千元",
+        "flows": {"營業活動現金流":[{"period","value"}],"投資活動現金流":[…],
+                  "籌資活動現金流":[…],"自由現金流":[…]},
+        "latest": {"period","營業活動現金流",…},
+      }
+    無資料回 error dict。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {"error": "請輸入股票代號"}
+    if not await _auth.ensure_token():
+        return {"error": "UAnalyze 登入失敗（請確認 UANALYZE_EMAIL / UANALYZE_PASSWORD）"}
+
+    try:
+        cookies, headers = _auth.cookie_context()
+        url = f"{CRONJOB_BASE_URL}/data_fetch/api/CashFlowTrend/{symbol}"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(url, cookies=cookies, headers=headers)
+    except Exception as e:
+        logger.warning("fetch_cash_flow_trend failed for %s: %s", symbol, e)
+        return {"error": f"查無 {symbol} 的現金流資料"}
+
+    if r.status_code != 200:
+        return {"error": f"查無 {symbol} 的現金流資料"}
+
+    data = (r.json().get("data") or {})
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(rows, dict) or not rows:
+        return {"error": f"查無 {symbol} 的現金流資料"}
+
+    wanted = ("營業活動現金流", "投資活動現金流", "籌資活動現金流", "自由現金流")
+    flows: dict = {}
+    latest: dict = {}
+    for row in rows.values():
+        if not isinstance(row, dict):
+            continue
+        label = row.get("ChineseAccount", "")
+        if label not in wanted:
+            continue
+        pairs = _latest_periods(_period_series(row), recent)
+        if not pairs:
+            continue
+        flows[label] = [{"period": p, "value": v} for p, v in pairs]
+        latest[label] = pairs[-1][1]
+        latest["period"] = pairs[-1][0]
+
+    if not flows:
+        return {"error": f"查無 {symbol} 的現金流資料"}
+
+    result: dict = {"symbol": symbol, "unit": "千元", "flows": flows}
+    if data.get("stock_name"):
+        result["stock_name"] = data["stock_name"]
+    if latest:
+        result["latest"] = latest
+    return result
+
+
+# ── A14 股利政策（cronjob，cookie 認證；純資料不呼叫 AI）──────────────────────
+# CashDividendPayoutRatio 回現金股息合計 + 現金股息發放率(%)，年度序列（Data 欄位）。
+
+
+async def fetch_dividend_policy(symbol: str, years: int = 10) -> dict:
+    """A14 股利政策：現金股息 + 發放率（純資料，不呼叫 AI）。
+
+    來源 cronjob `CashDividendPayoutRatio/{symbol}`：data.data 為 dict，含
+    「現金股息合計」與「現金股息發放率％」兩列，Data 為 {年度: 值}。取最近 years 年。
+
+    回：
+      {
+        "symbol", "stock_name"?,
+        "dividends": [{"year","現金股息","發放率(%)"}, ...],   # 最舊→最新
+        "latest": {"year","現金股息","發放率(%)"},
+      }
+    無資料回 error dict。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {"error": "請輸入股票代號"}
+    if not await _auth.ensure_token():
+        return {"error": "UAnalyze 登入失敗（請確認 UANALYZE_EMAIL / UANALYZE_PASSWORD）"}
+
+    try:
+        cookies, headers = _auth.cookie_context()
+        url = f"{CRONJOB_BASE_URL}/data_fetch/api/CashDividendPayoutRatio/{symbol}"
+        async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+            r = await client.get(url, cookies=cookies, headers=headers)
+    except Exception as e:
+        logger.warning("fetch_dividend_policy failed for %s: %s", symbol, e)
+        return {"error": f"查無 {symbol} 的股利資料"}
+
+    if r.status_code != 200:
+        return {"error": f"查無 {symbol} 的股利資料"}
+
+    data = (r.json().get("data") or {})
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(rows, dict) or not rows:
+        return {"error": f"查無 {symbol} 的股利資料"}
+
+    div_series: dict = {}
+    ratio_series: dict = {}
+    for row in rows.values():
+        if not isinstance(row, dict):
+            continue
+        label = row.get("ChineseAccount", "")
+        series = _period_series(row)
+        if "現金股息合計" in label:
+            div_series = series
+        elif "發放率" in label:
+            ratio_series = series
+
+    # 年度聯集，升序。
+    years_all = sorted(set(div_series) | set(ratio_series))
+    years_all = years_all[-years:]
+    if not years_all:
+        return {"error": f"查無 {symbol} 的股利資料"}
+
+    dividends = [
+        {"year": y, "現金股息": div_series.get(y), "發放率(%)": ratio_series.get(y)}
+        for y in years_all
+    ]
+
+    result: dict = {"symbol": symbol, "dividends": dividends}
+    if data.get("stock_name"):
+        result["stock_name"] = data["stock_name"]
+    result["latest"] = dividends[-1]
+    return result
+
+
+# ── A15 同業多維比較（組合既有函式；純資料不呼叫 AI）──────────────────────────
+# 不打新端點，而是：先 fetch_supply_chain 拿同業代號，再對本檔 + 同業各檔並行取
+# fetch_valuation_bands（PE/PB）與 fetch_profit_margins（毛利率），組成橫向對照表。
+# 這比依賴平台 StockComparisonBubble（實測常空）可靠，且複用已驗證的函式。
+
+
+async def fetch_peers_comparison(symbol: str, max_peers: int = 5) -> dict:
+    """A15 同業多維比較（純資料，不呼叫 AI）。
+
+    流程：fetch_supply_chain(symbol) 取同業清單 → 取本檔 + 前 max_peers 檔同業，
+    對每檔並行抓 fetch_valuation_bands + fetch_profit_margins → 組成對照列。
+
+    回：
+      {
+        "symbol",
+        "peers_compared": [代號, ...],       # 實際納入比較的代號（含本檔，本檔在前）
+        "rows": [{"stock","本益比","股價淨值比","毛利率","營業利益率","稅後淨利率"}, ...],
+      }
+    同業清單取不到回 error dict；個別標的取數失敗只該列留空、不影響其他。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {"error": "請輸入股票代號"}
+    if not await _auth.ensure_token():
+        return {"error": "UAnalyze 登入失敗（請確認 UANALYZE_EMAIL / UANALYZE_PASSWORD）"}
+
+    supply = await fetch_supply_chain(symbol)
+    peers = supply.get("peers", []) if isinstance(supply, dict) else []
+    # 本檔在前，接著同業（去重、去掉本檔自身），最多 max_peers 檔同業。
+    codes = [symbol] + [p for p in peers if p != symbol][:max_peers]
+
+    async def _one(code: str) -> dict:
+        val, mar = await asyncio.gather(
+            fetch_valuation_bands(code),
+            fetch_profit_margins(code),
+        )
+        row: dict = {"stock": code}
+        if isinstance(val, dict) and "error" not in val:
+            pe = val.get("pe") or {}
+            pb = val.get("pb") or {}
+            if pe.get("latest") is not None:
+                row["本益比"] = pe["latest"]
+            if pb.get("latest") is not None:
+                row["股價淨值比"] = pb["latest"]
+        if isinstance(mar, dict) and "error" not in mar:
+            latest = mar.get("latest") or {}
+            for k in ("毛利率", "營業利益率", "稅後淨利率"):
+                if latest.get(k) is not None:
+                    row[k] = latest[k]
+        return row
+
+    rows = await asyncio.gather(*[_one(c) for c in codes])
+
+    # 至少要有本檔 + 一個可比項目才有意義；否則回 error。
+    has_metric = any(len(r) > 1 for r in rows)
+    if not has_metric:
+        return {"error": f"查無 {symbol} 的同業比較資料"}
+
+    return {
+        "symbol": symbol,
+        "peers_compared": codes,
+        "rows": list(rows),
+    }
+
+
+# ── A16 信用交易（融資融券）（cronjob，cookie 認證；純資料不呼叫 AI）────────────
+# 合併兩端點的日序列：MarginBalanceVSMarginUtilization（融資餘額+使用率）與
+# ShortInterestVSShortSellUtilization（融券餘額+使用率）。都用 Data，日期為 key。
+
+
+async def fetch_margin_trading(symbol: str, recent: int = 10) -> dict:
+    """A16 信用交易：融資餘額/使用率 + 融券餘額/使用率（純資料，不呼叫 AI）。
+
+    並行抓兩個 cronjob 端點，各取最近 recent 日，組成每日一列。
+    回：
+      {
+        "symbol", "stock_name"?,
+        "recent_days": [{"date","融資餘額","融資使用率(%)","融券餘額","融券使用率(%)"}, ...],  # 最新在前
+        "latest": {同上單筆},
+      }
+    兩段皆 best-effort；全空回 error dict。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {"error": "請輸入股票代號"}
+    if not await _auth.ensure_token():
+        return {"error": "UAnalyze 登入失敗（請確認 UANALYZE_EMAIL / UANALYZE_PASSWORD）"}
+
+    cookies, headers = _auth.cookie_context()
+
+    async def _get(endpoint: str) -> dict | None:
+        try:
+            url = f"{CRONJOB_BASE_URL}/data_fetch/api/{endpoint}/{symbol}"
+            async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+                r = await client.get(url, cookies=cookies, headers=headers)
+            if r.status_code == 200:
+                return r.json()
+        except Exception as e:
+            logger.warning("fetch_margin_trading %s failed for %s: %s", endpoint, symbol, e)
+        return None
+
+    margin_json, short_json = await asyncio.gather(
+        _get("MarginBalanceVSMarginUtilization"),
+        _get("ShortInterestVSShortSellUtilization"),
+    )
+
+    def _series(payload: dict | None, label_kw: str) -> dict:
+        if not payload:
+            return {}
+        rows = (payload.get("data") or {}).get("data") or {}
+        if not isinstance(rows, dict):
+            return {}
+        for row in rows.values():
+            if isinstance(row, dict) and label_kw in row.get("ChineseAccount", ""):
+                return _period_series(row)
+        return {}
+
+    m_bal = _series(margin_json, "融資餘額")
+    m_use = _series(margin_json, "融資使用率")
+    s_bal = _series(short_json, "融券餘額")
+    s_use = _series(short_json, "融券使用率")
+
+    # 日期聯集，最新在前。
+    all_dates = sorted(set(m_bal) | set(m_use) | set(s_bal) | set(s_use), reverse=True)[:recent]
+    if not all_dates:
+        return {"error": f"查無 {symbol} 的融資融券資料"}
+
+    recent_days = [
+        {
+            "date": d,
+            "融資餘額": m_bal.get(d),
+            "融資使用率(%)": m_use.get(d),
+            "融券餘額": s_bal.get(d),
+            "融券使用率(%)": s_use.get(d),
+        }
+        for d in all_dates
+    ]
+
+    result: dict = {"symbol": symbol, "recent_days": recent_days, "latest": recent_days[0]}
+    name = None
+    for payload in (margin_json, short_json):
+        if payload:
+            name = (payload.get("data") or {}).get("stock_name")
+            if name:
+                break
+    if name:
+        result["stock_name"] = name
+    return result
+
+
+# ── A17 籌碼結構（cronjob，cookie 認證；純資料不呼叫 AI）──────────────────────
+# 合併 MajorInvestorsHoldings（外資/董監持股比率）與 ShareHoldersStatistics
+# （股東人數/大戶持股比率）。兩者皆 list（最新在前）+ column_title 代碼→中文。
+
+
+def _parse_titled_list(payload: dict) -> tuple[list[dict], dict]:
+    """回 (rows, code_to_label)。rows 為原始 list（最新在前），label 由 column_title 攤平。"""
+    data = payload.get("data") or {}
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        rows = []
+    code_to_label: dict = {}
+    for item in data.get("column_title") or []:
+        if isinstance(item, dict):
+            code_to_label.update(item)
+    return rows, code_to_label
+
+
+async def fetch_holder_structure(symbol: str, recent: int = 6) -> dict:
+    """A17 籌碼結構：外資/董監持股比率 + 股東人數/大戶持股比率（純資料，不呼叫 AI）。
+
+    並行抓兩個 cronjob list 端點，各取最近 recent 期（月），以 column_title 解碼欄位。
+    回：
+      {
+        "symbol", "stock_name"?,
+        "holdings": [{"period","外資持股比率","董監持股比率","400張以上持股比率"}, ...],  # 最新在前
+        "shareholders": [{"period","總股東人數(人)","平均持有張數/人","400張以上持股比率(%)",
+                          "1000張以上持股比率(%)"}, ...],
+        "latest": {"holdings":{…}, "shareholders":{…}},
+      }
+    兩段皆 best-effort；全空回 error dict。
+    """
+    symbol = symbol.strip().upper()
+    if not symbol:
+        return {"error": "請輸入股票代號"}
+    if not await _auth.ensure_token():
+        return {"error": "UAnalyze 登入失敗（請確認 UANALYZE_EMAIL / UANALYZE_PASSWORD）"}
+
+    cookies, headers = _auth.cookie_context()
+
+    async def _get(endpoint: str) -> dict | None:
+        try:
+            url = f"{CRONJOB_BASE_URL}/data_fetch/api/{endpoint}/{symbol}"
+            async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+                r = await client.get(url, cookies=cookies, headers=headers)
+            if r.status_code == 200:
+                return r.json()
+        except Exception as e:
+            logger.warning("fetch_holder_structure %s failed for %s: %s", endpoint, symbol, e)
+        return None
+
+    inv_json, sh_json = await asyncio.gather(
+        _get("MajorInvestorsHoldings"),
+        _get("ShareHoldersStatistics"),
+    )
+
+    def _decode_rows(payload: dict | None, keep_labels: set[str]) -> list[dict]:
+        """list 每筆以 column_title 解碼，只留 keep_labels 欄位，附 period。"""
+        if not payload:
+            return []
+        rows, code_to_label = _parse_titled_list(payload)
+        out: list[dict] = []
+        for row in rows[:recent]:  # 最新在前
+            if not isinstance(row, dict):
+                continue
+            entry: dict = {"period": row.get("row_title_center")}
+            for code, val in row.items():
+                if code == "row_title_center":
+                    continue
+                label = code_to_label.get(code, code)
+                if label in keep_labels:
+                    entry[label] = val
+            out.append(entry)
+        return out
+
+    holdings = _decode_rows(inv_json, {"外資持股比率", "董監持股比率", "400張以上持股比率"})
+    shareholders = _decode_rows(
+        sh_json,
+        {"總股東人數(人)", "平均持有張數/人", "400張以上持股比率(%)", "1000張以上持股比率(%)"},
+    )
+
+    if not holdings and not shareholders:
+        return {"error": f"查無 {symbol} 的籌碼結構資料"}
+
+    result: dict = {"symbol": symbol}
+    name = None
+    for payload in (inv_json, sh_json):
+        if payload:
+            name = (payload.get("data") or {}).get("stock_name")
+            if name:
+                break
+    if name:
+        result["stock_name"] = name
+    if holdings:
+        result["holdings"] = holdings
+    if shareholders:
+        result["shareholders"] = shareholders
+    latest: dict = {}
+    if holdings:
+        latest["holdings"] = holdings[0]
+    if shareholders:
+        latest["shareholders"] = shareholders[0]
+    if latest:
+        result["latest"] = latest
+    return result
+
+
 # ── A 法說會逐字稿（清單走 gidp、全文走 cronjob；純資料不呼叫 AI）─────────────
-# 逐字稿分頁全文太長（~15K 字），Agent/CLI 只需摘要，bot 層才做分頁閱讀。
-TRANSCRIPT_SUMMARY_CHARS = 500
+# 逐字稿全文 ~15K 字：CLI --transcript <代號> <id/date> 回完整 transcript，
+# bot 層再依需要做分頁閱讀。
 
 
 async def fetch_transcript_list(symbol: str) -> dict:
@@ -1330,10 +2106,98 @@ if __name__ == "__main__":
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(1 if "error" in result else 0)
 
+    if args[0] == "--valuation":
+        # A10 相對估值 PE/PB Band 摘要（Agent 用；純資料，不呼叫 AI）。
+        try:
+            sym = args[1]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --valuation <代號>"}, ensure_ascii=False))
+            sys.exit(1)
+        result = asyncio.run(fetch_valuation_bands(sym))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
+
+    if args[0] == "--chips":
+        # A11 三大法人買賣超摘要（Agent 用；純資料，不呼叫 AI）。
+        try:
+            sym = args[1]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --chips <代號>"}, ensure_ascii=False))
+            sys.exit(1)
+        result = asyncio.run(fetch_institutional_chips(sym))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
+
+    if args[0] == "--margins":
+        # A12 三率趨勢（毛利率/營業利益率/稅後淨利率）摘要（Agent 用；純資料，不呼叫 AI）。
+        try:
+            sym = args[1]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --margins <代號>"}, ensure_ascii=False))
+            sys.exit(1)
+        result = asyncio.run(fetch_profit_margins(sym))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
+
+    if args[0] == "--cashflow":
+        # A13 現金流趨勢摘要（Agent 用；純資料，不呼叫 AI）。
+        try:
+            sym = args[1]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --cashflow <代號>"}, ensure_ascii=False))
+            sys.exit(1)
+        result = asyncio.run(fetch_cash_flow_trend(sym))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
+
+    if args[0] == "--dividend":
+        # A14 股利政策摘要（Agent 用；純資料，不呼叫 AI）。
+        try:
+            sym = args[1]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --dividend <代號>"}, ensure_ascii=False))
+            sys.exit(1)
+        result = asyncio.run(fetch_dividend_policy(sym))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
+
+    if args[0] == "--peers-compare":
+        # A15 同業多維比較摘要（Agent 用；組合既有函式，純資料，不呼叫 AI）。
+        try:
+            sym = args[1]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --peers-compare <代號>"}, ensure_ascii=False))
+            sys.exit(1)
+        result = asyncio.run(fetch_peers_comparison(sym))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
+
+    if args[0] == "--margin":
+        # A16 信用交易（融資融券）摘要（Agent 用；純資料，不呼叫 AI）。
+        try:
+            sym = args[1]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --margin <代號>"}, ensure_ascii=False))
+            sys.exit(1)
+        result = asyncio.run(fetch_margin_trading(sym))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
+
+    if args[0] == "--holders":
+        # A17 籌碼結構（持股比率/股東結構）摘要（Agent 用；純資料，不呼叫 AI）。
+        try:
+            sym = args[1]
+        except IndexError:
+            print(json.dumps({"error": "用法: python tools/uanalyze.py --holders <代號>"}, ensure_ascii=False))
+            sys.exit(1)
+        result = asyncio.run(fetch_holder_structure(sym))
+        print(json.dumps(result, ensure_ascii=False))
+        sys.exit(1 if "error" in result else 0)
+
     if args[0] == "--transcript":
         # A 法說會逐字稿：
         #   --transcript <代號>            → 列該股歷次逐字稿清單（日期 + id）
-        #   --transcript <代號> <id 或 date> → 回該篇摘要（title+date+前 N 字+字數，非 16K 全文）
+        #   --transcript <代號> <id 或 date> → 回該篇全文（title+date+字數+完整 transcript）
         try:
             sym = args[1]
         except IndexError:
@@ -1380,15 +2244,15 @@ if __name__ == "__main__":
             sys.exit(1)
 
         full = detail.get("transcript", "")
-        summary = {
+        result = {
             "id": detail.get("id"),
             "title": detail.get("title"),
             "date": detail.get("date"),
             "stock": detail.get("stock"),
             "字數": len(full),
-            "摘要": full[:TRANSCRIPT_SUMMARY_CHARS],
+            "transcript": full,
         }
-        print(json.dumps(summary, ensure_ascii=False))
+        print(json.dumps(result, ensure_ascii=False))
         sys.exit(0)
 
     result = asyncio.run(analyze(symbol, prompt))

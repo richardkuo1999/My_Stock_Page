@@ -9,23 +9,16 @@ def test_system_prompt_describes_role():
     assert "繁體中文" in SYSTEM_PROMPT
 
 
-def test_system_prompt_lists_all_tools():
-    """System prompt references every tool script so the Agent knows they exist."""
-    for tool in (
-        "get_stock_price.py",
-        "draw_kchart.py",
-        "draw_intraday_chart.py",
-        "fetch_news.py",
-        "uanalyze.py",
-        "summarize_document.py",
-        "lookup_stock_name.py",
-        "cnyes.py",
-        "finmind.py",
-        "fugle.py",
-        "yfinance_data.py",
-        "valuation.py",
-    ):
-        assert tool in SYSTEM_PROMPT
+def test_system_prompt_points_to_tools_readme():
+    """System prompt tells the Agent to read tools/README.md for the tool catalog.
+
+    工具清單的真實來源改為 tools/README.md（避免 prompt 內清單過時），
+    prompt 只需指引 Agent 去讀它 + 讀各檔 docstring 拿細節。
+    """
+    assert "tools/README.md" in SYSTEM_PROMPT
+    # 指引讀 README 與各檔 docstring
+    assert "cat tools/README.md" in SYSTEM_PROMPT
+    assert "docstring" in SYSTEM_PROMPT
 
 
 def test_system_prompt_describes_format_choice():

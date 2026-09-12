@@ -135,87 +135,19 @@ AI 呼叫失敗時不推進游標，下一輪會重試同一區間。讀 `bot.lo
 ## 工具（獨立 CLI）
 
 每個工具都能單獨在命令列執行，回傳 JSON。所有工具皆為純粹確定性程式，**本身不呼叫 AI**
-（由 Agent 協調 `chat_bot → AI → tool → AI → tool`）：
+（由 Agent 協調 `chat_bot → AI → tool → AI → tool`）。
 
-```bash
-python tools/get_stock_price.py 2330                       # 即時股價（best-effort 附 UAnalyze 基本面）
-python tools/uanalyze.py --fundamentals 2330               # 即時基本面摘要（收盤價/當日漲跌幅/本益比/最新財報/月營收/掛牌類別，供 /p 疊加）
-python tools/draw_kchart.py 2330 --period 60               # K 線圖 → 圖片路徑
-python tools/draw_intraday_chart.py 2330                   # 盤中分時走勢折線圖 → 圖片路徑
-python tools/fetch_news.py --all                           # 全部 15 來源最新新聞
-python tools/fetch_news.py 2330 --limit 5                  # 指定股票新聞（本地過濾）
-python tools/fetch_news.py --fulltext <URL>                # 抓某一篇新聞的完整內文（on-demand，供 Agent 深入分析；付費牆/動態頁回 error 退回摘要+連結）
-python tools/uanalyze.py 2330                              # UAnalyze AI 估值分析
-python tools/uanalyze.py --multi 2330 --prompts 近況發展,利多因素,利空因素   # 一次並行跑多個面向（做完整報告用，比逐一快）
-python tools/uanalyze.py --reports --limit 50              # UAnalyze 最新研究報告列表（監控用）
-python tools/uanalyze.py --consensus 2330                  # 法人共識（單季 EPS 實際 vs 預估 + 月營收共識）摘要
-python tools/uanalyze.py --pershare 2330                   # 近年每股財務指標摘要（FCF/EPS/EBITDA/ROE/ROIC…）
-python tools/uanalyze.py --supply 2330                     # 供應鏈（同業/供應鏈對照標的代號清單）
-python tools/uanalyze.py --order 2330                      # 訂單能見度（訂單能見度 + 合約負債，資料稀疏可能無資料）
-python tools/uanalyze.py --dcf 2330                        # DCF 估值（時間加權動態 DCF，純計算回內在價值/前瞻價值/信心度，非 AI）
-python tools/uanalyze.py --transcript 2330                 # 法說會逐字稿清單（列歷次日期 + id）
-python tools/uanalyze.py --transcript 2330 202607162330    # 某場逐字稿摘要（title/date/字數 + 全文前 500 字，非 16K 全文）
-python tools/summarize_document.py https://example.com/x   # URL/PDF 摘要
-python tools/lookup_stock_name.py 2330                     # 查代號→公司名（對照表）
-python tools/lookup_stock_name.py --set 9999 某公司        # 手動寫回對照表（後援）
-python tools/lookup_stock_name.py --refresh                # 從 UAnalyze StockPool 全表刷新對照表
-```
+**每個工具能取得哪些資料 / 功能，見 [`tools/README.md`](tools/README.md)。**
+詳細用法（參數、回傳格式）寫在各 `.py` 檔案最上方的 docstring。
 
-### 原始資料工具（raw-data，CLI + import 雙入口）
+大致分成幾類：
 
-以下工具把各資料源「能拿的資料」各做成獨立 function，供 Agent 按需呼叫、也可被
-`tools/valuation.py` import。皆回 JSON、不呼叫 AI。
-
-```bash
-# 鉅亨網 CNYES（免金鑰）
-python tools/cnyes.py --eps 2330            # FactSet 各年度預估 EPS
-python tools/cnyes.py --target 2330         # 分析師目標價共識
-python tools/cnyes.py --quote 2330          # 即時報價（數字代碼欄位已解碼）
-python tools/cnyes.py --candles 2330 --days 365   # 歷史日K線
-
-# FinMind（需 FINMIND_TOKENS）
-python tools/finmind.py --per 2330          # 本益比/淨值比/殖利率歷史序列
-python tools/finmind.py --price 2330        # 日收盤價量
-python tools/finmind.py --revenue 2330      # 月營收
-python tools/finmind.py --income 2330       # 綜合損益表
-python tools/finmind.py --balance 2330      # 資產負債表
-python tools/finmind.py --cashflow 2330     # 現金流量表
-python tools/finmind.py --dividend 2330     # 股利政策
-python tools/finmind.py --institution 2330  # 三大法人買賣超
-python tools/finmind.py --margin 2330       # 融資融券
-python tools/finmind.py --shareholding 2330 # 外資持股比率
-python tools/finmind.py --info 2330         # 基本資料（名稱/產業/上市櫃）
-python tools/finmind.py --news 2330         # 相關新聞
-
-# 富果 Fugle（需 FUGLE_API_KEY）
-python tools/fugle.py --quote 2330          # 即時報價（含五檔）
-python tools/fugle.py --ticker 2330         # 交易屬性（漲跌停/產業/可否當沖）
-python tools/fugle.py --candles 2330 --days 1277   # 歷史日K（>1年自動分段合併）
-python tools/fugle.py --intraday-candles 2330      # 當日分鐘K
-python tools/fugle.py --trades 2330         # 當日成交明細
-python tools/fugle.py --volumes 2330        # 當日分價量
-python tools/fugle.py --stats 2330          # 52週高低/成交統計
-
-# Yahoo Finance（yfinance，免金鑰）
-python tools/yfinance_data.py --info 2330       # 精選基本面欄位
-python tools/yfinance_data.py --target 2330     # 分析師目標價 + 評等
-python tools/yfinance_data.py --history 2330 --period 1y   # 歷史價
-python tools/yfinance_data.py --financials 2330 # 年度損益表
-```
-
-### 估值工具（`tools/valuation.py`）
-
-不直接打 API，而是 import 上述 raw-data function 拿資料、套用估值公式（數學核心搬自舊版
-`math_utils.py`，純 numpy）。回 JSON、不呼叫 AI。
-
-```bash
-python tools/valuation.py --lohas 2330 --years 3.5   # 樂活五線譜（股價線性回歸 ±3SD 七線 + 回歸機率）← Fugle 歷史K
-python tools/valuation.py --pe 2330                  # PE 河流圖（歷史本益比四分位 + ±3SD 帶 + 現值百分位）← FinMind
-python tools/valuation.py --pb 2330                  # PB 河流圖（歷史股價淨值比，同上）← FinMind
-python tools/valuation.py --eps-momentum 2330        # EPS 動能（FactSet 跨年度預估上/下修趨勢）← CNYES
-python tools/valuation.py --target 2330              # 目標價彙整（CNYES 分析師共識 + Yahoo 目標均價）← CNYES + yfinance
-python tools/valuation.py --all 2330                 # 全部彙整
-```
+- **快捷 / 即時**：`get_stock_price.py`（即時股價）、`draw_kchart.py`（K 線圖）、`draw_intraday_chart.py`（盤中分時圖）
+- **新聞 / 文件**：`fetch_news.py`（15 來源新聞 + 單篇全文）、`summarize_document.py`（URL/PDF 擷取）、`broker_reports.py`（券商研究報告）
+- **UAnalyze**：`uanalyze.py`（AI 分析 + 20 種純數據：基本面/法人共識/每股指標/供應鏈/訂單/DCF/PE-PB/三大法人/三率/現金流/股利/同業比較/融資融券/籌碼結構/法說會逐字稿…）、`dcf_to_csv.py`（DCF 批次輸出 CSV）
+- **原始資料源**：`cnyes.py`、`finmind.py`、`fugle.py`、`yfinance_data.py`（各家 API 各做成獨立 function，供 Agent 按需呼叫 / 被 `valuation.py` import）
+- **估值計算**：`valuation.py`（樂活五線譜 / PE-PB 河流圖 / EPS 動能 / 目標價彙整，不打 API、import 上面 raw-data 工具算）
+- **資料工具**：`lookup_stock_name.py`（代號 ↔ 公司名對照表）
 
 ### 個股新聞如何過濾
 
@@ -291,7 +223,7 @@ agent/
 ├── bridge.py           # AgentBridge ABC + AntigravityCLIBridge
 ├── prompts.py          # Agent prompt templates
 └── conversation_log.py # /ask 對話記錄
-tools/                  # 12 個工具 script（CLI + import 雙入口）
+tools/                  # 15 個工具 script（CLI + import 雙入口，能力清單見 tools/README.md）
 data/                   # 執行期 JSON + 日誌
 tests/                  # 429 個測試
 ```

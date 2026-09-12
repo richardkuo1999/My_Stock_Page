@@ -39,7 +39,7 @@ HELP_TEXT = (
     "/p `<代號>` — 即時股價＋盤中分時走勢圖（附基本面：本益比/最新財報等），例 `/p 2330`\n"
     "/k `<代號> [天數]` — K 線圖，例 `/k 2330 60`\n"
     "/ua `<代號>` — UAnalyze 估值分析＋法說會逐字稿選單，例 `/ua 2330`\n"
-    "/data `<代號>` — 法人共識/財務指標/供應鏈/訂單能見度/DCF 估值選單，例 `/data 2330`\n"
+    "/data `<代號>` — 法人共識/財務/供應鏈/訂單/DCF/PE-PB/法人/三率/現金流/股利/同業/融資券/籌碼選單，例 `/data 2330`\n"
     "/news — 立即抓最新新聞\n\n"
     "*問 AI（自然語言，會自動組合工具）*\n"
     "/ask `<問題>` — 例：`/ask 台積電最近怎麼樣？`（群組、私訊皆可）\n\n"
@@ -59,6 +59,14 @@ DATA_OPTIONS: list[tuple[str, str]] = [
     ("供應鏈", "supply"),
     ("訂單能見度", "order"),
     ("DCF 估值", "dcf"),
+    ("PE/PB 估值", "valuation"),
+    ("三大法人", "chips"),
+    ("三率趨勢", "margins"),
+    ("現金流", "cashflow"),
+    ("股利政策", "dividend"),
+    ("同業比較", "peers"),
+    ("融資融券", "margin"),
+    ("籌碼結構", "holders"),
 ]
 
 
@@ -622,6 +630,280 @@ def _format_dcf(symbol: str, r: dict) -> str:
     return "\n".join(lines)
 
 
+def _format_valuation(symbol: str, r: dict) -> str:
+    """Condense fetch_valuation_bands into PE/PB key/value tables.
+
+    每段（PE/PB）列最新值、10年平均、±標準差帶、現值歷史百分位；PE 另列同業中位數。
+    """
+    name = r.get("stock_name")
+    head = f"📑 {symbol} · PE/PB 相對估值"
+    if name:
+        head += f"（{name}）"
+    lines = [head]
+
+    def _section(title: str, d: dict, extra: list[tuple[str, str]] | None = None) -> None:
+        rows: list[list[str]] = []
+        if d.get("latest") is not None:
+            month = d.get("latest_month", "")
+            rows.append(["最新值", f"{d['latest']}（{month}）" if month else str(d["latest"])])
+        if d.get("avg_10y") is not None:
+            rows.append(["10年平均", str(d["avg_10y"])])
+        if d.get("percentile_in_history") is not None:
+            rows.append(["現值歷史位階", f"{d['percentile_in_history']}%"])
+        for label, val in (d.get("std_bands") or {}).items():
+            rows.append([label, str(val)])
+        for k, v in (extra or []):
+            rows.append([k, v])
+        if rows:
+            lines.append("")
+            lines.append(f"【{title}】")
+            lines.append(render_table(["項目", "數值"], rows, aligns=["left", "left"]))
+
+    pe = r.get("pe") or {}
+    if pe:
+        extra = []
+        if pe.get("peer_median") is not None:
+            extra.append(("同業本益比中位數", str(pe["peer_median"])))
+        _section("本益比 PE", pe, extra)
+    pb = r.get("pb") or {}
+    if pb:
+        _section("股價淨值比 PB", pb)
+
+    lines.append("")
+    lines.append("＊月頻、長歷史；標準差帶為平台預算，現值位階為歷史百分位。")
+    return "\n".join(lines)
+
+
+def _format_chips(symbol: str, r: dict) -> str:
+    """Condense fetch_institutional_chips into a recent-days table + sum row.
+
+    近 N 日外資/投信/自營商/合計買賣超（張），日期為列、法人別為欄；末列近 N 日合計。
+    """
+    name = r.get("stock_name")
+    head = f"📑 {symbol} · 三大法人買賣超（張）"
+    if name:
+        head += f"（{name}）"
+    lines = [head, ""]
+
+    days = r.get("recent_days") or []
+
+    def _fmt(v: object) -> str:
+        return f"{v:,.0f}" if isinstance(v, (int, float)) else str(v)
+
+    rows = [
+        [str(d.get("date")), _fmt(d.get("外資")), _fmt(d.get("投信")),
+         _fmt(d.get("自營商")), _fmt(d.get("合計"))]
+        for d in days
+    ]
+    lines.append(render_table(
+        ["日期", "外資", "投信", "自營", "合計"], rows,
+        aligns=["left", "right", "right", "right", "right"],
+    ))
+
+    s = r.get("sum_recent") or {}
+    if s:
+        lines.append("")
+        lines.append(f"【近 {s.get('天數')} 日合計】")
+        srows = [[
+            _fmt(s.get("外資")), _fmt(s.get("投信")),
+            _fmt(s.get("自營商")), _fmt(s.get("合計")),
+        ]]
+        lines.append(render_table(
+            ["外資", "投信", "自營", "合計"], srows,
+            aligns=["right", "right", "right", "right"],
+        ))
+    return "\n".join(lines)
+
+
+def _format_margins(symbol: str, r: dict) -> str:
+    """Condense fetch_profit_margins into a 三率 × 季度 table.
+
+    毛利率/營業利益率/稅後淨利率為列，季度為欄（最舊→最新），數值為 %。
+    """
+    name = r.get("stock_name")
+    head = f"📑 {symbol} · 三率趨勢（%）"
+    if name:
+        head += f"（{name}）"
+    lines = [head]
+
+    margins = r.get("margins") or {}
+    if not margins:
+        return "\n".join(lines)
+
+    # 以任一率的季度序列取欄位（各率季度一致）。
+    periods: list[str] = []
+    for series in margins.values():
+        for item in series:
+            if item["period"] not in periods:
+                periods.append(item["period"])
+
+    order = ["毛利率", "營業利益率", "稅後淨利率"]
+    rows = []
+    for name_ in order:
+        series = margins.get(name_)
+        if not series:
+            continue
+        vmap = {x["period"]: x["value"] for x in series}
+        rows.append([name_] + [str(vmap.get(p, "-")) for p in periods])
+
+    lines.append("")
+    lines.append(render_table(["指標"] + periods, rows))
+    return "\n".join(lines)
+
+
+def _format_cashflow(symbol: str, r: dict) -> str:
+    """Condense fetch_cash_flow_trend into a 現金流 × 季度 table（千元）。"""
+    name = r.get("stock_name")
+    head = f"📑 {symbol} · 現金流趨勢（千元）"
+    if name:
+        head += f"（{name}）"
+    lines = [head]
+
+    flows = r.get("flows") or {}
+    if not flows:
+        return "\n".join(lines)
+
+    periods: list[str] = []
+    for series in flows.values():
+        for item in series:
+            if item["period"] not in periods:
+                periods.append(item["period"])
+
+    def _fmt(v: object) -> str:
+        return f"{v:,.0f}" if isinstance(v, (int, float)) else "-"
+
+    order = ["營業活動現金流", "投資活動現金流", "籌資活動現金流", "自由現金流"]
+    rows = []
+    for name_ in order:
+        series = flows.get(name_)
+        if not series:
+            continue
+        vmap = {x["period"]: x["value"] for x in series}
+        # 縮短列名以省寬度
+        short = name_.replace("活動現金流", "").replace("現金流", "")
+        rows.append([short] + [_fmt(vmap.get(p)) for p in periods])
+
+    lines.append("")
+    lines.append(render_table(["現金流"] + periods, rows,
+                              aligns=["left"] + ["right"] * len(periods)))
+    return "\n".join(lines)
+
+
+def _format_dividend(symbol: str, r: dict) -> str:
+    """Condense fetch_dividend_policy into a 年度 × 現金股息/發放率 table。"""
+    name = r.get("stock_name")
+    head = f"📑 {symbol} · 股利政策"
+    if name:
+        head += f"（{name}）"
+    lines = [head, ""]
+
+    def _fmt(v: object) -> str:
+        return str(v) if v is not None else "-"
+
+    rows = [
+        [str(d.get("year")), _fmt(d.get("現金股息")),
+         f"{d['發放率(%)']}%" if d.get("發放率(%)") is not None else "-"]
+        for d in (r.get("dividends") or [])
+    ]
+    lines.append(render_table(
+        ["年度", "現金股息", "發放率"], rows,
+        aligns=["left", "right", "right"],
+    ))
+    return "\n".join(lines)
+
+
+def _format_peers(symbol: str, r: dict) -> str:
+    """Condense fetch_peers_comparison into a 標的 × 指標 table（本檔在首列）。"""
+    lines = [f"📑 {symbol} · 同業多維比較", ""]
+    rows_data = r.get("rows") or []
+    metrics = ["本益比", "股價淨值比", "毛利率", "營業利益率", "稅後淨利率"]
+    # 縮短欄名以省手機寬度
+    short = {"本益比": "PE", "股價淨值比": "PB", "毛利率": "毛利%",
+             "營業利益率": "營益%", "稅後淨利率": "淨利%"}
+
+    def _fmt(v: object) -> str:
+        return str(v) if v is not None else "-"
+
+    rows = [
+        [str(row.get("stock"))] + [_fmt(row.get(m)) for m in metrics]
+        for row in rows_data
+    ]
+    lines.append(render_table(
+        ["標的"] + [short[m] for m in metrics], rows,
+        aligns=["left"] + ["right"] * len(metrics),
+    ))
+    lines.append("")
+    lines.append("＊首列為本檔，其餘為同業/供應鏈標的；PE/PB 為最新，三率為最新一季。")
+    return "\n".join(lines)
+
+
+def _format_margin(symbol: str, r: dict) -> str:
+    """Condense fetch_margin_trading into a 日期 × 融資/融券 table。"""
+    name = r.get("stock_name")
+    head = f"📑 {symbol} · 信用交易（融資融券）"
+    if name:
+        head += f"（{name}）"
+    lines = [head, ""]
+
+    def _fmt(v: object) -> str:
+        return f"{v:,.0f}" if isinstance(v, (int, float)) else "-"
+
+    def _pct(v: object) -> str:
+        return f"{v}%" if isinstance(v, (int, float)) else "-"
+
+    rows = [
+        [str(d.get("date")), _fmt(d.get("融資餘額")), _pct(d.get("融資使用率(%)")),
+         _fmt(d.get("融券餘額")), _pct(d.get("融券使用率(%)"))]
+        for d in (r.get("recent_days") or [])
+    ]
+    lines.append(render_table(
+        ["日期", "融資餘", "資使用", "融券餘", "券使用"], rows,
+        aligns=["left", "right", "right", "right", "right"],
+    ))
+    lines.append("")
+    lines.append("＊融資/融券餘額單位張；使用率為佔限額百分比。")
+    return "\n".join(lines)
+
+
+def _format_holders(symbol: str, r: dict) -> str:
+    """Condense fetch_holder_structure into 持股比率 + 股東結構 two tables。"""
+    name = r.get("stock_name")
+    head = f"📑 {symbol} · 籌碼結構"
+    if name:
+        head += f"（{name}）"
+    lines = [head]
+
+    def _fmt(v: object) -> str:
+        if isinstance(v, float):
+            return f"{v:,.2f}"
+        if isinstance(v, int):
+            return f"{v:,}"
+        return "-" if v is None else str(v)
+
+    holdings = r.get("holdings") or []
+    if holdings:
+        cols = ["外資持股比率", "董監持股比率", "400張以上持股比率"]
+        rows = [[str(h.get("period"))] + [_fmt(h.get(c)) for c in cols] for h in holdings]
+        lines.append("")
+        lines.append("【持股比率(%)】")
+        lines.append(render_table(
+            ["月份", "外資", "董監", "400張+"], rows,
+            aligns=["left", "right", "right", "right"],
+        ))
+
+    shareholders = r.get("shareholders") or []
+    if shareholders:
+        cols = ["總股東人數(人)", "平均持有張數/人", "400張以上持股比率(%)", "1000張以上持股比率(%)"]
+        rows = [[str(s.get("period"))] + [_fmt(s.get(c)) for c in cols] for s in shareholders]
+        lines.append("")
+        lines.append("【股東結構】")
+        lines.append(render_table(
+            ["月份", "股東數", "均張/人", "400張+%", "1000張+%"], rows,
+            aligns=["left", "right", "right", "right", "right"],
+        ))
+    return "\n".join(lines)
+
+
 async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle a /data menu button press: fetch the chosen data set, or return
     to the menu when the back button is pressed."""
@@ -653,11 +935,19 @@ async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await query.edit_message_text(f"📑 正在查詢 {symbol}（{labels[key]}）…")
 
     from tools.uanalyze import (
+        fetch_cash_flow_trend,
         fetch_dcf_valuation,
+        fetch_dividend_policy,
         fetch_eps_consensus,
+        fetch_holder_structure,
+        fetch_institutional_chips,
+        fetch_margin_trading,
         fetch_order_visibility,
+        fetch_peers_comparison,
         fetch_per_share_metrics,
+        fetch_profit_margins,
         fetch_supply_chain,
+        fetch_valuation_bands,
     )
 
     try:
@@ -669,6 +959,22 @@ async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             r = await fetch_supply_chain(symbol)
         elif key == "dcf":
             r = await fetch_dcf_valuation(symbol)
+        elif key == "valuation":
+            r = await fetch_valuation_bands(symbol)
+        elif key == "chips":
+            r = await fetch_institutional_chips(symbol)
+        elif key == "margins":
+            r = await fetch_profit_margins(symbol)
+        elif key == "cashflow":
+            r = await fetch_cash_flow_trend(symbol)
+        elif key == "dividend":
+            r = await fetch_dividend_policy(symbol)
+        elif key == "peers":
+            r = await fetch_peers_comparison(symbol)
+        elif key == "margin":
+            r = await fetch_margin_trading(symbol)
+        elif key == "holders":
+            r = await fetch_holder_structure(symbol)
         else:
             r = await fetch_order_visibility(symbol)
     except Exception as e:
@@ -688,6 +994,22 @@ async def data_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         text = _format_supply(symbol, r)
     elif key == "dcf":
         text = _format_dcf(symbol, r)
+    elif key == "valuation":
+        text = _format_valuation(symbol, r)
+    elif key == "chips":
+        text = _format_chips(symbol, r)
+    elif key == "margins":
+        text = _format_margins(symbol, r)
+    elif key == "cashflow":
+        text = _format_cashflow(symbol, r)
+    elif key == "dividend":
+        text = _format_dividend(symbol, r)
+    elif key == "peers":
+        text = _format_peers(symbol, r)
+    elif key == "margin":
+        text = _format_margin(symbol, r)
+    elif key == "holders":
+        text = _format_holders(symbol, r)
     else:
         text = _format_order(symbol, r)
     back = InlineKeyboardMarkup(
